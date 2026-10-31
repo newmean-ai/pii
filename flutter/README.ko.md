@@ -157,7 +157,8 @@ cd example && flutter build apk --debug && flutter build ios --simulator --no-co
 
 **배포.** 빌드 훅은 `../native/core`가 있으면(저장소) 그것을, 없으면(pub.dev에서 받은 패키지) `third_party/native_core`를
 컴파일합니다. `dart pub publish` 전에 `dart run tool/vendor_core.dart`로 이 사본을 만듭니다(git은 무시하고 `.pubignore`로
-배포에는 포함). `--clean`으로 지웁니다.
+배포에는 포함). `--clean`으로 지웁니다. 릴리스는 `flutter-v<version>` 태그로
+`.github/workflows/flutter-publish.yml`이 올립니다(pub.dev 자동 배포, 관리자 승인 후).
 
 ## 라이선스
 

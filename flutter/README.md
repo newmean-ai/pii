@@ -159,7 +159,8 @@ calls run at once.
 
 **Publishing.** The build hook compiles `../native/core` when it exists (the repository) and `third_party/native_core`
 otherwise (the package from pub.dev). `dart run tool/vendor_core.dart` makes that copy before `dart pub publish` (it is
-ignored by git and published through `.pubignore`); `--clean` removes it.
+ignored by git and published through `.pubignore`); `--clean` removes it. Releases are published from a `flutter-v<version>` tag by
+`.github/workflows/flutter-publish.yml` (pub.dev automated publishing, after the maintainer's approval).
 
 ## License
 

@@ -1,0 +1,33 @@
+# Publish the Dart/Flutter package newmean_pii (flutter/) to pub.dev on a flutter-v<version> tag, with pub.dev's
+# automated publishing (GitHub OIDC, no tokens). pub.dev accepts only this repository, the tag pattern flutter-v{{version}}
+# and the pub.dev environment, which waits for the maintainer's approval. The native core is copied into the package
+# first (tool/vendor_core.dart), as for a manual `dart pub publish`.
+name: Flutter publish
+
+on:
+  push:
+    tags: ["flutter-v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pub.dev
+    permissions:
+      id-token: write
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - name: The tag must match the package version
+        run: grep -qx "version: ${GITHUB_REF_NAME#flutter-v}" pubspec.yaml
+      - run: dart pub get
+      - run: dart run tool/vendor_core.dart
+      - run: dart pub publish --dry-run
+      - run: dart pub publish --force
