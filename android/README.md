@@ -159,8 +159,9 @@ node scripts/npm_spans.mjs pii/build/npm.jsonl nano q4 0 1 all ../js/test/fixtur
 PII_NPM_SPANS=$PWD/pii/build/npm.jsonl ./gradlew :pii:testDebugUnitTest --tests '*NpmParityTest*'
 ```
 
-Publishing to Maven Central (`ai.newmean` namespace, signing and upload) is done by the maintainer and is not set up in
-this build.
+Releases go to Maven Central from an `android-v<version>` tag (`.github/workflows/android-publish.yml`): the workflow
+signs every file when `SIGNING_KEY` and `SIGNING_PASSWORD` are set (local builds stay unsigned), uploads the bundle to the
+Central Portal and waits for validation; the maintainer then publishes it there.
 
 ## License
 

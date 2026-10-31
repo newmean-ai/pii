@@ -155,7 +155,9 @@ node scripts/npm_spans.mjs pii/build/npm.jsonl nano q4 0 1 all ../js/test/fixtur
 PII_NPM_SPANS=$PWD/pii/build/npm.jsonl ./gradlew :pii:testDebugUnitTest --tests '*NpmParityTest*'
 ```
 
-Maven Central 배포(`ai.newmean` 네임스페이스, 서명, 업로드)는 관리자가 하며 이 빌드에는 설정하지 않았습니다.
+Maven Central 배포는 `android-v<version>` 태그로 합니다(`.github/workflows/android-publish.yml`). 워크플로가
+`SIGNING_KEY`·`SIGNING_PASSWORD`가 있을 때 모든 파일에 서명하고(로컬 빌드는 서명하지 않음), 번들을 Central Portal에 올려
+검증을 기다립니다. 공개는 관리자가 Portal에서 합니다.
 
 ## 라이선스
 

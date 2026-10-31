@@ -1,0 +1,66 @@
+# Publish the Android library ai.newmean:pii (android/) to Maven Central on an android-v<version> tag: build the AAR with
+# its sources, javadoc and POM, sign every file (GPG key in the environment secrets), bundle and upload to the Central
+# Portal as a USER_MANAGED deployment, and wait until it validates. Nothing is released until the maintainer presses
+# "Publish" on https://central.sonatype.com/publishing/deployments (a release cannot be removed afterwards).
+name: Android publish
+
+on:
+  push:
+    tags: ["android-v*"]
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: 29.0.14206865
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: maven-central
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+      - name: The tag must match the library version
+        run: grep -qx "version = \"${GITHUB_REF_NAME#android-v}\"" pii/build.gradle.kts
+      - name: Build, test and sign
+        run: ./gradlew :pii:testDebugUnitTest :pii:lintRelease :pii:publishReleasePublicationToLocalRepository --console=plain
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+      - name: Bundle
+        run: |
+          v=${GITHUB_REF_NAME#android-v}
+          cd pii/build/repo
+          ls ai/newmean/pii/$v/*.asc
+          zip -r "$RUNNER_TEMP/bundle.zip" "ai/newmean/pii/$v"
+          unzip -l "$RUNNER_TEMP/bundle.zip"
+      - name: Upload to the Central Portal (USER_MANAGED) and wait for validation
+        env:
+          CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          auth="Authorization: Bearer $(printf '%s:%s' "$CENTRAL_USERNAME" "$CENTRAL_PASSWORD" | base64 -w0)"
+          api=https://central.sonatype.com/api/v1/publisher
+          id=$(curl -fsS -H "$auth" -F "bundle=@$RUNNER_TEMP/bundle.zip" \
+            "$api/upload?publishingType=USER_MANAGED&name=ai.newmean:pii:${GITHUB_REF_NAME#android-v}")
+          echo "deployment $id"
+          for i in $(seq 1 60); do
+            status=$(curl -fsS -X POST -H "$auth" "$api/status?id=$id")
+            state=$(jq -r .deploymentState <<<"$status")
+            echo "$state"
+            case $state in
+              VALIDATED) echo "Validated: press Publish on https://central.sonatype.com/publishing/deployments"; exit 0 ;;
+              FAILED) jq . <<<"$status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "still $state after 10 minutes"; exit 1

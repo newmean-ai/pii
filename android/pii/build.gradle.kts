@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 plugins {
     alias(libs.plugins.android.library)
     `maven-publish`
+    signing
 }
 
 group = "ai.newmean"
@@ -209,5 +210,16 @@ publishing {
             name = "local"
             url = uri(layout.buildDirectory.dir("repo"))
         }
+    }
+}
+
+// Maven Central wants a .asc signature next to every file. The release workflow passes the ASCII-armored key and its
+// passphrase as SIGNING_KEY and SIGNING_PASSWORD; without them nothing is signed (local builds and CI checks).
+val signingKey = providers.environmentVariable("SIGNING_KEY")
+signing {
+    isRequired = signingKey.isPresent
+    if (signingKey.isPresent) {
+        useInMemoryPgpKeys(signingKey.get(), providers.environmentVariable("SIGNING_PASSWORD").orNull)
+        sign(publishing.publications["release"])
     }
 }
