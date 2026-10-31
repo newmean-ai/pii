@@ -64,7 +64,7 @@ npm install @newmean-ai/pii
 import {{ createRedactor }} from "@newmean-ai/pii";
 
 const redactor = await createRedactor({{ size: "{tier}" }});   // downloads this repository's files once, checks their SHA-256
-const {{ text, spans }} = await redactor.redact("Hi, I'm Kim Minji, call me at 010-2345-6789.");
+const {{ text, spans }} = await redactor.redact("Hi, I'm Kim Minji, call me at 010-1234-5678.");
 ```
 
 The SDK pins revision `v1.0.0` of this repository. The files can also be used directly with onnxruntime: the model takes

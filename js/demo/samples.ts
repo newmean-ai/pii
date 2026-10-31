@@ -3,8 +3,8 @@ export const SAMPLES: { name: string; text: string }[] = [
   {
     name: "한국어 상담",
     text:
-      "안녕하세요, 지난주 주문 건으로 연락드립니다. 주문자는 박서연이고 연락처는 010-4821-7350, 이메일은 seoyeon.park92@example.com입니다. " +
-      "배송지는 서울특별시 마포구 월드컵북로 12길 34, 302호로 변경해 주세요. 환불은 국민은행 123456-01-234567 계좌로 부탁드립니다. " +
+      "안녕하세요, 지난주 주문 건으로 연락드립니다. 주문자는 박서연이고 연락처는 010-1234-5678, 이메일은 seoyeon.park92@example.com입니다. " +
+      "배송지는 서울특별시 마포구 월드컵북로 12길 34, 302호로 변경해 주세요. 환불은 국민은행 100000-00-000001 계좌로 부탁드립니다. " +
       "참고로 담당자 김 과장님께도 말씀드렸어요.",
   },
   {
@@ -24,39 +24,39 @@ export const SAMPLES: { name: string; text: string }[] = [
     name: "日本語",
     text:
       "お世話になっております。山田花子です。来週の打ち合わせの件でご連絡しました。" +
-      "住所は東京都港区芝公園4-2-8、電話番号は090-1234-5678です。メールは hanako.yamada@example.jp までお願いします。",
+      "住所は東京都港区芝公園4-2-8、電話番号は090-0000-0000です。メールは hanako.yamada@example.com までお願いします。",
   },
   {
     name: "中文",
-    text: "您好，我是王小明，身份证号码是110105199003071234。请把发票寄到上海市浦东新区世纪大道100号15楼，电话13800138000。",
+    text: "您好，我是王小明，身份证号码是110105199003071234。请把发票寄到上海市浦东新区世纪大道100号15楼，电话138 0000 0000。",
   },
   {
     name: "Español",
     text:
-      "Buenos días, me llamo Lucía Fernández García y mi DNI es 12345678Z. Vivo en Calle de Alcalá 123, 28009 Madrid. " +
-      "Mi IBAN es ES91 2100 0418 4502 0005 1332 y mi móvil 612 345 678.",
+      "Buenos días, me llamo Lucía Fernández García y mi DNI es 12345678A. Vivo en Calle de Alcalá 123, 28009 Madrid. " +
+      "Mi IBAN es ES91 2100 0418 4502 0005 1333 y mi móvil +34 600 000 000.",
   },
   {
     name: "Deutsch",
     text:
       "Sehr geehrte Damen und Herren, mein Name ist Jonas Becker, geboren am 02.07.1988. Bitte senden Sie die Unterlagen an " +
-      "Hauptstraße 15, 10115 Berlin. Telefon: +49 30 12345678, E-Mail: j.becker@example.de",
+      "Hauptstraße 15, 10115 Berlin. Telefon: +49 30 23125 678, E-Mail: j.becker@example.com",
   },
   {
     name: "العربية",
-    text: "مرحباً، اسمي أحمد الحربي ورقم جوالي 0551234567. أرجو إرسال الطلب إلى حي النخيل، شارع الملك فهد، الرياض. بريدي ahmed.harbi@example.com",
+    text: "مرحباً، اسمي أحمد الحربي ورقم جوالي 050 000 0000. أرجو إرسال الطلب إلى حي النخيل، شارع الملك فهد، الرياض. بريدي ahmed.harbi@example.com",
   },
   {
     name: "हिन्दी",
-    text: "नमस्ते, मेरा नाम प्रिया शर्मा है। मेरा मोबाइल नंबर 98765 43210 है और पता 12, गांधी नगर, जयपुर, राजस्थान 302015 है।",
+    text: "नमस्ते, मेरा नाम प्रिया शर्मा है। मेरा मोबाइल नंबर 90000 00000 है और पता 12, गांधी नगर, जयपुर, राजस्थान 302015 है।",
   },
   {
     name: "ไทย",
-    text: "สวัสดีค่ะ ดิฉันชื่อ สมใจ ใจดี เบอร์โทร 081-234-5678 ที่อยู่ 99/1 ถนนสุขุมวิท แขวงคลองเตย กรุงเทพฯ 10110",
+    text: "สวัสดีค่ะ ดิฉันชื่อ สมใจ ใจดี เบอร์โทร 080-000-0000 ที่อยู่ 99/1 ถนนสุขุมวิท แขวงคลองเตย กรุงเทพฯ 10110",
   },
   {
     name: "Tiếng Việt",
-    text: "Chào anh, tôi là Nguyễn Thị Mai, số điện thoại 0912 345 678, địa chỉ 25 Lý Thường Kiệt, Hoàn Kiếm, Hà Nội.",
+    text: "Chào anh, tôi là Nguyễn Thị Mai, số điện thoại 0900 000 000, địa chỉ 25 Lý Thường Kiệt, Hoàn Kiếm, Hà Nội.",
   },
   {
     name: "PII 없음",

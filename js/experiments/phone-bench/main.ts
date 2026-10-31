@@ -26,7 +26,8 @@ const REF = new URLSearchParams(location.search).has("ref");
 const ANIM = new URLSearchParams(location.search).get("anim") !== "0" && !matchMedia("(prefers-reduced-motion: reduce)").matches;
 if (!ANIM) document.body.classList.add("still");
 
-// Consistency set (models/consistency.json, gated like the model files): 108 public test rows, two per language, with the
+// Consistency set (models/consistency.json, gated like the model files): 104 public test rows, two per language (four rows
+// changed in public test 1.1 dropped), with the
 // spans a desktop browser produced. Each size and engine runs them all, then the first CHECK_REPEAT again.
 type Check = { set: { id: string; lang: string; text: string }[]; ref?: Record<string, string[]>; refDevice?: string };
 let CHECK: Check | null = null;
