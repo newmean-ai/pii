@@ -1,8 +1,8 @@
 @newmean-ai/pii (https://github.com/newmean-ai/pii)
 Copyright 2026 newmean.ai
 
-The SDK code and the model weights (newmean-ai/pii-nano, -small, -medium, -large on Hugging Face) are licensed under the
-Apache License 2.0 (LICENSE).
+The SDK code and the model weights (newmean-pii-nano, -small, -medium, -large; Hugging Face repositories newmean-ai/pii-nano,
+-small, -medium, -large) are licensed under the Apache License 2.0 (LICENSE).
 
 Attribution request (not a license condition): if you use the SDK or the models in a product, we would appreciate a
 "Powered by newmean.ai" mention (linking to https://newmean.ai) in your documentation or an about, licenses or settings screen.

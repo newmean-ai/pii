@@ -6,8 +6,8 @@
 #
 # Inputs (run from training/; FETCH=1 downloads the models first):
 #   data/eval/$SET.jsonl      the public test dataset: data/test.jsonl of the Hugging Face dataset
-#                             newmean-ai/pii-multilingual-test, saved as data/eval/pii_multilingual_test.jsonl, e.g.
-#                               hf download newmean-ai/pii-multilingual-test data/test.jsonl --repo-type dataset --local-dir /tmp/pmt
+#                             newmean-ai/pii-dataset, saved as data/eval/pii_multilingual_test.jsonl, e.g.
+#                               hf download newmean-ai/pii-dataset data/test.jsonl --repo-type dataset --local-dir /tmp/pmt
 #                               cp /tmp/pmt/data/test.jsonl data/eval/pii_multilingual_test.jsonl
 #   $STUDENTS/pii-<tier>/     the released models (Hugging Face newmean-ai/pii-<tier>: onnx/model_q4.onnx, onnx/model_q4e.onnx,
 #                             tokenizer, config.json); tags.json, which evaluate.py reads, is written from config.json's tags.

@@ -231,7 +231,7 @@ def test_job_matches_stored_l4(research_dir, job_run):
     rows = load_rows(job_run.pub)
     for key, tag in (("newmean-ai_pii-nano_v1.0.0__newmean-onnx_q4", "l4_q4-s-nano-v1"),
                      ("newmean-ai_pii-large_v1.0.0__newmean-onnx_q4e", "l4_q4e-s-large-v1")):
-        stored = [json.loads(l)["spans"] for l in open(research_dir / f"preds/{tag}/r13_test_final.jsonl")][:300]
+        stored = [json.loads(l)["spans"] for l in open(research_dir / f"preds/{tag}/pmt_v11.jsonl")][:300]
         want = score_predictions(rows, stored, ["PERSON_L2"])["ALL"]   # v1 model: native 13-label gold
         got = job_run.results[key]["public"]["overall"]
         assert got == {k: want[k] for k in got}, (key, got, want)   # same predictions as the L4 run

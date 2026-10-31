@@ -27,14 +27,14 @@ GLiNER-based detectors need a second environment; see the comment at the end of 
 | `scripts/model_cards.py` | Writes the Hugging Face model cards and copies LICENSE and NOTICE next to them | `models/web` (`--web`) |
 | `scripts/evaluate.py` | Scores a model or a public detector: character miss rate (leak), over-masking, span and exact F1, per label, language and PII level | `--model` (`regex`, a local or Hub model, `onnx:<dir>[:<file>]`, `ext:<detector>`), set names read from `data/eval/<name>.jsonl` (`--sets`) |
 | `scripts/compare_models.py` | Paired bootstrap comparison of two detectors on one set | saved predictions of two `evaluate.py` runs (`--a`, `--b`, `--set`) |
-| `scripts/public_test_eval.sh` | Runs the released models and the public detectors on the public test dataset (the comparison in the report) | `data/eval/pii_multilingual_test.jsonl`; models downloaded with `FETCH=1` |
+| `scripts/public_test_eval.sh` | Runs the released models and the public detectors on newmean-pii-dataset (public test; the comparison in the report) | `data/eval/pii_multilingual_test.jsonl`; models downloaded with `FETCH=1` |
 | `scripts/ext_data.py` | Rebuilds the four external evaluation sets from the original downloads and checks them against the manifest; also converts their training splits | raw downloads in `data/raw` (`--raw`), `eval_sets/manifest.json` |
 | `scripts/external_sets.py` | Label mappings of the external datasets to our scheme (used by `ext_data.py`) | — |
 | `scripts/dedupe_splits.py` | Exact and near-duplicate removal across splits (MinHash over masked text), PII-value overlap, diversity report | JSONL splits (`--split name=path`, `--order`) |
 
 ## Data
 
-- **Public test dataset.** [newmean-ai/pii-multilingual-test](https://huggingface.co/datasets/newmean-ai/pii-multilingual-test)
+- **newmean-pii-dataset (public test).** [newmean-ai/pii-dataset](https://huggingface.co/datasets/newmean-ai/pii-dataset)
   on the Hugging Face Hub. Save its `data/test.jsonl` as `data/eval/pii_multilingual_test.jsonl` to use it with `evaluate.py`
   and `public_test_eval.sh`.
 - **Training and validation data.** Not in this repository; available on request through the

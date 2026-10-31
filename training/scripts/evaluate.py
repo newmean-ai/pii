@@ -7,7 +7,7 @@ Metrics (masking perspective):
   exact_f1  span F1 with exact boundaries and label
 Usage: python scripts/evaluate.py --model <hf id or local path | regex | ext:<EXT key>> --sets pii_multilingual_test kdpii_test openpii_val
   Each set name reads data/eval/<name>.jsonl: pii_multilingual_test is the public test dataset (data/test.jsonl of
-  newmean-ai/pii-multilingual-test on the Hugging Face Hub, saved under that name); the four external sets
+  newmean-ai/pii-dataset on the Hugging Face Hub, saved under that name); the four external sets
   (kdpii_test, openpii_val, nemotron_test, gretel_fin_test) are rebuilt by ext_data.py eval.
   Our own trained models (train_ner.py's final/ folder, with tags.json) are decoded from BIO into spans directly, with the
   tag list recorded in that model's tags.json (d12 models: 10 labels, v1 models: 13).

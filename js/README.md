@@ -46,8 +46,8 @@ and dataset; treat the output as a strong first pass, not a guarantee.
 
 ## Results
 
-On our public test dataset (54 languages) the models miss 1.6% (large) to 3.3% (nano) of PII characters; the closest of the eight
-public detectors we compared misses 19.7%. Scores on four external datasets, the full comparison and phone speed are in the
+On newmean-pii-dataset (public test, 54 languages) the models miss 1.6% (large) to 3.3% (nano) of PII characters; the closest of the eight
+public detectors we compared misses 19.6%. Scores on four external datasets, the full comparison and phone speed are in the
 [repository README](https://github.com/newmean-ai/pii#results) and the technical report; weekly scores are on the
 [leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard).
 

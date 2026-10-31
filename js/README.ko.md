@@ -46,8 +46,8 @@ const { text, spans } = await redactor.redact("제 메일은 kim@example.com, �
 
 ## 결과
 
-공개 테스트셋(54개 언어)에서 모델은 개인정보 글자의 1.6%(large)~3.3%(nano)를 놓칩니다. 비교한 공개 탐지기 8개 중 가장 가까운 것은
-19.7%를 놓칩니다. 외부 데이터셋 4종 점수, 전체 비교, 휴대폰 속도는 [저장소 README](https://github.com/newmean-ai/pii#results)와
+newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정보 글자의 1.6%(large)~3.3%(nano)를 놓칩니다. 비교한 공개 탐지기 8개 중 가장 가까운 것은
+19.6%를 놓칩니다. 외부 데이터셋 4종 점수, 전체 비교, 휴대폰 속도는 [저장소 README](https://github.com/newmean-ai/pii#results)와
 기술 보고서에, 주간 점수는 [리더보드](https://huggingface.co/spaces/newmean-ai/pii-leaderboard)에 있습니다.
 
 ## 라벨

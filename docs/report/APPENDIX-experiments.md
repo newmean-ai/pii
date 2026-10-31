@@ -313,7 +313,7 @@ Rampart-edge) on every set except openpii, on which Rampart was trained.
   training scope both affect the ranking, and we have not separated their contributions.
 - gliner-pii-edge's low miss rates come with masking 46% of ordinary characters on KDPII.
 
-The v1.0 models on the public test dataset are in Appendix O.
+The v1.0 models on the public test are in Appendix O.
 
 ## N. External datasets considered for training, and why they were rejected
 
@@ -355,9 +355,9 @@ code (`training/scripts/ext_data.py train`) and the trainer's support for `ignor
 (`training/scripts/train_ner.py`) remain in the repository for a future, reviewed attempt; the review is summarised above, and
 its per-row records are not published.
 
-## O. v1.0 models on the public test dataset
+## O. v1.0 models on the public test
 
-Public test dataset, 17,058 rows; `evaluate.py --scheme v1`, model only unless noted, single runs. Our students run as the
+Public test, 17,058 rows; `evaluate.py --scheme v1`, model only unless noted, single runs. Our students run as the
 shipped ONNX files (onnxruntime CPU); the public detectors with the adapters and settings of report Section 6. O.1, O.3 and O.4 come from the
 Colab L4 runs of Section 6 (students and q4 ONNX models on the VM's CPU, transformer models on the L4 GPU), except the OpenAI
 privacy-filter and Rampart-edge rows of O.3–O.4, which come from earlier runs on the Apple M5 Pro (its GPU and CPU) and are within

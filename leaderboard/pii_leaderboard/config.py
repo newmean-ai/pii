@@ -5,9 +5,9 @@ ORG = "newmean-ai"
 SPACE = os.environ.get("PII_LB_SPACE", f"{ORG}/pii-leaderboard")
 REQUESTS = os.environ.get("PII_LB_REQUESTS", f"{ORG}/pii-leaderboard-requests")
 RESULTS = os.environ.get("PII_LB_RESULTS", f"{ORG}/pii-leaderboard-results")
-PUBLIC_TEST = os.environ.get("PII_LB_PUBLIC_TEST", f"{ORG}/pii-multilingual-test")
+PUBLIC_TEST = os.environ.get("PII_LB_PUBLIC_TEST", f"{ORG}/pii-dataset")
 PRIVATE_TEST = os.environ.get("PII_LB_PRIVATE_TEST", f"{ORG}/pii-multilingual-test-private")
-TEST_FILE = "data/test.jsonl"   # same layout in both test datasets (dataset card release/hf/pii-multilingual-test/README.md, Fields)
+TEST_FILE = "data/test.jsonl"   # same layout in both test datasets (dataset card release/hf/pii-dataset/README.md, Fields)
 
 # Environment variable names (values live in Space / Job secrets, never in the repo)
 TOKEN_ENV = "HF_TOKEN"          # Space: write on the requests dataset, read on results. Job: read both test sets, write both datasets.

@@ -1,7 +1,7 @@
-# newmean PII 리더보드
+# newmean-pii 리더보드
 
 감지기가 개인정보를 얼마나 놓치고, 개인정보가 아닌 것을 얼마나 가리는가? 모든 모델은 같은 설계의 두 테스트셋에서
-채점한다. 공개 [newmean PII 다국어 테스트셋](https://huggingface.co/datasets/newmean-ai/pii-multilingual-test)(합성 텍스트
+채점한다. [newmean-pii-dataset (공개 테스트)](https://huggingface.co/datasets/newmean-ai/pii-dataset)(합성 텍스트
 17,058개, 54개 언어)과 공개하지 않는 비공개 쌍둥이 테스트셋이다. [English](README.md)
 
 이 폴더는 Hugging Face Space(`newmean-ai/pii-leaderboard`, 정적 페이지 `index.html` + `lb.js`, 서버·비밀값 없음)이자 매주 도는
@@ -9,8 +9,8 @@
 
 ## 보여 주는 것
 
-- **공개 테스트셋**: 전체, 라벨별, 언어별, PII 등급별.
-- **비공개 테스트셋**: 전체 수치만. 행 단위 출력, 라벨별·언어별 수치는 만들지 않는다.
+- **newmean-pii-dataset (공개 테스트)**: 전체, 라벨별, 언어별, PII 등급별.
+- **newmean-pii-dataset (비공개 테스트)**: 전체 수치만. 행 단위 출력, 라벨별·언어별 수치는 만들지 않는다.
 
 지표(가리기 관점, `training/scripts/evaluate.py`·기술 보고서와 같은 코드):
 
@@ -42,7 +42,7 @@
    같은 형식으로 직접 열어도 된다. 주간 Job이 다시 검사하고, 계정당 최근 7일 2건과 대기열 상한을 적용해 채점한 뒤
    discussion에 점수나 거절 사유를 답하고 닫는다.
 
-**공개 테스트셋도 주 1회 채점하는 이유.** 공개셋은 공개되어 있으므로 `scripts/score_public.py`(같은 지표)로 누구나 바로
+**newmean-pii-dataset (공개 테스트)도 주 1회 채점하는 이유.** 공개셋은 공개되어 있으므로 `scripts/score_public.py`(같은 지표)로 누구나 바로
 자기 점수를 낼 수 있다. 리더보드가 몇 분 안에 채점해도 더해지는 정보가 없다. 주 1회 Job 하나로 돌리면 Space에 유료 Job을
 띄울 수 있는 토큰을 둘 필요가 없고, Job 준비 시간을 대기열 전체에 나눠 쓰며, 비용이 예측 가능하고(한 번 실행, 시간 상한),
 비공개셋 탐색이 느려진다.
@@ -62,8 +62,8 @@ discussion에 답한 뒤, 페이지가 읽는 두 파일 `leaderboard.json`(결�
 | Space `newmean-ai/pii-leaderboard`(정적) | 이 폴더: `index.html`, `lb.js`, Job 코드 `pii_leaderboard/`, `jobs/` |
 | 데이터셋 `newmean-ai/pii-leaderboard-requests` | 제출 discussion, 장부 `requests/<id>.json`, `queue.json` |
 | 데이터셋 `newmean-ai/pii-leaderboard-results` | `results/<key>.json`(공개셋: 전체·라벨·언어·등급, 비공개셋: 전체), `leaderboard.json` |
-| 데이터셋 `newmean-ai/pii-multilingual-test` | 공개 테스트셋 |
-| 데이터셋 `newmean-ai/pii-multilingual-test-private` | 비공개 테스트셋. 채점 Job 토큰만 읽을 수 있음 |
+| 데이터셋 `newmean-ai/pii-dataset` | newmean-pii-dataset (공개 테스트) |
+| 데이터셋 `newmean-ai/pii-multilingual-test-private` | newmean-pii-dataset (비공개 테스트). 채점 Job 토큰만 읽을 수 있음 |
 
 Space에는 비밀값이 없다. Job에는 이름으로 하나: `HF_TOKEN`(테스트셋·Space 읽기, 요청·결과 데이터셋과 그 discussion 쓰기).
 
@@ -87,7 +87,7 @@ hf jobs run --namespace newmean-ai --flavor l4x1 --timeout 1h -s HF_TOKEN -e ORT
 
 첫 행들은 기술 보고서의 Colab L4 실행(2026-10-30) 공개셋 결과다. newmean 모델 4종(티어별 SDK 기본 가중치 파일: large·medium은 `model_q4e.onnx`, small·nano는
 `model_q4.onnx`), 공개 감지기 8종,
-정규식 기준선(`scripts/seed_results.py`). Job의 첫 실행(2026-10-31)이 시드 13행 모두를 비공개 테스트셋으로 채점했다.
+정규식 기준선(`scripts/seed_results.py`). Job의 첫 실행(2026-10-31)이 시드 13행 모두를 newmean-pii-dataset (비공개 테스트)로 채점했다.
 새 제출은 다음 주간 실행이 채점할 때까지 "pending"으로 보인다.
 
 ## 개발
@@ -101,7 +101,7 @@ uv run --no-project --python 3.13 --with pytest --with onnxruntime==1.31.1 --wit
 python scripts/seed_results.py --reports <reports 디렉터리> --out /tmp/lb && python scripts/preview.py /tmp/lb
 ```
 
-브라우저 테스트는 node가 필요하다. 공개 테스트셋과 newmean 모델은 Hub에서 받는다(로컬 사본은 `tests/conftest.py` 참고).
+브라우저 테스트는 node가 필요하다. newmean-pii-dataset (공개 테스트)와 newmean 모델은 Hub에서 받는다(로컬 사본은 `tests/conftest.py` 참고).
 수치 동일성 테스트는 관리자가 보관한 L4 저장 예측이 있어야 하며(공개하지 않음), 없으면 건너뛴다. 같은 이유로 결과 시드
 (`scripts/seed_results.py`)는 관리자만 하는 단계다.
 `pii_leaderboard/scoring.py`는 `training/scripts/evaluate.py`에서 그대로 가져온 것이므로 지표는 그쪽에서 고치고 다시 가져온다.

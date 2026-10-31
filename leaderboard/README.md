@@ -1,5 +1,5 @@
 ---
-title: newmean PII leaderboard
+title: newmean-pii leaderboard
 emoji: 🛡️
 colorFrom: indigo
 colorTo: gray
@@ -14,10 +14,10 @@ hf_oauth_scopes:
 short_description: Multilingual PII detection leaderboard (54 languages)
 ---
 
-# newmean PII leaderboard
+# newmean-pii leaderboard
 
 How much personal information does a detector miss, and how much else does it mask? Every model is scored on two test sets of
-the same design: the public [newmean PII multilingual test set](https://huggingface.co/datasets/newmean-ai/pii-multilingual-test)
+the same design: [newmean-pii-dataset (public test)](https://huggingface.co/datasets/newmean-ai/pii-dataset)
 (17,058 synthetic texts, 54 languages) and a private twin that is never released. [한국어](README.ko.md)
 
 This folder is both the Hugging Face Space (`newmean-ai/pii-leaderboard`, a static page: `index.html` + `lb.js`, no server, no
@@ -25,8 +25,8 @@ secrets) and the code of the weekly scoring job.
 
 ## What is shown
 
-- **Public test set**: overall, per label, per language and per PII level.
-- **Private test set**: overall numbers only. No per-row output, per-label or per-language numbers are ever produced for it.
+- **newmean-pii-dataset (public test)**: overall, per label, per language and per PII level.
+- **newmean-pii-dataset (private test)**: overall numbers only. No per-row output, per-label or per-language numbers are ever produced for it.
 
 Metrics (masking point of view; the same code as `training/scripts/evaluate.py` and the technical report):
 
@@ -81,8 +81,8 @@ never run their own code (`trust_remote_code=False`, safetensors only).
 | Space `newmean-ai/pii-leaderboard` (static) | this folder: `index.html`, `lb.js`, and the job code `pii_leaderboard/`, `jobs/` |
 | dataset `newmean-ai/pii-leaderboard-requests` | submission discussions; the ledger `requests/<id>.json`; `queue.json` |
 | dataset `newmean-ai/pii-leaderboard-results` | `results/<key>.json` (public: overall, per label, language, level; private: overall); `leaderboard.json` |
-| dataset `newmean-ai/pii-multilingual-test` | public test set |
-| dataset `newmean-ai/pii-multilingual-test-private` | private test set, readable only by the scoring job's token |
+| dataset `newmean-ai/pii-dataset` | newmean-pii-dataset (public test) |
+| dataset `newmean-ai/pii-multilingual-test-private` | newmean-pii-dataset (private test), readable only by the scoring job's token |
 
 The Space has no secrets. The job has one, by name: `HF_TOKEN` (read the test sets and the Space; write the requests and
 results datasets and their discussions).
@@ -106,10 +106,10 @@ repositories above, nothing else). Set `ORT_THREADS` to the flavor's vCPUs: insi
 
 ## Seeded results
 
-The first rows are the technical report's Colab L4 runs (2026-10-30) on the public test set: the four newmean models
+The first rows are the technical report's Colab L4 runs (2026-10-30) on newmean-pii-dataset (public test): the four newmean models
 (each tier's SDK default weight file: `model_q4e.onnx` for large and medium, `model_q4.onnx` for small
 and nano), eight public detectors and the regex baseline (`scripts/seed_results.py`). The job's first run (2026-10-31)
-scored all 13 seeded rows on the private test set. New submissions show "pending" until the next weekly run scores them.
+scored all 13 seeded rows on newmean-pii-dataset (private test). New submissions show "pending" until the next weekly run scores them.
 
 ## Development
 
@@ -122,7 +122,7 @@ uv run --no-project --python 3.13 --with pytest --with onnxruntime==1.31.1 --wit
 python scripts/seed_results.py --reports <reports dir> --out /tmp/lb && python scripts/preview.py /tmp/lb
 ```
 
-The browser tests need node. The public test set and the newmean models come from the Hub (or local copies, see
+The browser tests need node. newmean-pii-dataset (public test) and the newmean models come from the Hub (or local copies, see
 `tests/conftest.py`). Number-parity tests need the maintainers' stored L4 predictions, which are not public, and are skipped
 without them. Seeding results (`scripts/seed_results.py`) is a maintainer-only step for the same reason.
 `pii_leaderboard/scoring.py` is vendored from `training/scripts/evaluate.py`; change the metric there and re-vendor.

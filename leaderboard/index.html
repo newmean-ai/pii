@@ -49,9 +49,9 @@
 </head>
 <body>
 <main>
-  <h1>newmean PII leaderboard</h1>
-  <p class="lede">How much personal information does a detector miss, and how much else does it mask? 54 languages, a public and a
-    private test set. Lower miss % is better.</p>
+  <h1>newmean-pii leaderboard</h1>
+  <p class="lede">How much personal information does a detector miss, and how much else does it mask? 54 languages, scored on
+    newmean-pii-dataset (public and private test). Lower miss % is better.</p>
   <div class="bar">
     <nav id="tabs"></nav>
     <div id="auth"></div>
@@ -130,7 +130,7 @@ function overall() {
     <td class="text">${esc(r.adapter)}</td><td class="text">${esc(r.revision)}</td><td class="text">${esc(r.hardware)}</td></tr>`);
   return table(["model", "size", "miss %", "over-masking %", "exact F1", "span F1", "entity miss %", "private miss %",
     "private over-masking %", "private exact F1", "adapter", "revision", "scored on"], rows) +
-    `<p class="hint">Public test set unless marked private. Sorted by miss % (leak). ${state.updated ? `Updated ${esc(state.updated)}.` : ""}</p>`;
+    `<p class="hint">newmean-pii-dataset (public test) unless marked private. Sorted by miss % (leak). ${state.updated ? `Updated ${esc(state.updated)}.` : ""}</p>`;
 }
 const METRICS = { by_label: ["leak", "strict_leak", "span_f1", "exact_f1"], by_language: ["leak", "overmask", "span_f1", "exact_f1", "entity_leak"],
   by_level: ["leak", "strict_leak", "entity_leak", "recall", "exact_recall"] };
@@ -139,7 +139,7 @@ function part(p) {
   const { columns, rows } = lb.breakdown(state.results, p, chosen[p]);
   const pick = `<div class="metric">${METRICS[p].map((m) => `<label><input type="radio" name="m" value="${m}" ${m === chosen[p] ? "checked" : ""}>${m}</label>`).join("")}</div>`;
   return pick + table(["model", ...columns], rows.map((r) => `<tr><td>${esc(r.model)}</td>${r.values.map((v) => `<td>${num(v)}</td>`).join("")}</tr>`)) +
-    `<p class="hint">Public test set. Rates (leak, miss, recall) in %.</p>`;
+    `<p class="hint">newmean-pii-dataset (public test). Rates (leak, miss, recall) in %.</p>`;
 }
 function queue() {
   const rows = state.requests.map((r) => `<tr><td>${esc(r.model ?? "—")}</td><td class="text">${esc(r.submitter)}</td><td class="text">${esc(r.submitted_at)}</td>
@@ -169,7 +169,7 @@ function submitForm() {
 }
 function about() {
   return `<div class="note"><p><b>What is scored.</b> Every model runs on two test sets of the same design: the public
-    <a href="${lb.HUB}/datasets/${lb.PUBLIC_TEST}" target="_blank" rel="noopener">newmean PII multilingual test set</a> (17,058 texts, 54 languages)
+    <a href="${lb.HUB}/datasets/${lb.PUBLIC_TEST}" target="_blank" rel="noopener">newmean-pii-dataset (public test)</a> (17,058 texts, 54 languages)
     and a private twin that is never released. Public: overall, per label, per language, per PII level. Private: overall only.</p>
     <p><b>Metrics</b> (masking point of view; the same code as the newmean technical report): <b>miss % (leak)</b>, share of PII
     characters not covered by any predicted span (the ranking); <b>over-masking %</b>, share of non-PII characters masked;

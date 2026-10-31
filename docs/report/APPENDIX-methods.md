@@ -189,7 +189,7 @@ they enrich real errors 5–10× but two thirds of their flags are wrong, so we 
 Template reuse is checked in three steps.
 
 1. **Exact duplicates** after NFKC and whitespace collapse are dropped inside each split and against higher-priority splits
-   (train, then validation, private test dataset, public test dataset).
+   (train, then validation, private test, public test).
 2. **Near duplicates.** Every text is masked (PII values replaced by their label), lowercased and stripped of punctuation, and
    shingled into word 5-grams (character 5-grams for Chinese, Japanese, Thai, Khmer and texts with few spaces); MinHash with 128
    permutations and LSH with 32 bands of 4 rows proposes candidates, which are confirmed by the exact Jaccard of the shingle
@@ -201,8 +201,8 @@ Template reuse is checked in three steps.
 
 **Leakage.** Between v1.0 validation and the first training shard there are no near-duplicate templates (35 exact duplicates,
 removed from validation), but **values** recur. Against the full training data, 44% of validation PERSON values, 61% of
-DATE_OF_BIRTH values and 23% of all spans (29% after normalisation) also occur in train; in the public test dataset 36%, 46%
-and 20% (25%), in the private test dataset 36%, 50% and 20% (26%). (Against the first training shard alone, the validation
+DATE_OF_BIRTH values and 23% of all spans (29% after normalisation) also occur in train; in the public test 36%, 46%
+and 20% (25%), in the private test 36%, 50% and 20% (26%). (Against the first training shard alone, the validation
 shares were 26%, 35% and 12% (16%).) We therefore also score the public-test rows whose PII values are all unseen in train:
 7,442 of the 10,196 rows with PII (73%; 6,681 after normalisation). There the four students miss 1.5 / 2.0 / 2.6 / 3.2% of PII
 characters (large to nano; 1.5 / 2.0 / 2.5 / 3.1% on the normalised subset), against 1.6 / 2.1 / 2.7 / 3.3% on all rows and

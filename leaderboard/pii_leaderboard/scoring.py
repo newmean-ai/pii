@@ -1,4 +1,4 @@
-"""The newmean PII metric, vendored verbatim from training/scripts/evaluate.py (data v1.0, --scheme v1).
+"""The newmean-pii metric, vendored verbatim from training/scripts/evaluate.py (data v1.0, --scheme v1).
 
 Do not edit the vendored definitions here: change evaluate.py and re-vendor. tests/test_scoring_parity.py checks that each
 name in VENDORED is identical (AST) to the one in evaluate.py, and that the leaderboard reproduces the stored L4 numbers.

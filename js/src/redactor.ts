@@ -39,7 +39,7 @@ export interface RedactorOptions {
   /** Labels to mask. Default: all (LABELS). Use LEVEL1_LABELS to leave level 2 identifiers visible. */
   labels?: readonly string[];
   /** Also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default false: on the
-   *  public test dataset they add almost no coverage and double over-masking (dates and timestamps match the account pattern). */
+   *  public test of newmean-pii-dataset they add almost no coverage and double over-masking (dates and timestamps match the account pattern). */
   regex?: boolean;
   /** Keep downloaded model files in the Cache API. Default true. */
   cache?: boolean;

@@ -5,7 +5,7 @@ export const ORG = "newmean-ai";
 export const SPACE = `${ORG}/pii-leaderboard`;
 export const REQUESTS = `${ORG}/pii-leaderboard-requests`;
 export const RESULTS = `${ORG}/pii-leaderboard-results`;
-export const PUBLIC_TEST = `${ORG}/pii-multilingual-test`;
+export const PUBLIC_TEST = `${ORG}/pii-dataset`;
 export const HUB = "https://huggingface.co";
 
 export const LABELS = ["PERSON", "PERSON_L2", "EMAIL", "PHONE", "ADDRESS", "ID_NUMBER", "FINANCIAL", "ORG", "USERNAME", "URL",
@@ -90,7 +90,7 @@ export async function checkModel(fetchJson, { model, revision, adapter, labelMap
 }
 
 export function requestBody(fields) {
-  return `${MARKER}\nSubmission to the newmean PII leaderboard. It is checked and scored by the weekly job, which replies here.\n\n` +
+  return `${MARKER}\nSubmission to the newmean-pii leaderboard. It is checked and scored by the weekly job, which replies here.\n\n` +
     "```json\n" + JSON.stringify(fields, null, 1) + "\n```\n";
 }
 

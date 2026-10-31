@@ -1,10 +1,10 @@
 """Shared test data.
 
-- The public test set: PII_LB_PUBLIC_FILE (a local jsonl), else downloaded from the Hub (newmean-ai/pii-multilingual-test).
+- The public test set: PII_LB_PUBLIC_FILE (a local jsonl), else downloaded from the Hub (newmean-ai/pii-dataset).
 - The newmean models: PII_LB_MODEL_ROOT (a dir with newmean-ai/pii-<size>/ folders, as the job reads it), else downloaded
   from the Hub at the release tag.
 - PII_RESEARCH_DIR: the maintainers' stored outputs of the 2026-10-30 L4 runs (eval_<tag>.json and
-  preds/<tag>/r13_test_final.jsonl). Not public; tests that need it are skipped when it is unset.
+  preds/<tag>/pmt_v11.jsonl). Not public; tests that need it are skipped when it is unset.
 Tests that need data which is not available are skipped.
 """
 import os, sys

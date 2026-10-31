@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["huggingface_hub>=1.0"]
 # ///
-"""Weekly scoring job for the newmean PII leaderboard (Hugging Face Jobs).
+"""Weekly scoring job for the newmean-pii leaderboard (Hugging Face Jobs).
 
 Launch without uploading anything (a local script would make the CLI create a jobs-artifacts bucket): the job's own command
 downloads this code from the Space and runs it, see README "Scoring job".

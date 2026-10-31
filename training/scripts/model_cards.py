@@ -29,7 +29,7 @@ def pair(p):
 
 def card(tier):
     struct, params, default, (s_q4, s_q4e), pub, f1, kd, op, nm, gr, (ms1, ms12) = TIERS[tier]
-    others = ", ".join(f"[pii-{t}](https://huggingface.co/newmean-ai/pii-{t})" for t in TIERS if t != tier)
+    others = ", ".join(f"[newmean-pii-{t}](https://huggingface.co/newmean-ai/pii-{t})" for t in TIERS if t != tier)
     langs = ", ".join(f'"{l}"' if l == "no" else l for l in LANGS)
     return f"""---
 license: apache-2.0
@@ -39,7 +39,7 @@ library_name: onnx
 tags: [pii, privacy, redaction, anonymization, multilingual, onnx, browser, webassembly]
 ---
 
-# newmean pii-{tier}
+# newmean-pii-{tier}
 
 A small multilingual model that finds personal information (PII) in text so it can be masked **in the browser, before the text
 leaves the device**. It is the `{tier}` tier ({params} parameters, {s_q4e if default == "q4e" else s_q4} download) of the
@@ -85,17 +85,17 @@ better; what matters most for masking); **over** = share of non-PII characters m
 
 | set | miss % / over % |
 |---|---|
-| [newmean PII multilingual public test dataset](https://huggingface.co/datasets/newmean-ai/pii-multilingual-test) (54 languages, 17,058 rows) | {pair(pub)} (exact F1 {f1:.2f}) |
+| [newmean-pii-dataset (public test)](https://huggingface.co/datasets/newmean-ai/pii-dataset) (54 languages, 17,058 rows) | {pair(pub)} (exact F1 {f1:.2f}) |
 | KDPII (Korean) | {pair(kd)} |
 | OpenPII 1.5M (30 languages) | {pair(op)} |
 | Nemotron-PII (English) | {pair(nm)} |
 | Gretel finance (7 languages) | {pair(gr)} |
 
 Speed on the VM's CPU (Xeon 2.20 GHz, onnxruntime): {ms1} ms per text with one thread, {ms12} ms with 12 threads, on the
-public test dataset's texts. The public test dataset is generated with the same design and guideline as the training data, so
+public test's texts. The public test of newmean-pii-dataset is generated with the same design and guideline as the training data, so
 these models have an in-distribution advantage there; the external sets were never used for training. On the public test
-dataset the closest of the eight public detectors we compared (gliner-pii-edge, 176 MB) misses 19.7%; the
-[leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard) scores them weekly on the public and a private test set. The full
+the closest of the eight public detectors we compared (gliner-pii-edge, 176 MB) misses 19.6%; the
+[leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard) scores them weekly on its public and private test. The full
 comparison, per-label and per-language results are in the
 [technical report](https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md).
 
@@ -116,7 +116,7 @@ a written labelling guideline; no real personal data and no external dataset was
 ## License and attribution
 
 Apache-2.0 ([LICENSE](LICENSE)), like the SDK. If you use the model in a product, we would appreciate a **"Powered by
-newmean.ai"** mention in your docs or an about or licenses screen, and "Based on newmean pii-{tier}" in the card of a model you
+newmean.ai"** mention in your docs or an about or licenses screen, and "Based on newmean-pii-{tier}" in the card of a model you
 derive from it (requests, not license conditions).
 
 Built on mMiniLMv2 (Microsoft, MIT License) and the XLM-R SentencePiece tokenizer (Facebook AI, MIT License); see `NOTICE`.

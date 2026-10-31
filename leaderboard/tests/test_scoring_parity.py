@@ -3,9 +3,9 @@
 1. Source parity (always runs): every vendored scoring definition and every predictor's decoding (__call__, _run) is
    AST-identical to training/scripts/evaluate.py; the public-detector maps and settings match evaluate.EXT.
 2. Number parity (maintainer-only): the leaderboard pipeline, fed the public test set as published on the Hub
-   (newmean-ai/pii-multilingual-test) and the predictions stored by the 2026-10-30 L4 runs, reproduces every number of the
+   (newmean-ai/pii-dataset) and the predictions stored by the 2026-10-30 L4 runs, reproduces every number of the
    stored evaluate.py reports (overall, per label, per language, per level) for all 13 seeded detectors. The stored L4 run
-   outputs are not public: set PII_RESEARCH_DIR to them (eval_<tag>.json, preds/<tag>/r13_test_final.jsonl); without it these
+   outputs are not public: set PII_RESEARCH_DIR to them (eval_<tag>.json, preds/<tag>/pmt_v11.jsonl); without it these
    tests are skipped. Test file and model sources: conftest.py.
 """
 import ast, json, sys
@@ -96,8 +96,8 @@ def public_rows(research_dir, public_file):
 def test_leaderboard_reproduces_l4_numbers(tag, research_dir, public_rows, newmean_model):
     model, rev, adapter, _, _ = seeds()[tag]
     rep = json.loads((research_dir / f"eval_{tag}.json").read_text())
-    want = rep["r13_test_final"]
-    preds = [json.loads(l)["spans"] for l in open(research_dir / f"preds/{tag}/r13_test_final.jsonl")]
+    want = rep["pmt_v11"]
+    preds = [json.loads(l)["spans"] for l in open(research_dir / f"preds/{tag}/pmt_v11.jsonl")]
     got = score_predictions(public_rows, preds, detector_labels(model, adapter, newmean_model))
     assert got["gold_collapsed"] == rep["gold_collapsed"]
     keys = ["ALL", "labels", "exact_by_label", "levels", "leak_by_label", "strict_leak_by_label"] + [k for k in want if k.startswith("lang:")]

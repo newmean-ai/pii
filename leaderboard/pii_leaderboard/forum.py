@@ -36,7 +36,7 @@ def parse_request_body(text):
 
 def request_body(fields):
     """Python twin of lb.js requestBody (tests check that both parse the same)."""
-    return (f"{MARKER}\nSubmission to the newmean PII leaderboard. It is checked and scored by the weekly job, which replies here.\n\n"
+    return (f"{MARKER}\nSubmission to the newmean-pii leaderboard. It is checked and scored by the weekly job, which replies here.\n\n"
             f"```json\n{json.dumps(fields, ensure_ascii=False, indent=1)}\n```\n")
 
 

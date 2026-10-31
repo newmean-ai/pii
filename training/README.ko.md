@@ -27,15 +27,15 @@ GLiNER 기반 탐지기는 환경을 따로 만들어야 합니다. [requirement
 | `scripts/model_cards.py` | Hugging Face 모델 카드를 쓰고 LICENSE와 NOTICE를 옆에 복사 | `models/web`(`--web`) |
 | `scripts/evaluate.py` | 모델이나 공개 탐지기 채점: 문자 누락률(leak), 과마스킹, 구간 F1과 정확 경계 F1을 라벨·언어·개인정보 등급별로 | `--model`(`regex`, 로컬 또는 Hub 모델, `onnx:<dir>[:<file>]`, `ext:<detector>`), `data/eval/<name>.jsonl`에서 읽는 세트 이름(`--sets`) |
 | `scripts/compare_models.py` | 한 세트에서 두 탐지기를 짝지은 부트스트랩으로 비교 | `evaluate.py` 두 번의 실행에서 저장된 예측(`--a`, `--b`, `--set`) |
-| `scripts/public_test_eval.sh` | 공개 모델과 공개 탐지기를 공개 테스트 데이터셋에서 실행(보고서의 비교) | `data/eval/pii_multilingual_test.jsonl`, `FETCH=1`로 내려받는 모델 |
+| `scripts/public_test_eval.sh` | 공개 모델과 공개 탐지기를 newmean-pii-dataset (공개 테스트)에서 실행(보고서의 비교) | `data/eval/pii_multilingual_test.jsonl`, `FETCH=1`로 내려받는 모델 |
 | `scripts/ext_data.py` | 외부 평가 세트 네 개를 원본 다운로드에서 다시 만들고 매니페스트와 대조. 각 데이터셋의 학습 분할 변환도 함 | `data/raw`의 원본 다운로드(`--raw`), `eval_sets/manifest.json` |
 | `scripts/external_sets.py` | 외부 데이터셋 라벨을 우리 체계로 옮기는 매핑(`ext_data.py`가 씀) | — |
 | `scripts/dedupe_splits.py` | 분할 간 완전 중복·근접 중복 제거(마스킹한 텍스트의 MinHash), 개인정보 값 겹침, 다양성 리포트 | JSONL 분할(`--split name=path`, `--order`) |
 
 ## 데이터
 
-- **공개 테스트 데이터셋.** Hugging Face Hub의
-  [newmean-ai/pii-multilingual-test](https://huggingface.co/datasets/newmean-ai/pii-multilingual-test). `data/test.jsonl`을
+- **newmean-pii-dataset (공개 테스트).** Hugging Face Hub의
+  [newmean-ai/pii-dataset](https://huggingface.co/datasets/newmean-ai/pii-dataset). `data/test.jsonl`을
   `data/eval/pii_multilingual_test.jsonl`로 저장하면 `evaluate.py`와 `public_test_eval.sh`에서 쓸 수 있습니다.
 - **학습·검증 데이터.** 이 저장소에는 없습니다.
   [데이터 요청 양식](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform)으로

@@ -14,7 +14,7 @@ from pii_leaderboard.evaluation import load_rows, public_summary, score_predicti
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--test", required=True, help="data/test.jsonl of newmean-ai/pii-multilingual-test")
+    ap.add_argument("--test", required=True, help="data/test.jsonl of newmean-ai/pii-dataset")
     ap.add_argument("--preds", required=True)
     ap.add_argument("--labels", nargs="+", default=["auto"])
     a = ap.parse_args()
