@@ -1,0 +1,65 @@
+# Python package (python/): sdist, then abi3 wheels built from that sdist (so the sdist is proven self-contained) for
+# Linux x86-64/arm64, macOS arm64/x86-64 and Windows x86-64, each tested with pytest on CPython 3.9 and 3.14.
+# The fixtures and model copies are private, so CI runs the tests that need no model plus one network test that downloads
+# newmean-pii-nano from Hugging Face (NEWMEAN_PII_NETWORK_TESTS=1, set in python/pyproject.toml). Publishing is in
+# python-publish.yml, which calls this workflow.
+name: Python wheels
+
+on:
+  workflow_dispatch:
+  workflow_call:
+  pull_request:
+    paths: ["python/**", "native/core/**", ".github/workflows/python-wheels.yml"]
+  push:
+    branches: [main]
+    paths: ["python/**", "native/core/**", ".github/workflows/python-wheels.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  sdist:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Build sdist (copies native/core into it)
+        run: pipx run build --sdist python --outdir dist
+      - name: Check the sdist builds and passes the tests on its own
+        run: |
+          mkdir /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install /tmp/sdist/newmean_pii-*/ pytest
+          cd /tmp/sdist/newmean_pii-* && /tmp/venv/bin/pytest -q -ra tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  wheels:
+    needs: sdist
+    name: wheels ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2022]
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: sdist
+          path: dist
+      - name: Locate sdist
+        id: sdist
+        shell: bash
+        run: echo "path=$(ls dist/*.tar.gz)" >> "$GITHUB_OUTPUT"
+      - uses: pypa/cibuildwheel@v3.2.0
+        with:
+          package-dir: ${{ steps.sdist.outputs.path }}
+          output-dir: wheelhouse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl

@@ -1,0 +1,10 @@
+.dart_tool/
+.packages
+build/
+pubspec.lock
+doc/api/
+*.iml
+.idea/
+.DS_Store
+# made by tool/vendor_core.dart for publishing only (the source of truth is ../native/core)
+third_party/

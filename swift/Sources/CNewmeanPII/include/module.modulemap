@@ -1,0 +1,5 @@
+// The Swift module of the C core: its public header only (src/*.h stay private).
+module CNewmeanPII {
+  header "../../../../native/core/pii.h"
+  export *
+}

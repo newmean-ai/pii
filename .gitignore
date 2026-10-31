@@ -14,3 +14,6 @@ build/
 .claude/
 *.log
 *consistency.json
+# Swift package (Package.swift at the root)
+/.build/
+/.swiftpm/

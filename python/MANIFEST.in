@@ -1,0 +1,4 @@
+include README.md README.ko.md LICENSE NOTICE
+include src/newmean_pii/_core.c src/newmean_pii/_core.pyi src/newmean_pii/py.typed
+recursive-include tests *.py
+prune native-core

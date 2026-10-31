@@ -1,0 +1,11 @@
+.gradle/
+build/
+.cxx/
+.kotlin/
+local.properties
+*.iml
+.idea/
+captures/
+.DS_Store
+# model files for local tests and bundling experiments (download them; never commit)
+*.onnx

@@ -1,0 +1,66 @@
+# Android library ai.newmean:pii (android/): JVM unit tests on Linux and macOS (the JNI library is also built for the host
+# from the same CMakeLists.txt, so the native path runs without an emulator), lint, and the release AAR for arm64-v8a,
+# armeabi-v7a and x86_64. The parity tests skip here: their fixtures and model copies are private.
+name: android
+
+on:
+  push:
+    branches: [main, develop]
+    paths: [android/**, native/core/**, .github/workflows/android.yml]
+  pull_request:
+    paths: [android/**, native/core/**, .github/workflows/android.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NDK_VERSION: 29.0.14206865
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      # a full JDK (include/jni.h) for the host JNI library
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+      - run: ./gradlew :pii:testDebugUnitTest --console=plain
+      # one real download from Hugging Face (nano, 3.4 MB), checked against the pins and run through the JNI library
+      - run: ./gradlew :pii:testDebugUnitTest --tests '*ModelStoreTest*' --rerun --console=plain
+        env:
+          PII_DOWNLOAD: "1"
+
+  aar:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+      - run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "cmake;3.22.1" > /dev/null
+      - run: ./gradlew :pii:lintRelease :pii:assembleRelease :pii:publishReleasePublicationToLocalRepository --console=plain
+      - name: Native libraries in the AAR
+        run: unzip -l pii/build/outputs/aar/pii-release.aar 'jni/*'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai.newmean-pii-aar
+          path: |
+            android/pii/build/outputs/aar/pii-release.aar
+            android/pii/build/repo/

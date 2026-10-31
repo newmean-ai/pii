@@ -1,0 +1,43 @@
+# Publish the Python package (python/) with Trusted Publishing (OIDC, no tokens): TestPyPI or PyPI by hand
+# (workflow_dispatch), PyPI on a python-v<version> tag. The trusted publishers on test.pypi.org and pypi.org name this file
+# and the environments testpypi / pypi. The sdist and wheels come from python-wheels.yml in the same run.
+name: Python publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      index:
+        description: Package index
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+  push:
+    tags: ["python-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: ./.github/workflows/python-wheels.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: ${{ github.event_name == 'push' && 'pypi' || inputs.index }}
+      url: ${{ (github.event_name == 'push' || inputs.index == 'pypi') && 'https://pypi.org/p/newmean-pii' || 'https://test.pypi.org/p/newmean-pii' }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+      - name: The tag must match the package version
+        if: github.event_name == 'push'
+        run: ls dist/newmean_pii-${GITHUB_REF_NAME#python-v}.tar.gz && ls dist
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ (github.event_name == 'push' || inputs.index == 'pypi') && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}

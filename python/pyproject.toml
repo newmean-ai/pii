@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "newmean-pii"
+dynamic = ["version"]
+description = "On-device multilingual PII detection and masking with small models (newmean-pii-nano/small/medium/large)"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "newmean.ai" }]
+requires-python = ">=3.9"
+dependencies = []
+keywords = ["pii", "privacy", "redaction", "anonymization", "ner", "multilingual", "on-device"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: C",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
+  "Topic :: Text Processing :: Linguistic",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://newmean.ai"
+Repository = "https://github.com/newmean-ai/pii"
+Models = "https://huggingface.co/newmean-ai"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+packages = ["newmean_pii"]
+
+[tool.setuptools.dynamic]
+version = { attr = "newmean_pii.__version__" }
+
+[tool.setuptools.package-data]
+newmean_pii = ["py.typed", "*.pyi"]
+
+[tool.setuptools.exclude-package-data]
+newmean_pii = ["*.c"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["network: downloads public model files from huggingface.co (run with NEWMEAN_PII_NETWORK_TESTS=1)"]
+
+# Wheels: one abi3 wheel (CPython 3.9+) per platform, tested on the oldest and newest CPython. Fixtures and model copies
+# are private, so CI runs the tests that need no model plus the network test (nano from Hugging Face).
+[tool.cibuildwheel]
+build = ["cp39-*", "cp314-*"]
+skip = ["*-musllinux_*", "*-manylinux_i686", "*-win32", "*t-*"]
+test-requires = ["pytest"]
+test-sources = ["tests"]
+test-command = "pytest -q -ra tests"
+test-environment = { NEWMEAN_PII_NETWORK_TESTS = "1" }
+
+[tool.cibuildwheel.linux]
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-aarch64-image = "manylinux_2_28"
+
+[tool.cibuildwheel.macos]
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }

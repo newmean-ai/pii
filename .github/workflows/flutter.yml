@@ -1,0 +1,93 @@
+# Flutter/Dart package (flutter/): analyze and test on the three desktop hosts (the build hook compiles native/core with
+# clang, gcc and MSVC), and build the example app for Android and iOS. The parity tests skip here: their fixtures and
+# model copies are private.
+name: flutter
+
+on:
+  push:
+    branches: [main, develop]
+    paths: [flutter/**, native/core/**, .github/workflows/flutter.yml]
+  pull_request:
+    paths: [flutter/**, native/core/**, .github/workflows/flutter.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed lib hook test tool
+      - run: dart analyze --fatal-infos
+      - run: dart test
+      # one real download from Hugging Face (nano, 3.4 MB), checked against the pins
+      - run: dart test test/loader_test.dart
+        env:
+          PII_DOWNLOAD: "1"
+
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter/example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build apk --debug
+
+  ios:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: flutter/example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --simulator --no-codesign
+      - run: flutter build ios --debug --no-codesign
+
+  publish-check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+      - run: dart pub get
+      - run: dart run tool/vendor_core.dart
+      - run: dart pub publish --dry-run

@@ -1,0 +1,10 @@
+# pub reads this file instead of .gitignore: the same list without third_party/, so the vendored core is published.
+.dart_tool/
+.packages
+build/
+pubspec.lock
+doc/api/
+*.iml
+.idea/
+.DS_Store
+.github/

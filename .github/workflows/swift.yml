@@ -1,0 +1,39 @@
+# Swift package NewmeanPII (Package.swift at the repository root, sources in swift/ and native/core): test on macOS and
+# build for iOS devices and the iOS Simulator (no simulator is booted). The parity tests skip here: their fixtures and
+# model copies are private.
+name: swift
+
+on:
+  push:
+    branches: [main, develop]
+    paths: [Package.swift, swift/**, native/core/**, .github/workflows/swift.yml]
+  pull_request:
+    paths: [Package.swift, swift/**, native/core/**, .github/workflows/swift.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      # release: the C core is slow at -O0
+      - run: swift test -c release
+      # one real download from Hugging Face (nano, 3.4 MB), checked against the pins
+      - run: swift test -c release --filter ModelTests/testDownload
+        env:
+          PII_DOWNLOAD: "1"
+
+  ios:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        destination: ["generic/platform=iOS", "generic/platform=iOS Simulator"]
+    steps:
+      - uses: actions/checkout@v4
+      - run: xcodebuild -version
+      - run: xcodebuild -scheme NewmeanPII -destination '${{ matrix.destination }}' -configuration Release build CODE_SIGNING_ALLOWED=NO

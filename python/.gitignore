@@ -1,0 +1,8 @@
+build/
+dist/
+native-core/
+*.egg-info/
+__pycache__/
+.pytest_cache/
+*.so
+*.pyd
