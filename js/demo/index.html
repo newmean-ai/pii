@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PII 테스트 페이지</title>
+    <link rel="icon" href="data:," />
+    <style>
+      :root {
+        --bg: #f7f7f5;
+        --panel: #ffffff;
+        --text: #1c1c1a;
+        --muted: #6b6b66;
+        --line: #e2e1dc;
+        --accent: #2f5bd3;
+        --mark-bg: #fde68a;
+        --ok: #1f7a4d;
+        --warn: #b45309;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141413;
+          --panel: #1d1d1b;
+          --text: #ecebe6;
+          --muted: #a09f99;
+          --line: #33332f;
+          --accent: #7aa2ff;
+          --mark-bg: #6b5212;
+          --ok: #4ade80;
+          --warn: #fbbf24;
+        }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+      main { max-width: 1080px; margin: 0 auto; padding: 20px 16px 60px; }
+      h1 { font-size: 20px; margin: 0 0 2px; }
+      .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+      section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+      h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; }
+      .row { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
+      label { font-size: 14px; }
+      select, button, input[type="number"] { font: inherit; font-size: 14px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--text); }
+      button { cursor: pointer; }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      textarea { width: 100%; min-height: 150px; font: inherit; padding: 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); resize: vertical; }
+      .samples { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .samples button { font-size: 13px; padding: 3px 9px; }
+      .progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+      .progress > div { height: 100%; width: 0; background: var(--accent); transition: width 0.1s; }
+      .status { font-size: 13px; color: var(--muted); margin-top: 6px; white-space: pre-wrap; }
+      .status.ok { color: var(--ok); }
+      .status.err { color: #dc2626; }
+      .out { white-space: pre-wrap; word-break: break-word; padding: 10px; border-radius: 8px; background: var(--bg); min-height: 44px; }
+      mark { background: var(--mark-bg); color: inherit; border-radius: 3px; padding: 0 1px; }
+      mark sup { font-size: 10px; color: var(--muted); margin-left: 2px; font-weight: 600; }
+      table { border-collapse: collapse; width: 100%; font-size: 13px; }
+      th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; }
+      td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      .stats { display: flex; flex-wrap: wrap; gap: 6px 20px; font-size: 13px; color: var(--muted); }
+      .stats b { color: var(--text); font-weight: 600; }
+      .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+      .scroll { overflow-x: auto; }
+      .hint { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>@newmean-ai/pii 테스트 페이지</h1>
+      <div class="sub" id="sub">브라우저 안에서만 실행됩니다. 입력한 텍스트는 이 페이지 밖으로 나가지 않습니다.</div>
+
+      <section>
+        <h2>모델</h2>
+        <div class="row">
+          <label>크기
+            <select id="size">
+              <option value="nano">nano</option>
+              <option value="small">small</option>
+              <option value="medium" selected>medium</option>
+              <option value="large">large</option>
+            </select>
+          </label>
+          <label>가중치
+            <select id="variant">
+              <option value="">기본</option>
+              <option value="q4">q4 (임베딩 8비트)</option>
+              <option value="q4e">q4e (임베딩 4비트)</option>
+            </select>
+          </label>
+          <label>엔진
+            <select id="engine">
+              <option value="onnxruntime" selected>onnxruntime-web</option>
+              <option value="builtin">내장 엔진</option>
+            </select>
+          </label>
+          <button class="primary" id="load">모델 불러오기</button>
+          <button id="clear">캐시 비우기</button>
+        </div>
+        <div class="progress"><div id="bar"></div></div>
+        <div class="status" id="status">아직 불러오지 않았습니다.</div>
+      </section>
+
+      <section>
+        <h2>설정</h2>
+        <div class="row">
+          <label>민감도 <input type="range" id="sens" min="-1" max="1" step="0.25" value="0" /> <b id="sensv">0</b></label>
+          <label><input type="checkbox" id="l2" checked /> 수준 2도 가리기 (성+직함, 별명, 공개 URL)</label>
+          <label><input type="checkbox" id="regex" /> 정규식 함께 쓰기</label>
+          <label>출력
+            <select id="mode">
+              <option value="tag">tag → [EMAIL]</option>
+              <option value="mask">mask → *****</option>
+              <option value="blank">blank → 지우기</option>
+            </select>
+          </label>
+        </div>
+        <div class="hint">민감도: + 쪽은 덜 놓치는 대신 더 많이 가리고, − 쪽은 덜 가리는 대신 더 놓칩니다.</div>
+      </section>
+
+      <section>
+        <h2>입력</h2>
+        <div class="samples" id="samples"></div>
+        <textarea id="input" placeholder="텍스트를 입력하거나 위의 예시를 고르세요."></textarea>
+        <div class="row" style="margin-top: 8px">
+          <label><input type="checkbox" id="live" checked /> 입력하면서 바로 실행</label>
+          <button id="run">실행</button>
+          <button id="bench">속도 측정 (20회)</button>
+          <button id="compare">네 크기 비교</button>
+        </div>
+      </section>
+
+      <section>
+        <div class="stats" id="stats"></div>
+      </section>
+
+      <div class="two">
+        <section>
+          <h2>찾은 위치</h2>
+          <div class="out" id="highlight"></div>
+        </section>
+        <section>
+          <h2>가린 결과</h2>
+          <div class="out" id="redacted"></div>
+        </section>
+      </div>
+
+      <section>
+        <h2>스팬</h2>
+        <div class="scroll"><table id="spans"></table></div>
+      </section>
+
+      <section id="cmpbox" hidden>
+        <h2>네 크기 비교 (같은 입력, 같은 설정)</h2>
+        <div class="scroll"><table id="cmp"></table></div>
+        <div class="hint">처음 고르는 크기는 내려받기 시간이 포함되지 않도록 먼저 불러온 뒤 측정합니다.</div>
+      </section>
+
+      <section>
+        <h2>환경</h2>
+        <div class="stats" id="env"></div>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

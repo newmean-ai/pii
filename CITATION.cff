@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this work, please cite the technical report as below."
+title: "Verifiable privacy in the browser: multilingual synthetic PII data with privacy levels, and 2–20 MB models"
+authors:
+  - name: "Claude Opus 5.5 (Anthropic)"
+  - name: "GPT-6.1 Sol (OpenAI)"
+  - given-names: Hoonjae
+    family-names: Lee
+    affiliation: newmean.ai
+    email: hoonjae@newmean.ai
+version: 1.0.0
+date-released: 2026-10-31
+url: "https://github.com/newmean-ai/pii"
+repository-code: "https://github.com/newmean-ai/pii"
+license: Apache-2.0
+preferred-citation:
+  type: report
+  title: "Verifiable privacy in the browser: multilingual synthetic PII data with privacy levels, and 2–20 MB models"
+  authors:
+    - name: "Claude Opus 5.5 (Anthropic)"
+    - name: "GPT-6.1 Sol (OpenAI)"
+    - given-names: Hoonjae
+      family-names: Lee
+      affiliation: newmean.ai
+      email: hoonjae@newmean.ai
+  institution:
+    name: newmean.ai
+  year: 2026
+  month: 10
+  url: "https://github.com/newmean-ai/pii"

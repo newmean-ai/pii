@@ -1,0 +1,55 @@
+{
+  "name": "@newmean-ai/pii",
+  "version": "1.0.0",
+  "description": "Browser-side multilingual PII detection and masking with small on-device models",
+  "license": "Apache-2.0",
+  "author": "newmean.ai",
+  "homepage": "https://github.com/newmean-ai/pii",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/newmean-ai/pii.git",
+    "directory": "js"
+  },
+  "keywords": [
+    "pii",
+    "privacy",
+    "redaction",
+    "anonymization",
+    "ner",
+    "onnx",
+    "browser",
+    "multilingual"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "demo": "vite demo"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.31.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.3"
+  }
+}

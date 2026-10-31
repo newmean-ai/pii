@@ -1,0 +1,16 @@
+node_modules/
+dist/
+__pycache__/
+.venv/
+data/
+models/
+*.onnx
+*.safetensors
+.DS_Store
+.venv*/
+reports/
+build/
+.env*
+.claude/
+*.log
+*consistency.json

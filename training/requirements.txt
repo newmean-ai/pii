@@ -1,0 +1,22 @@
+# Python 3.12. Versions used for the v1.0 models and the published results.
+torch==2.14.1
+transformers==5.21.0
+tokenizers==0.23.3
+accelerate==1.15.0          # transformers Trainer (train_ner.py)
+datasets==5.1.0
+safetensors==0.8.0
+sentencepiece==0.2.2        # SentencePiece tokenizers (mDeBERTa, XLM-R)
+protobuf==7.36.2
+numpy==2.5.4
+pandas==3.1.0
+pyarrow==26.0.0             # parquet downloads read by ext_data.py / external_sets.py
+onnx==1.23.2
+onnxruntime==1.31.1
+huggingface_hub==2.3.0
+
+# GLiNER detectors (evaluate.py ext:gliner-edge, ext:gliner2-pii) run in a separate environment (.venv-gliner in
+# scripts/public_test_eval.sh); the published comparison used:
+#   transformers==5.16.1
+#   gliner==0.2.29
+#   gliner2==2.1.0
+#   torch==2.14.1 numpy==2.5.4 sentencepiece==0.2.2 protobuf huggingface_hub

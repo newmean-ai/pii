@@ -1,0 +1,8 @@
+# Adapters ext:gliner-edge, ext:gliner2-pii (GLiNER needs its own transformers). Versions of the 2026-10-30 Colab L4 run.
+torch==2.15.0
+transformers==5.16.1
+gliner==0.2.29
+gliner2==2.1.0
+numpy
+sentencepiece
+protobuf

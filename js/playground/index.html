@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>newmean-pii demo</title>
+<meta name="description" content="Find and mask personal information in the browser with @newmean-ai/pii. Runs on your device.">
+<style>
+  /* Layout: header, input card (samples, text, model size), result card (marked or masked text, legend), options, footer. */
+  :root {
+    --bg: #f3f5f4; --panel: #ffffff; --fg: #1b2420; --muted: #5d6b65; --line: #d5dcd8;
+    --accent: #1f7a5c; --accent-soft: #dcefe7; --accent-fg: #ffffff; --mask: #24302b; --mask-fg: #f3f5f4;
+    --fa: #ffd9cc; --fa-fg: #8a3517; --fb: #d7e8ff; --fb-fg: #1d4f91; --fc: #fff0c2; --fc-fg: #7a5a00;
+    --fd: #f1dcff; --fd-fg: #6a2d91; --fe: #d9f2e6; --fe-fg: #1f6a4c;
+    --sans: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #101614; --panel: #18201d; --fg: #e3ebe7; --muted: #94a39c; --line: #2c3833;
+    --accent: #4cc39a; --accent-soft: #1d3a30; --accent-fg: #0b1411; --mask: #050807; --mask-fg: #9fd9c2;
+    --fa: #4a2a1f; --fa-fg: #ffb79e; --fb: #1d2f4a; --fb-fg: #a9cbff; --fc: #3f3415; --fc-fg: #ffd978;
+    --fd: #36214a; --fd-fg: #dcb3ff; --fe: #183a2c; --fe-fg: #8fe0bd; color-scheme: dark } }
+  :root[data-theme="dark"] {
+    --bg: #101614; --panel: #18201d; --fg: #e3ebe7; --muted: #94a39c; --line: #2c3833;
+    --accent: #4cc39a; --accent-soft: #1d3a30; --accent-fg: #0b1411; --mask: #050807; --mask-fg: #9fd9c2;
+    --fa: #4a2a1f; --fa-fg: #ffb79e; --fb: #1d2f4a; --fb-fg: #a9cbff; --fc: #3f3415; --fc-fg: #ffd978;
+    --fd: #36214a; --fd-fg: #dcb3ff; --fe: #183a2c; --fe-fg: #8fe0bd; color-scheme: dark }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5;
+    padding: 16px max(16px, env(safe-area-inset-right, 0px)) 40px max(16px, env(safe-area-inset-left, 0px)); }
+  main { max-width: 760px; margin: 0 auto; display: grid; gap: 14px; }
+  svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  header { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+  h1 { font-size: 1.05rem; margin: 0; white-space: nowrap; }
+  .nw { white-space: nowrap; }
+  .lang { display: flex; align-items: center; gap: 4px; color: var(--muted); margin-left: auto; }
+  .go { display: flex; flex-wrap: wrap; gap: 8px; }
+  .go a { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+  .go a:hover { border-color: var(--accent); }
+  .go a.star { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .go svg.i { width: 17px; height: 17px; }
+  .go svg.gh { width: 17px; height: 17px; fill: currentColor; }
+  .stars { font-family: var(--mono); font-size: 0.78rem; font-weight: 500; padding-left: 7px; border-left: 1px solid currentColor; opacity: 0.85; }
+  .hf { font-size: 1rem; line-height: 1; }
+  .go.top { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .go.top a { justify-content: center; gap: 5px; padding: 8px 6px; font-size: 0.8rem; white-space: nowrap; min-width: 0; }
+  .go.top svg.i, .go.top svg.gh { width: 15px; height: 15px; }
+  .go.top .hf { font-size: 0.9rem; }
+  .go.top .lbl { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .go.top .stars { padding-left: 5px; }
+  .ask { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+  .ask p { margin: 0; font-size: 0.9rem; color: var(--muted); flex: 1 1 14rem; }
+  .lang select { font: inherit; font-size: 0.85rem; color: var(--fg); background: transparent; border: 0; padding: 4px 0; max-width: 7.5em; }
+  .hero { display: grid; gap: 4px; }
+  .hero p { margin: 0; }
+  .tagline { font-size: clamp(1rem, 4.4vw, 1.25rem); font-weight: 650; text-wrap: balance; letter-spacing: -0.01em; }
+  .local { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 0.82rem; white-space: nowrap; }
+  .local span { overflow: hidden; text-overflow: ellipsis; }
+  .local svg.i { width: 16px; height: 16px; color: var(--accent); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 12px; min-width: 0; }
+  .chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -2px; padding: 2px; }
+  .chips button { flex: none; font: inherit; font-size: 0.82rem; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); cursor: pointer; }
+  .chips button.on { border-color: var(--accent); background: var(--accent-soft); }
+  textarea { width: 100%; min-height: 128px; font: inherit; font-size: 16px; line-height: 1.55; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); resize: vertical; }
+  textarea:focus { outline: none; border-color: var(--accent); }
+  .sizes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 3px; }
+  .sizes button { font: inherit; border: 0; border-radius: 8px; padding: 6px 4px; background: transparent; color: var(--muted); cursor: pointer; display: grid; line-height: 1.2; }
+  .sizes button b { font-size: 0.85rem; font-weight: 600; }
+  .sizes button small { font-family: var(--mono); font-size: 0.7rem; }
+  .sizes button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .bar { display: flex; align-items: center; gap: 8px; }
+  .seg { display: inline-flex; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+  .seg button { font: inherit; border: 0; border-radius: 7px; padding: 5px 8px; background: transparent; color: var(--muted); cursor: pointer; display: grid; }
+  .seg button[aria-pressed="true"] { background: var(--panel); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  #count { font-size: 0.85rem; font-weight: 600; }
+  #copy { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-size: 0.85rem; font-weight: 600; padding: 6px 12px; border-radius: 9px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  #copy svg.i { width: 16px; height: 16px; }
+  #output { min-height: 96px; padding: 10px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.9; font-size: 0.95rem; }
+  mark { border-radius: 6px; padding: 1px 5px 1px 3px; color: inherit; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+  mark.l2 { outline: 1.5px dashed currentColor; outline-offset: -1.5px; }
+  svg.li { width: 13px; height: 13px; margin-right: 3px; vertical-align: -1px; fill: currentColor; }
+  .f-a { background: var(--fa); } .f-a svg.li, span.f-a { color: var(--fa-fg); }
+  .f-b { background: var(--fb); } .f-b svg.li, span.f-b { color: var(--fb-fg); }
+  .f-c { background: var(--fc); } .f-c svg.li, span.f-c { color: var(--fc-fg); }
+  .f-d { background: var(--fd); } .f-d svg.li, span.f-d { color: var(--fd-fg); }
+  .f-e { background: var(--fe); } .f-e svg.li, span.f-e { color: var(--fe-fg); }
+  #legend { display: flex; flex-wrap: wrap; gap: 6px; }
+  #legend span { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 0.7rem; padding: 2px 7px; border-radius: 6px; }
+  #legend:empty { display: none; }
+  #stats { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  #loading { display: grid; gap: 6px; }
+  #load-label { font-size: 0.8rem; color: var(--muted); }
+  .track { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
+  #load-bar { height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform 0.2s; }
+  #note { margin: 0; font-size: 0.9rem; color: var(--muted); }
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 0 14px; }
+  summary { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; color: var(--muted); font-size: 0.88rem; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; margin-left: auto; width: 7px; height: 7px; border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor; transform: rotate(45deg); transition: transform 0.2s; }
+  details[open] summary::after { transform: rotate(-135deg); }
+  .opts { display: grid; gap: 12px; padding-bottom: 14px; font-size: 0.88rem; }
+  .opts label { display: flex; align-items: center; gap: 8px; }
+  .opts input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .opts select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; }
+  .opts input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+  footer { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; color: var(--muted); font-size: 0.78rem; }
+  footer a { color: inherit; }
+  button:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="gh" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></symbol>
+  <symbol id="i-gauge" viewBox="0 0 24 24"><path d="M4.5 18a8.5 8.5 0 1 1 15 0"/><path d="M12 13l4-4"/><circle cx="12" cy="13" r="1.2"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="i-device" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10 9l1.5 1.5L14.5 7.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5 12 5s9.5 7 9.5 7-3.5 7-9.5 7-9.5-7-9.5-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6 0 9.5 7 9.5 7a17 17 0 0 1-2.6 3.4M6.3 6.3C3.9 7.9 2.5 12 2.5 12S6 19 12 19a9.7 9.7 0 0 0 5.2-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="l-person" viewBox="0 0 16 16"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></symbol>
+  <symbol id="l-mail" viewBox="0 0 16 16"><path d="M1.5 4.2A1.7 1.7 0 0 1 3.2 2.5h9.6a1.7 1.7 0 0 1 1.7 1.7v.3L8 8.6 1.5 4.5zm0 2.2V11.8a1.7 1.7 0 0 0 1.7 1.7h9.6a1.7 1.7 0 0 0 1.7-1.7V6.4L8 10.5z"/></symbol>
+  <symbol id="l-phone" viewBox="0 0 16 16"><path d="M4.4 1.5l2 2.2-1.2 1.8a8 8 0 0 0 5.3 5.3l1.8-1.2 2.2 2a1.3 1.3 0 0 1 0 1.8l-.9.9C10 16 0 6 1.7 2.4l.9-.9a1.3 1.3 0 0 1 1.8 0z"/></symbol>
+  <symbol id="l-pin" viewBox="0 0 16 16"><path d="M8 1a5 5 0 0 1 5 5c0 4-5 9-5 9S3 10 3 6a5 5 0 0 1 5-5zm0 3a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></symbol>
+  <symbol id="l-id" viewBox="0 0 16 16"><path d="M2.5 3h11A1.5 1.5 0 0 1 15 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 11.5v-7A1.5 1.5 0 0 1 2.5 3zM5 6a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm-2.2 5h4.4c0-1.2-1-2-2.2-2s-2.2.8-2.2 2zM9 6.5v1h4.5v-1zm0 2.5v1h3.5V9z"/></symbol>
+  <symbol id="l-card" viewBox="0 0 16 16"><path d="M2.5 3h11A1.5 1.5 0 0 1 15 4.5V6H1V4.5A1.5 1.5 0 0 1 2.5 3zM1 7.5h14v4a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 11.5zM3 10v1.2h3V10z"/></symbol>
+  <symbol id="l-org" viewBox="0 0 16 16"><path d="M2 15V3l6-2v4l6 2v8h-4v-3H6v3zm2.5-10v1.5H6V5zm0 3v1.5H6V8zM10 9v1.5h1.5V9z"/></symbol>
+  <symbol id="l-at" viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 3.5 13.1l-.7-1.3A5.5 5.5 0 1 1 13.5 8v.7c0 .8-.5 1.3-1.1 1.3s-1.1-.5-1.1-1.3V4.8H9.8v.5A3.2 3.2 0 1 0 10.2 11a2.6 2.6 0 0 0 4.8-2.3V8A7 7 0 0 0 8 1zm-.2 5.2a1.8 1.8 0 1 1 0 3.6 1.8 1.8 0 0 1 0-3.6z"/></symbol>
+  <symbol id="l-link" viewBox="0 0 16 16"><path d="M6.4 9.6l3.2-3.2 1 1-3.2 3.2zM4.5 7.3l-1.2 1.2a2.6 2.6 0 0 0 3.7 3.7l1.2-1.2 1 1-1.2 1.2a4 4 0 0 1-5.7-5.7l1.2-1.2zm7-1l1.2-1.2a2.6 2.6 0 0 0-3.7-3.7L7.8 2.6l-1-1L8 .4a4 4 0 0 1 5.7 5.7l-1.2 1.2z"/></symbol>
+  <symbol id="l-cake" viewBox="0 0 16 16"><path d="M8 1c.8 1 1.2 1.8 1.2 2.4a1.2 1.2 0 0 1-2.4 0C6.8 2.8 7.2 2 8 1zM7.3 5.5h1.4V7H13a1.5 1.5 0 0 1 1.5 1.5v1.4c-.6.5-1.2.5-1.8 0-.9-.7-1.9-.7-2.8 0-.6.5-1.2.5-1.8 0-.9-.7-1.9-.7-2.8 0-.6.5-1.2.5-1.8 0-.5-.4-1.1-.6-1.7-.5V8.5A1.5 1.5 0 0 1 3 7h4.3zM1.5 11.3c.6 0 1.1.2 1.6.6.9.7 1.9.7 2.8 0 .6-.5 1.2-.5 1.8 0 .9.7 1.9.7 2.8 0 .6-.5 1.2-.5 1.8 0 .7.5 1.4.6 2.2.3V15h-13z"/></symbol>
+  <symbol id="l-key" viewBox="0 0 16 16"><path d="M10.5 1a4.5 4.5 0 1 1-1.9 8.6L7.2 11H5.5v1.7H3.8v1.8H1v-2.8l5.4-5.4A4.5 4.5 0 0 1 10.5 1zm1 2.2a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6z"/></symbol>
+</svg>
+
+<main>
+  <header>
+    <div class="logo"><svg class="i"><use href="#i-shield"/></svg></div>
+    <h1>newmean-pii</h1>
+    <label class="lang"><svg class="i"><use href="#i-globe"/></svg><select id="lang" aria-label="Language"></select></label>
+  </header>
+
+  <div class="hero">
+    <p class="tagline" data-i18n="tagline"></p>
+    <p class="local"><svg class="i"><use href="#i-device"/></svg><span data-i18n="local"></span></p>
+  </div>
+
+  <nav class="go top">
+    <a class="star" href="https://github.com/newmean-ai/pii"><svg class="gh" aria-hidden="true"><use href="#gh"/></svg><span class="lbl" data-i18n="starShort"></span><span class="stars" hidden></span></a>
+    <a href="https://huggingface.co/newmean-ai"><span class="hf" aria-hidden="true">🤗</span><span class="lbl" data-i18n="models"></span></a>
+    <a class="bench" href="https://pii.newmean.ai/mobile-bench/"><svg class="i"><use href="#i-gauge"/></svg><span class="lbl" data-i18n="bench"></span></a>
+  </nav>
+
+  <section class="card">
+    <div class="chips" id="samples"></div>
+    <textarea id="input" spellcheck="false" aria-label="Text"></textarea>
+    <div class="sizes" id="sizes" role="group" aria-label="Model size"></div>
+  </section>
+
+  <section class="card" aria-live="polite">
+    <div class="bar">
+      <div class="seg" role="group" aria-label="View">
+        <button id="view-marked" type="button" aria-pressed="true" title="Found"><svg class="i"><use href="#i-eye"/></svg></button>
+        <button id="view-masked" type="button" aria-pressed="false" title="Masked"><svg class="i"><use href="#i-eyeoff"/></svg></button>
+      </div>
+      <span id="count"></span>
+      <button id="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span id="copy-label" data-i18n="copy"></span></button>
+    </div>
+    <div id="loading" hidden><span id="load-label"></span><div class="track"><div id="load-bar"></div></div></div>
+    <p id="note" hidden></p>
+    <div id="output"></div>
+    <div id="legend"></div>
+    <div id="stats"></div>
+  </section>
+
+  <section class="card ask">
+    <p data-i18n="starAsk"></p>
+    <nav class="go"><a class="star" href="https://github.com/newmean-ai/pii"><svg class="i" style="fill:currentColor;stroke:none"><use href="#i-star"/></svg><span data-i18n="star"></span><span class="stars" hidden></span></a></nav>
+  </section>
+
+  <details>
+    <summary><svg class="i"><use href="#i-sliders"/></svg><span data-i18n="options"></span></summary>
+    <div class="opts">
+      <label><span data-i18n="sensitivity"></span><input type="range" id="sens" min="-1" max="1" step="0.25" value="0"></label>
+      <label><input type="checkbox" id="l2" checked><span data-i18n="level2"></span></label>
+      <label><input type="checkbox" id="regex"><span data-i18n="regex"></span></label>
+      <label><span data-i18n="engine"></span><select id="engine"><option value="builtin">builtin</option><option value="onnxruntime">onnxruntime-web</option></select></label>
+      <label>[TAG] / ***<select id="mode"><option value="tag">[EMAIL]</option><option value="mask">*****</option></select></label>
+    </div>
+  </details>
+
+  <footer><a href="https://www.npmjs.com/package/@newmean-ai/pii">npm</a><span>·</span><a href="LICENSE.txt">Apache-2.0</a><span>·</span><a href="NOTICE.txt">Licenses</a><span>·</span><a href="https://newmean.ai">newmean.ai</a></footer>
+</main>
+<script type="module" src="app/main.js"></script>

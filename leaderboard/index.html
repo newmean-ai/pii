@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PII Leaderboard</title>
+<style>
+  :root { --bg: #fbfbfa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e3e3e0; --card: #ffffff; --accent: #3b4cca; --ok: #1f7a46; --bad: #b3261e;
+          --chip: #eef0fb; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141416; --fg: #ececee; --muted: #9a9aa2; --line: #2c2c31;
+          --card: #1b1b1f; --accent: #8f9bff; --ok: #5cc98a; --bad: #ff8a80; --chip: #23263a; } }
+  :root[data-theme="dark"] { --bg: #141416; --fg: #ececee; --muted: #9a9aa2; --line: #2c2c31; --card: #1b1b1f; --accent: #8f9bff;
+          --ok: #5cc98a; --bad: #ff8a80; --chip: #23263a; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-size: 15px; line-height: 1.5; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .lede { color: var(--muted); margin: 0 0 16px; max-width: 70ch; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; }
+  nav button { border: 1px solid var(--line); background: var(--card); color: var(--fg); padding: 6px 12px; border-radius: 999px; cursor: pointer; font: inherit; }
+  nav button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .note { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 10px 14px; margin: 8px 0 14px; }
+  .note.warn { border-color: var(--bad); }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+  th { font-weight: 600; color: var(--muted); font-size: 13px; position: sticky; top: 0; background: var(--card); }
+  td:first-child, th:first-child { text-align: left; position: sticky; left: 0; background: var(--card); }
+  tr:last-child td { border-bottom: 0; }
+  td.text { text-align: left; color: var(--muted); }
+  .pending { color: var(--muted); font-style: italic; }
+  a { color: var(--accent); }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; }
+  .hint { color: var(--muted); font-size: 13px; font-weight: 400; }
+  input, select, textarea { width: 100%; max-width: 640px; font: inherit; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px;
+          background: var(--card); color: var(--fg); }
+  textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  .btn { margin-top: 14px; border: 0; background: var(--accent); color: #fff; padding: 8px 16px; border-radius: 8px; font: inherit; cursor: pointer; }
+  .btn.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre { white-space: pre-wrap; background: var(--chip); padding: 10px; border-radius: 8px; font-size: 12px; max-width: 760px; }
+  .metric { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+  .metric label { display: inline-flex; gap: 4px; margin: 0; font-weight: 400; }
+  .metric input { width: auto; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>newmean PII leaderboard</h1>
+  <p class="lede">How much personal information does a detector miss, and how much else does it mask? 54 languages, a public and a
+    private test set. Lower miss % is better.</p>
+  <div class="bar">
+    <nav id="tabs"></nav>
+    <div id="auth"></div>
+  </div>
+  <div id="notice"></div>
+  <section id="view"></section>
+</main>
+<script type="module">
+import * as lb from "./lb.js";
+
+const PREVIEW = ["localhost", "127.0.0.1"].includes(location.hostname) || new URLSearchParams(location.search).has("preview");
+const HF_JS = "https://cdn.jsdelivr.net/npm/@huggingface/hub@2.17.6/+esm";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const state = { results: [], requests: [], updated: null, error: null, oauth: null, tab: "Leaderboard" };
+
+// --- sign-in (HF OAuth, static Space) --------------------------------------------------------------------------------------
+function storedOauth() {
+  try {
+    const o = JSON.parse(localStorage.getItem("oauth") || "null");
+    return o && new Date(o.accessTokenExpiresAt) > new Date() ? o : null;
+  } catch { return null; }
+}
+async function initAuth() {
+  state.oauth = storedOauth();
+  if (!state.oauth && window.huggingface?.variables?.OAUTH_CLIENT_ID) {
+    try {
+      const { oauthHandleRedirectIfPresent } = await import(HF_JS);
+      const r = await oauthHandleRedirectIfPresent();
+      if (r) { state.oauth = r; try { localStorage.setItem("oauth", JSON.stringify(r)); } catch {} history.replaceState(null, "", location.pathname); }
+    } catch (e) { console.warn("oauth", e); }
+  }
+  renderAuth();
+}
+async function signIn() {
+  const { oauthLoginUrl } = await import(HF_JS);
+  location.href = (await oauthLoginUrl({ scopes: window.huggingface.variables.OAUTH_SCOPES })) + "&prompt=consent";
+}
+function signOut() { try { localStorage.removeItem("oauth"); } catch {} state.oauth = null; load().then(render); renderAuth(); }
+function user() { return state.oauth?.userInfo?.preferred_username || state.oauth?.userInfo?.name || null; }
+function renderAuth() {
+  const el = $("#auth");
+  if (PREVIEW) { el.innerHTML = `<span class="hint">local preview</span>`; return; }
+  if (state.oauth) { el.innerHTML = `<span class="hint">signed in as <b>${esc(user())}</b></span> <button class="btn secondary" id="out">Sign out</button>`; $("#out").onclick = signOut; }
+  else if (window.huggingface?.variables?.OAUTH_CLIENT_ID) { el.innerHTML = `<button class="btn secondary" id="in">Sign in with Hugging Face</button>`; $("#in").onclick = signIn; }
+  else el.innerHTML = "";
+}
+
+// --- data ------------------------------------------------------------------------------------------------------------------
+async function getJson(url, auth = true) {
+  const headers = auth && state.oauth ? { Authorization: `Bearer ${state.oauth.accessToken}` } : {};
+  const r = await fetch(url, { headers });
+  if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
+  return r.json();
+}
+async function load() {
+  const base = PREVIEW ? "./preview" : null;
+  try {
+    const lbj = await getJson(base ? `${base}/leaderboard.json` : `${lb.HUB}/datasets/${lb.RESULTS}/resolve/main/leaderboard.json`);
+    state.results = lbj.results; state.updated = lbj.updated_at; state.error = null;
+  } catch (e) { state.results = []; state.error = e.status ?? e.message; }
+  try {
+    state.requests = (await getJson(base ? `${base}/queue.json` : `${lb.HUB}/datasets/${lb.REQUESTS}/resolve/main/queue.json`)).requests;
+  } catch { state.requests = []; }
+}
+
+// --- views -----------------------------------------------------------------------------------------------------------------
+const num = (v) => (v === "pending" ? `<span class="pending">pending</span>` : v == null ? "—" : esc(v));
+function table(head, rows) {
+  return `<div class="scroll"><table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table></div>`;
+}
+function overall() {
+  const rows = lb.overallRows(state.results).map((r) => `<tr><td>${r.href ? `<a href="${esc(r.href)}" target="_blank" rel="noopener">${esc(r.model)}</a>` : esc(r.model)}</td>
+    <td>${esc(r.size)}</td><td><b>${num(r.leak)}</b></td><td>${num(r.overmask)}</td><td>${num(r.exact_f1)}</td><td>${num(r.span_f1)}</td>
+    <td>${num(r.entity_leak)}</td><td>${num(r.private_leak)}</td><td>${num(r.private_overmask)}</td><td>${num(r.private_exact_f1)}</td>
+    <td class="text">${esc(r.adapter)}</td><td class="text">${esc(r.revision)}</td><td class="text">${esc(r.hardware)}</td></tr>`);
+  return table(["model", "size", "miss %", "over-masking %", "exact F1", "span F1", "entity miss %", "private miss %",
+    "private over-masking %", "private exact F1", "adapter", "revision", "scored on"], rows) +
+    `<p class="hint">Public test set unless marked private. Sorted by miss % (leak). ${state.updated ? `Updated ${esc(state.updated)}.` : ""}</p>`;
+}
+const METRICS = { by_label: ["leak", "strict_leak", "span_f1", "exact_f1"], by_language: ["leak", "overmask", "span_f1", "exact_f1", "entity_leak"],
+  by_level: ["leak", "strict_leak", "entity_leak", "recall", "exact_recall"] };
+const chosen = { by_label: "leak", by_language: "leak", by_level: "leak" };
+function part(p) {
+  const { columns, rows } = lb.breakdown(state.results, p, chosen[p]);
+  const pick = `<div class="metric">${METRICS[p].map((m) => `<label><input type="radio" name="m" value="${m}" ${m === chosen[p] ? "checked" : ""}>${m}</label>`).join("")}</div>`;
+  return pick + table(["model", ...columns], rows.map((r) => `<tr><td>${esc(r.model)}</td>${r.values.map((v) => `<td>${num(v)}</td>`).join("")}</tr>`)) +
+    `<p class="hint">Public test set. Rates (leak, miss, recall) in %.</p>`;
+}
+function queue() {
+  const rows = state.requests.map((r) => `<tr><td>${esc(r.model ?? "—")}</td><td class="text">${esc(r.submitter)}</td><td class="text">${esc(r.submitted_at)}</td>
+    <td class="text">${esc(r.status)}</td><td class="text">${r.discussion ? `<a href="${lb.HUB}/datasets/${lb.REQUESTS}/discussions/${r.discussion}" target="_blank" rel="noopener">#${r.discussion}</a>` : ""}</td>
+    <td class="text">${esc(r.error ?? "")}</td></tr>`);
+  return (rows.length ? table(["model", "submitter", "submitted", "status", "discussion", "note"], rows) : `<p class="hint">No submissions yet.</p>`) +
+    `<p class="hint">Scoring runs once a week. New submissions appear here after the next run; until then they are open
+    <a href="${lb.HUB}/datasets/${lb.REQUESTS}/discussions" target="_blank" rel="noopener">discussions</a>.</p>`;
+}
+function submitForm() {
+  const signedIn = !!state.oauth;
+  return `<p>Give a public Hub token-classification model (transformers, safetensors weights, no custom code, ≤ ${lb.MAX_MODEL_GB} GB)
+    and a label map from its labels to ours. ${lb.MAX_PER_WEEK} submissions per account per 7 days; scoring runs weekly. Your
+    submission is opened as a discussion on <a href="${lb.HUB}/datasets/${lb.REQUESTS}/discussions" target="_blank" rel="noopener">${lb.REQUESTS}</a>,
+    where the job replies with the scores.</p>
+    ${!signedIn && !PREVIEW ? `<div class="note">Sign in with Hugging Face (top right) to submit. You can run the checks without signing in.</div>` : ""}
+    <label for="f-model">model id</label><input id="f-model" placeholder="org/name" autocomplete="off">
+    <label for="f-rev">revision <span class="hint">commit, branch or tag</span></label><input id="f-rev" value="main">
+    <label for="f-adapter">adapter</label><select id="f-adapter"><option>transformers</option><option>newmean-onnx</option></select>
+    <div id="f-variant-box" hidden><label for="f-variant">weight file <span class="hint">default: what the SDK loads for that size</span></label>
+      <select id="f-variant"><option value="">SDK default</option><option>q4</option><option>q4e</option></select></div>
+    <div id="f-map-box"><label for="f-map">label map <span class="hint">JSON from each model label (B-/I- dropped) to one of
+      ${lb.MAP_TARGETS.join(", ")}; OTHER = masked, no matching label; ignore = not masked; or <code>auto</code></span></label>
+      <textarea id="f-map" rows="6" placeholder='{"PER": "PERSON", "EMAIL": "EMAIL", "LOC": "ignore"}'></textarea></div>
+    <div><button class="btn secondary" id="f-check">Check</button> <button class="btn" id="f-submit" ${signedIn ? "" : "disabled"}>Submit</button></div>
+    <div id="f-out"></div>`;
+}
+function about() {
+  return `<div class="note"><p><b>What is scored.</b> Every model runs on two test sets of the same design: the public
+    <a href="${lb.HUB}/datasets/${lb.PUBLIC_TEST}" target="_blank" rel="noopener">newmean PII multilingual test set</a> (17,058 texts, 54 languages)
+    and a private twin that is never released. Public: overall, per label, per language, per PII level. Private: overall only.</p>
+    <p><b>Metrics</b> (masking point of view; the same code as the newmean technical report): <b>miss % (leak)</b>, share of PII
+    characters not covered by any predicted span (the ranking); <b>over-masking %</b>, share of non-PII characters masked;
+    <b>exact F1</b>, same boundaries and label; <b>span F1</b>, same label and ≥ 50% overlap; <b>entity miss %</b>, PII values with
+    less than half of their characters masked.</p>
+    <p>Unless a model outputs the level-2 labels PERSON_L2 / URL_L2, the gold labels are collapsed to its granularity. Model only,
+    no regex layer. Seeded rows are the report's Colab L4 runs; new rows come from the weekly Hugging Face Job.</p>
+    <p><b>Caveats.</b> The newmean models were trained on data of the same design (in-distribution advantage). Several public
+    detectors intentionally leave some labels (e.g. organisations) unmasked.</p>
+    <p>Score yourself on the public set right away with <code>scripts/score_public.py</code> from this Space's files. Other formats
+    (GLiNER, other ONNX layouts, …) are added by the maintainers: open a discussion on this Space.</p></div>`;
+}
+
+const TABS = { "Leaderboard": overall, "By label": () => part("by_label"), "By language": () => part("by_language"),
+  "By PII level": () => part("by_level"), "Queue": queue, "Submit": submitForm, "About": about };
+
+function render() {
+  $("#tabs").innerHTML = Object.keys(TABS).map((t) => `<button role="tab" aria-selected="${t === state.tab}">${esc(t)}</button>`).join("");
+  $("#tabs").querySelectorAll("button").forEach((b) => (b.onclick = () => { state.tab = b.textContent; render(); }));
+  $("#notice").innerHTML = state.error && state.tab !== "Submit" && state.tab !== "About"
+    ? `<div class="note warn"><b>Results unavailable.</b> The leaderboard data could not be read (${esc(state.error)}).
+       Please try again later.</div>` : "";
+  $("#view").innerHTML = TABS[state.tab]();
+  const p = { "By label": "by_label", "By language": "by_language", "By PII level": "by_level" }[state.tab];
+  if (p) $("#view").querySelectorAll("input[name=m]").forEach((i) => (i.onchange = () => { chosen[p] = i.value; render(); }));
+  if (state.tab === "Submit") wireSubmit();
+}
+
+function wireSubmit() {
+  const out = $("#f-out"), adapter = $("#f-adapter");
+  const sync = () => { $("#f-variant-box").hidden = adapter.value !== "newmean-onnx"; $("#f-map-box").hidden = adapter.value !== "transformers"; };
+  adapter.onchange = sync; sync();
+  const fields = () => ({ model: $("#f-model").value, revision: $("#f-rev").value, adapter: adapter.value, labelMap: $("#f-map").value,
+    variant: $("#f-variant").value || null });
+  const check = async () => {
+    out.innerHTML = `<p class="hint">Checking on the Hub…</p>`;
+    try {
+      const f = await lb.checkModel((u) => getJson(u, false), fields());
+      const mine = user() ? lb.recentBy(state.requests, user()).length : 0;
+      out.innerHTML = `<p class="ok">✓ Checks passed for ${esc(f.model)}@${esc(f.revision.slice(0, 12))}.
+        ${user() ? `You have ${mine} of ${lb.MAX_PER_WEEK} submissions in the last 7 days.` : ""}</p><pre>${esc(lb.requestBody(f))}</pre>`;
+      return f;
+    } catch (e) { out.innerHTML = `<p class="bad">✗ ${esc(e.message)}</p>`; return null; }
+  };
+  $("#f-check").onclick = check;
+  $("#f-submit").onclick = async () => {
+    const f = await check();
+    if (!f || !state.oauth) return;
+    if (PREVIEW) { out.insertAdjacentHTML("beforeend", `<p class="hint">Preview: nothing is posted.</p>`); return; }
+    try {
+      const r = await fetch(`${lb.HUB}/api/datasets/${lb.REQUESTS}/discussions`, { method: "POST",
+        headers: { Authorization: `Bearer ${state.oauth.accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ title: lb.requestTitle(f), description: lb.requestBody(f), pullRequest: false }) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      const d = await r.json();
+      const url = `${lb.HUB}/datasets/${lb.REQUESTS}/discussions/${d.num}`;
+      out.innerHTML = `<p class="ok">✓ Submitted as <a href="${url}" target="_blank" rel="noopener">discussion #${d.num}</a>. The weekly job checks it again, scores it and replies there.</p>`;
+    } catch (e) { out.innerHTML += `<p class="bad">✗ Could not open the discussion: ${esc(e.message)}</p>`; }
+  };
+}
+
+await initAuth();
+render();
+await load();
+render();
+</script>
+</body>
+</html>

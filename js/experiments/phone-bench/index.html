@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PII Bench</title>
+<meta name="robots" content="noindex">
+<style>
+  /* Layout: one centred card that changes with body[data-state]: idle (device + start), running (progress ring), done. */
+  :root {
+    --bg: #f3f5f4; --panel: #ffffff; --fg: #1b2420; --muted: #5d6b65; --line: #d5dcd8;
+    --accent: #1f7a5c; --accent-soft: #dcefe7; --accent-fg: #ffffff; --warn: #b4471f;
+    --accent-deep: #145a43; --pii: #ffc9b5; --mask: #24302b; --dot: #f3f5f4;
+    --sc-mint: #9cdebd; --sc-edge: #55a27e; --sc-ink: #194535; --sc-shine: #effff5;
+    --sc-cheek: #efa58e; --sc-shadow: #dce5df;
+    --sans: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #101614; --panel: #18201d; --fg: #e3ebe7; --muted: #94a39c; --line: #2c3833;
+    --accent: #4cc39a; --accent-soft: #1d3a30; --accent-fg: #0b1411; --warn: #f0875f;
+    --accent-deep: #2e8f6d; --pii: #7a3f2c; --mask: #050807; --dot: #4cc39a; --sc-mint: #8ed6b1; --sc-edge: #4b9874; --sc-ink: #153e2e; --sc-shine: #dffff0;
+    --sc-cheek: #e7a68e; --sc-shadow: #0b100e;
+    color-scheme: dark } }
+  :root[data-theme="dark"] {
+    --bg: #101614; --panel: #18201d; --fg: #e3ebe7; --muted: #94a39c; --line: #2c3833;
+    --accent: #4cc39a; --accent-soft: #1d3a30; --accent-fg: #0b1411; --warn: #f0875f;
+    --accent-deep: #2e8f6d; --pii: #7a3f2c; --mask: #050807; --dot: #4cc39a; --sc-mint: #8ed6b1; --sc-edge: #4b9874; --sc-ink: #153e2e; --sc-shine: #dffff0;
+    --sc-cheek: #e7a68e; --sc-shadow: #0b100e;
+    color-scheme: dark }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.45;
+    padding: 16px max(16px, env(safe-area-inset-right, 0px)) 32px max(16px, env(safe-area-inset-left, 0px)); }
+  main { max-width: 440px; margin: 0 auto; display: grid; gap: 14px; }
+  svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  header { display: flex; align-items: center; gap: 10px; }
+  .logo { width: 34px; height: 34px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: grid; place-items: center; }
+  h1 { font-size: 1.1rem; margin: 0; line-height: 1.2; }
+  .sub { font-size: 0.78rem; color: var(--muted); }
+  .lang { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--muted); }
+  .lang select { font: inherit; font-size: 0.85rem; color: var(--fg); background: transparent; border: 0; padding: 4px 0; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; display: grid; gap: 14px; }
+  .tagline { margin: 0; color: var(--muted); font-size: 0.92rem; }
+  .devname { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 0.85rem; }
+  .devname span { overflow-wrap: anywhere; }
+  .devcol { display: grid; gap: 6px; flex: 1; min-width: 0; }
+  #model, #model-other { font: inherit; font-size: 16px; color: var(--fg); background: var(--bg); border: 1px solid var(--accent); border-radius: 10px; padding: 9px 10px; width: 100%; }
+  #model.set { border-color: var(--line); }
+  #run { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; font: inherit; font-size: 1.05rem; font-weight: 650;
+    padding: 14px; border-radius: 12px; border: 0; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+  #run:disabled { opacity: 0.45; cursor: not-allowed; }
+  #run svg.i { fill: currentColor; stroke: none; }
+  button:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .facts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0; padding: 0; list-style: none; }
+  .facts li { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--muted); }
+  .facts svg.i { color: var(--accent); width: 18px; height: 18px; }
+  #note { margin: 0; font-size: 0.85rem; color: var(--warn); }
+
+  .meter { display: grid; justify-items: center; gap: 12px; padding: 4px 0; }
+  .ring { position: relative; width: 128px; height: 128px; }
+  .ring > svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 10; }
+  .ring .track { stroke: var(--line); }
+  #ring { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 326.73; stroke-dashoffset: 326.73; transition: stroke-dashoffset 0.4s ease; }
+  .ring .mid { position: absolute; inset: 0; display: grid; place-items: center; }
+  #pct { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .ring .ok { display: none; width: 44px; height: 44px; color: var(--accent); stroke-width: 2.4; }
+  body[data-state="done"] #pct { display: none; }
+  body[data-state="done"] .ring .ok { display: block; }
+  #eta { font-size: 0.85rem; color: var(--muted); min-height: 1.3em; }
+  #eta:empty { display: none; }
+  #steps { display: flex; gap: 6px; }
+  #steps i { width: 22px; height: 6px; border-radius: 3px; background: var(--line); }
+  #steps i[data-state="active"] { background: var(--accent-soft); outline: 1px solid var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+  #steps i[data-state="ok"] { background: var(--accent); }
+  #steps i[data-state="fail"] { background: var(--warn); }
+  @keyframes pulse { 50% { opacity: 0.45; } }
+  #now { display: flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 0.8rem; color: var(--muted); }
+  #now svg.i { display: none; width: 16px; height: 16px; color: var(--accent); }
+  #now[data-phase="download"] .p-download, #now[data-phase="init"] .p-init, #now[data-phase="run"] .p-run, #now[data-phase="check"] .p-check { display: block; }
+  body[data-state="done"] #now { display: none; }
+  #done-text { display: none; font-weight: 650; }
+  body[data-state="done"] #done-text { display: block; }
+  #idle { display: grid; gap: 14px; }
+  body:not([data-state]) #meter, body[data-state] #idle, body[data-state] #idle-facts { display: none; }
+
+  details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 0 16px; }
+  summary { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; color: var(--muted); font-size: 0.88rem; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::after { content: ""; margin-left: auto; width: 7px; height: 7px; border-right: 1.8px solid currentColor; border-bottom: 1.8px solid currentColor; transform: rotate(45deg); transition: transform 0.2s; }
+  details[open] summary::after { transform: rotate(-135deg); }
+  .inner { display: grid; gap: 12px; padding-bottom: 14px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; font-family: var(--mono); font-size: 0.8rem; cursor: pointer; }
+  .mono { font-family: var(--mono); font-size: 0.75rem; color: var(--muted); overflow-wrap: anywhere; }
+  .table { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.8rem; }
+  th, td { text-align: left; padding: 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { font-size: 0.7rem; color: var(--muted); font-weight: 600; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  #copy { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font: inherit; font-size: 0.85rem; font-weight: 600; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
+  textarea { width: 100%; min-height: 140px; font-family: var(--mono); font-size: 0.72rem; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; }
+  [hidden] { display: none !important; }
+.scene { position: relative; width: 280px; height: 150px; }
+.scene svg { display: block; width: 100%; height: 100%; }
+.sc-ground { position: absolute; left: 18px; right: 9px; bottom: 7px; height: 1px; background: var(--line); }
+.sc-browser { position: absolute; left: 12px; top: 9px; width: 210px; height: 126px; border: 1px solid var(--line); border-radius: 13px; background: var(--panel); box-shadow: 0 3px 0 var(--sc-shadow); }
+.sc-chrome { position: absolute; inset: 0 0 auto; height: 24px; border-bottom: 1px solid var(--line); }
+.sc-dots { position: absolute; left: 11px; top: 10px; display: flex; gap: 3px; }
+.sc-dots i { width: 3px; height: 3px; border-radius: 50%; background: var(--muted); opacity: .45; }
+.sc-lock { position: absolute; top: 5px; right: 11px; width: 12px; height: 13px; color: var(--accent); }
+.sc-sheet { position: absolute; left: 12px; right: 12px; top: 32px; opacity: 0; will-change: transform, opacity; animation: sc-page 24s linear infinite both; }
+.sc-chat { --sc-phase: -16s; animation-delay: -16s; }
+.sc-payment { --sc-phase: -8s; animation-delay: -8s; }
+.sc-line { position: relative; height: 27px; display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+.scene .sc-icon { flex: none; width: 16px; height: 16px; color: var(--muted); }
+.sc-detail { position: relative; width: 140px; height: 18px; border-radius: 5px; background: var(--pii); }
+.sc-detail::before { content: ""; position: absolute; left: 8px; top: 7px; width: 63%; height: 3px; border-radius: 2px; background: var(--warn); opacity: .34; }
+.sc-short { width: 112px; }
+.sc-medium { width: 126px; }
+.sc-mask { position: absolute; inset: 0; border-radius: inherit; background: var(--mask); transform: scaleX(0); transform-origin: right center; will-change: transform; animation: sc-cover 24s cubic-bezier(.2,.8,.25,1) infinite both; animation-delay: calc(var(--sc-phase, 0s) + var(--sc-step, 0s)); }
+.sc-mask::after { content: ""; position: absolute; left: 13px; top: 7px; width: 57px; height: 4px; background: radial-gradient(circle, var(--dot) 1px, var(--mask) 1.2px) 0 0 / 8px 4px; opacity: .8; }
+.sc-line:nth-child(2) { --sc-step: 1.68s; }
+.sc-line:nth-child(3) { --sc-step: 3.36s; }
+.sc-chat .sc-line { margin-bottom: 1px; height: 26px; padding: 0 5px; gap: 7px; border-radius: 8px 8px 8px 2px; background: var(--bg); }
+.sc-chat .sc-line:nth-child(2) { margin-left: 13px; border-radius: 8px 8px 2px 8px; }
+.sc-chat .sc-detail { height: 16px; width: 139px; }
+.sc-chat .sc-line:nth-child(2) .sc-detail { width: 126px; }
+.sc-chat .sc-mask::after { top: 6px; }
+.sc-payment .sc-line:first-child .sc-detail::before { width: 84%; background: repeating-linear-gradient(90deg, var(--warn) 0 15px, var(--pii) 15px 22px); }
+.sc-device { position: absolute; left: 22px; top: 121px; width: 24px; height: 24px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.sc-shadow { position: absolute; left: 220px; top: 136px; width: 40px; height: 6px; border-radius: 50%; background: var(--sc-shadow); will-change: transform, opacity; animation: sc-shadow 8s ease-in-out infinite; }
+.sc-guide { position: absolute; left: 209px; top: 27px; width: 60px; height: 66px; will-change: transform; animation: sc-patrol 8s cubic-bezier(.5,0,.2,1) infinite; }
+.sc-settle, .sc-buddy { position: relative; width: 100%; height: 100%; will-change: transform; }
+.sc-buddy { animation: sc-nod 8s cubic-bezier(.2,.8,.25,1) infinite; transform-origin: 50% 85%; }
+.sc-eyes { position: absolute; left: 20px; top: 26px; width: 23px; height: 7px; will-change: transform; animation: sc-blink 5.7s linear infinite; }
+.sc-eyes i { position: absolute; width: 4px; height: 7px; border-radius: 3px; background: var(--sc-ink); }
+.sc-eyes i:last-child { right: 0; }
+.sc-hand { position: absolute; left: -17px; top: 19px; width: 29px; height: 18px; transform-origin: 100% 50%; will-change: transform; animation: sc-stamp 8s cubic-bezier(.2,.8,.25,1) infinite; }
+.sc-hand::after { content: ""; position: absolute; left: 8px; top: 6px; width: 20px; height: 9px; border: 1px solid var(--sc-edge); border-radius: 6px; background: var(--sc-mint); transform: rotate(-8deg); }
+.sc-paddle { position: absolute; left: 0; top: 0; width: 10px; height: 19px; border: 1px solid var(--accent-deep); border-radius: 4px; background: var(--accent); }
+.sc-glint, .sc-confetti { position: absolute; width: 11px; height: 11px; color: var(--accent); opacity: 0; will-change: transform, opacity; }
+.sc-glint { left: -22px; top: 10px; animation: sc-glint 8s ease-out infinite; }
+.sc-confetti { left: 226px; top: 47px; color: var(--warn); }
+.sc-confetti.sc-two { left: 255px; top: 38px; width: 8px; height: 8px; color: var(--accent); }
+.sc-confetti.sc-three { left: 264px; top: 67px; width: 6px; height: 6px; color: var(--sc-edge); }
+@keyframes sc-page {
+  0% { opacity: 0; transform: translateY(5px); }
+  2%, 29% { opacity: 1; transform: none; }
+  33.333%, 97% { opacity: 0; transform: translateY(-5px); }
+  100% { opacity: 0; transform: translateY(5px); }
+}
+@keyframes sc-cover {
+  0%, 5%, 80%, 100% { transform: scaleX(0); }
+  7% { transform: scaleX(1.035); }
+  8%, 79% { transform: scaleX(1); }
+}
+@keyframes sc-patrol {
+  0%, 24% { transform: none; }
+  30%, 45% { transform: translateY(27px); }
+  51%, 68% { transform: translateY(54px); }
+  74%, 87% { transform: translateY(39px); }
+  96%, 100% { transform: none; }
+}
+@keyframes sc-nod {
+  0%, 12%, 26%, 33%, 47%, 54%, 70%, 100% { transform: none; }
+  15%, 36%, 57% { transform: rotate(5deg) scale(.97,1.03); }
+  20%, 41%, 62% { transform: rotate(-4deg) scale(1.03,.97); }
+  24%, 45%, 66% { transform: none; }
+  78%, 84% { transform: rotate(-3deg) translateY(-2px); }
+}
+@keyframes sc-stamp {
+  0%, 11%, 26%, 32%, 47%, 53%, 69%, 100% { transform: translateX(3px) rotate(0); }
+  15%, 36%, 57% { transform: translateX(5px) rotate(12deg); }
+  19%, 40%, 61% { transform: translateX(-4px) rotate(-8deg); }
+  24%, 45%, 66% { transform: translateX(0) rotate(0); }
+  77%, 85% { transform: translateX(3px) rotate(-15deg); }
+}
+@keyframes sc-glint {
+  0%, 17%, 27%, 38%, 48%, 59%, 70%, 100% { opacity: 0; transform: scale(.3) rotate(-20deg); }
+  20%, 41%, 62% { opacity: 1; transform: scale(1) rotate(10deg); }
+  25%, 46%, 67% { opacity: 0; transform: translate(-4px,-5px) scale(.6) rotate(35deg); }
+}
+@keyframes sc-shadow {
+  0%, 24%, 100% { transform: scaleX(.65); opacity: .4; }
+  51%, 68% { transform: scaleX(1); opacity: .9; }
+  78%, 87% { transform: scaleX(.8); opacity: .65; }
+}
+@keyframes sc-blink { 0%, 42%, 46%, 96%, 100% { transform: scaleY(1); } 44%, 98% { transform: scaleY(.12); } }
+body[data-state="done"] .sc-sheet { animation: none; opacity: 0; transform: none; }
+body[data-state="done"] .sc-profile { opacity: 1; }
+body[data-state="done"] .sc-mask { animation: none; transform: scaleX(1); opacity: 1; }
+body[data-state="done"] .sc-guide { animation: none; transform: translateY(39px); }
+body[data-state="done"] .sc-settle { animation: sc-cheer .95s cubic-bezier(.2,.8,.25,1) both; }
+body[data-state="done"] .sc-buddy { animation: sc-idle 5s ease-in-out .95s infinite; }
+body[data-state="done"] .sc-hand { animation: none; transform: rotate(-15deg); }
+body[data-state="done"] .sc-glint { animation: none; opacity: 0; }
+body[data-state="done"] .sc-shadow { animation: none; transform: scaleX(.8); opacity: .65; }
+body[data-state="done"] .sc-confetti { animation: sc-celebrate 1.1s cubic-bezier(.2,.8,.25,1) both; }
+body[data-state="done"] .sc-two { animation-delay: .1s; }
+body[data-state="done"] .sc-three { animation-delay: .18s; }
+@keyframes sc-cheer {
+  0% { transform: scale(1); }
+  18% { transform: translateY(3px) scale(1.08,.92); }
+  46% { transform: translateY(-12px) rotate(-8deg) scale(.97,1.03); }
+  70% { transform: translateY(1px) rotate(3deg) scale(1.04,.96); }
+  100% { transform: none; }
+}
+@keyframes sc-idle { 0%, 100% { transform: none; } 50% { transform: translateY(-2px) rotate(-2deg); } }
+@keyframes sc-celebrate {
+  0%, 15% { opacity: 0; transform: translateY(9px) scale(.2) rotate(-20deg); }
+  40% { opacity: 1; transform: translateY(-3px) scale(1.15) rotate(15deg); }
+  100% { opacity: 0; transform: translateY(-11px) scale(.4) rotate(45deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene *, .scene *::before, .scene *::after { animation: none !important; }
+  .scene .sc-sheet { opacity: 0; transform: none; }
+  .scene .sc-profile { opacity: 1; }
+  .scene .sc-mask { transform: scaleX(1); opacity: 1; }
+  .scene .sc-guide { transform: translateY(39px); }
+  .scene .sc-hand { transform: rotate(-15deg); }
+  .scene .sc-shadow { transform: scaleX(.8); opacity: .65; }
+}
+  /* ?anim=0: the same still frame as reduced motion */
+  body.still .scene *, body.still .scene *::before, body.still .scene *::after { animation: none !important; }
+  body.still .scene .sc-sheet { opacity: 0; transform: none; }
+  body.still .scene .sc-profile { opacity: 1; }
+  body.still .scene .sc-mask { transform: scaleX(1); opacity: 1; }
+  body.still .scene .sc-guide { transform: translateY(39px); }
+  body.still .scene .sc-hand { transform: rotate(-15deg); }
+  body.still .scene .sc-shadow { transform: scaleX(.8); opacity: .65; }
+  @media (max-width: 345px) { .scene { transform: scale(.86); transform-origin: top center; margin-bottom: -21px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="sc-shield" viewBox="0 0 60 66"><path d="m17 57 7-1q4 0 4 3t-3 4l-8 1q-4 0-4-3t4-4Zm19-1 8 1q4 1 3 5t-5 2l-7-2q-3-1-2-4t3-2Z" fill="var(--sc-mint)" stroke="var(--sc-edge)" stroke-width="1.2"/><path d="M30 4C22 8 13 9 8 11v19c0 14 8 24 19 30a6 6 0 0 0 6 0c11-6 19-16 19-30V11C47 9 38 8 30 4Z" fill="var(--sc-edge)"/><path d="M30 3C22 7 13 8 8 10v18c0 14 8 24 19 30a6 6 0 0 0 6 0c11-6 19-16 19-30V10C47 8 38 7 30 3Z" fill="var(--sc-mint)" stroke="var(--sc-edge)" stroke-width="1.2" stroke-linejoin="round"/><path d="M14 15c6-1 11-3 16-5l12 4" fill="none" stroke="var(--sc-shine)" stroke-width="2.5" stroke-linecap="round" opacity=".75"/><ellipse cx="17" cy="36" rx="4" ry="2.5" fill="var(--sc-cheek)"/><ellipse cx="45" cy="36" rx="4" ry="2.5" fill="var(--sc-cheek)"/><path d="M27 37q4 4 8 0" fill="none" stroke="var(--sc-ink)" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="sc-person" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="10" cy="6" r="3"/><path d="M4 17v-1a6 6 0 0 1 12 0v1Z" stroke-linejoin="round"/></symbol>
+  <symbol id="sc-mail" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="16" height="12" rx="3"/><path d="m3 6 7 5 7-5" stroke-linejoin="round"/></symbol>
+  <symbol id="sc-pin" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M16 8c0 5-6 10-6 10S4 13 4 8a6 6 0 0 1 12 0Z"/><circle cx="10" cy="8" r="2"/></symbol>
+  <symbol id="sc-phone" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="5" y="2" width="10" height="16" rx="3"/><path d="M9 14.5h2" stroke-width="1.5" stroke-linecap="round"/></symbol>
+  <symbol id="sc-card" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="4" width="16" height="12" rx="3"/><path d="M2 8h16M5 12h3" stroke-linecap="round"/></symbol>
+  <symbol id="sc-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="2" fill="currentColor"/><path d="M5 7V5a3 3 0 0 1 6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="sc-chip" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="4" y="4" width="12" height="12" rx="3"/><path d="M7 1v3m6-3v3M7 16v3m6-3v3M1 7h3m-3 6h3m12-6h3m-3 6h3M7 10l2 2 4-4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="sc-star" viewBox="0 0 12 12"><path d="M6 0 7.7 4.3 12 6 7.7 7.7 6 12 4.3 7.7 0 6 4.3 4.3Z" fill="currentColor"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18h2"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6L6 6M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M7 18a5 5 0 1 1 .9-9.9A6 6 0 0 1 19 10a4 4 0 0 1 0 8"/><path d="M12 12v8M9 15l3-3 3 3"/></symbol>
+  <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6 0 9.5 7 9.5 7a17 17 0 0 1-2.6 3.4M6.3 6.3C3.9 7.9 2.5 12 2.5 12S6 19 12 19a9.7 9.7 0 0 0 5.2-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2.5V6M15 2.5V6M9 18v3.5M15 18v3.5M2.5 9H6M2.5 15H6M18 9h3.5M18 15h3.5"/></symbol>
+  <symbol id="i-text" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></symbol>
+</svg>
+
+<main>
+  <header>
+    <div class="logo"><svg class="i"><use href="#i-shield"/></svg></div>
+    <div><h1>PII Bench</h1><div class="sub">newmean.ai</div></div>
+    <label class="lang"><svg class="i"><use href="#i-globe"/></svg><select id="lang" aria-label="Language"></select></label>
+  </header>
+
+  <section class="card">
+    <div id="idle">
+      <p class="tagline" data-i18n="tagline"></p>
+      <div class="devname"><svg class="i"><use href="#i-phone"/></svg><div class="devcol"><select id="model" hidden aria-label="iPhone"></select><input id="model-other" type="text" hidden autocomplete="off"><span id="devname"></span></div></div>
+      <button id="run" type="button"><svg class="i"><use href="#i-play"/></svg><span data-i18n="start"></span></button>
+    </div>
+
+    <div id="meter" class="meter">
+<div class="scene" aria-hidden="true">
+  <div class="sc-ground"></div>
+  <div class="sc-browser">
+    <div class="sc-chrome"><span class="sc-dots"><i></i><i></i><i></i></span><span class="sc-lock"><svg><use href="#sc-lock"/></svg></span></div>
+    <div class="sc-sheet sc-profile">
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-person"/></svg><span class="sc-detail sc-short"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-mail"/></svg><span class="sc-detail"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-pin"/></svg><span class="sc-detail sc-medium"><span class="sc-mask"></span></span></div>
+    </div>
+    <div class="sc-sheet sc-chat">
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-person"/></svg><span class="sc-detail"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-phone"/></svg><span class="sc-detail"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-mail"/></svg><span class="sc-detail"><span class="sc-mask"></span></span></div>
+    </div>
+    <div class="sc-sheet sc-payment">
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-card"/></svg><span class="sc-detail"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-pin"/></svg><span class="sc-detail sc-medium"><span class="sc-mask"></span></span></div>
+      <div class="sc-line"><svg class="sc-icon"><use href="#sc-person"/></svg><span class="sc-detail sc-short"><span class="sc-mask"></span></span></div>
+    </div>
+  </div>
+  <span class="sc-device"><svg><use href="#sc-chip"/></svg></span>
+  <div class="sc-shadow"></div>
+  <div class="sc-guide"><div class="sc-settle"><div class="sc-buddy">
+    <svg><use href="#sc-shield"/></svg>
+    <div class="sc-eyes"><i></i><i></i></div>
+    <div class="sc-hand"><i class="sc-paddle"></i></div>
+    <span class="sc-glint"><svg><use href="#sc-star"/></svg></span>
+  </div></div></div>
+  <span class="sc-confetti"><svg><use href="#sc-star"/></svg></span><span class="sc-confetti sc-two"><svg><use href="#sc-star"/></svg></span><span class="sc-confetti sc-three"><svg><use href="#sc-star"/></svg></span>
+</div>
+      <div class="ring">
+        <svg viewBox="0 0 120 120" aria-hidden="true"><circle class="track" cx="60" cy="60" r="52"/><circle id="ring" cx="60" cy="60" r="52"/></svg>
+        <div class="mid"><span id="pct" role="status" aria-live="polite">0%</span><svg class="i ok"><use href="#i-check"/></svg></div>
+      </div>
+      <div id="done-text" data-i18n="done"></div>
+      <div id="eta"></div>
+      <div id="steps" aria-hidden="true"></div>
+      <div id="now"><svg class="i p-download"><use href="#i-download"/></svg><svg class="i p-init"><use href="#i-cpu"/></svg><svg class="i p-run"><use href="#i-text"/></svg><svg class="i p-check"><use href="#i-check"/></svg><span id="now-text"></span></div>
+    </div>
+
+    <ul class="facts" id="idle-facts">
+      <li><svg class="i"><use href="#i-clock"/></svg><span data-i18n="time"></span></li>
+      <li><svg class="i"><use href="#i-sun"/></svg><span data-i18n="screen"></span></li>
+      <li><svg class="i"><use href="#i-upload"/></svg><span data-i18n="auto"></span></li>
+      <li><svg class="i"><use href="#i-eyeoff"/></svg><span data-i18n="privacy"></span></li>
+    </ul>
+    <p id="note" hidden></p>
+  </section>
+
+  <details id="results">
+    <summary><svg class="i"><use href="#i-table"/></svg><span data-i18n="results"></span></summary>
+    <div class="inner">
+      <div class="table">
+        <table>
+          <thead><tr><th></th><th></th><th class="num">init</th><th class="num">40</th><th class="num">252</th><th class="num">1000 tok</th><th class="num"></th><th class="num">ref</th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <button id="copy" type="button" hidden><svg class="i"><use href="#i-copy"/></svg><span id="copy-label" data-i18n="copy"></span></button>
+      <textarea id="dump" hidden aria-label="Results"></textarea>
+    </div>
+  </details>
+
+  <details>
+    <summary><svg class="i"><use href="#i-sliders"/></svg><span data-i18n="options"></span></summary>
+    <div class="inner">
+      <div class="chips" role="group" aria-label="Model size">
+        <label><input type="checkbox" id="size-nano" checked> nano</label>
+        <label><input type="checkbox" id="size-small" checked> small</label>
+        <label><input type="checkbox" id="size-medium" checked> medium</label>
+        <label><input type="checkbox" id="size-large" checked> large</label>
+      </div>
+      <div class="chips" role="group" aria-label="Engine">
+        <label><input type="checkbox" id="engine-builtin" checked> builtin</label>
+        <label><input type="checkbox" id="engine-onnxruntime" checked> onnxruntime</label>
+      </div>
+      <div class="mono" id="devinfo"></div>
+    </div>
+  </details>
+</main>
+<script type="module" src="app/main.js"></script>

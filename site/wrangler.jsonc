@@ -1,0 +1,17 @@
+// pii.newmean.ai: static pages (public/) plus a small Worker for the demo at the root, the gated phone-bench model files and
+// the results API. Build first (see README.md): node ../js/playground/build.mjs public/demo &&
+//   node ../js/experiments/phone-bench/build.mjs public/mobile-bench <models dir>
+{
+  "name": "pii-site",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/", "/mobile-bench", "/mobile-bench/models/*", "/api/*"]
+  },
+  // Create with `wrangler d1 create pii-site`, then put the database_id it prints here; set up the table with schema.sql.
+  "d1_databases": [{ "binding": "DB", "database_name": "pii-site", "database_id": "<your-d1-database-id>" }],
+  "routes": [{ "pattern": "pii.newmean.ai", "custom_domain": true }],
+  "observability": { "enabled": true }
+}
