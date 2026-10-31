@@ -54,6 +54,8 @@ models behind the JavaScript SDK [`@newmean-ai/pii`](https://www.npmjs.com/packa
 
 ## Use
 
+Try it in your browser first: [pii.newmean.ai](https://pii.newmean.ai).
+
 ```bash
 npm install @newmean-ai/pii
 ```
@@ -94,7 +96,8 @@ public test dataset's texts. The public test dataset is generated with the same 
 these models have an in-distribution advantage there; the external sets were never used for training. On the public test
 dataset the closest of the eight public detectors we compared (gliner-pii-edge, 176 MB) misses 19.7%; the
 [leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard) scores them weekly on the public and a private test set. The full
-comparison, per-label and per-language results are in the technical report.
+comparison, per-label and per-language results are in the
+[technical report](https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md).
 
 ## Model
 

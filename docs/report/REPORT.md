@@ -200,7 +200,7 @@ describes the method in enough detail to judge it without the code.
 ### 4.3 Samples
 
 Rows of the v1.0 validation set whose labels both blind reviewers reproduced exactly; the inline tags are the data format
-(Section 4.1, M6). All values are fictional.
+(Section 4.1, M6). The values are generated and meant to be fictional.
 
 | language · format · twist | text with tags |
 |---|---|
