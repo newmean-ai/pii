@@ -79,7 +79,7 @@ Gretel에서 라이브러리의 긴 글 모드로 돌렸습니다. 휴대폰(네
 - SDK 코드와 모델 가중치: [Apache-2.0](LICENSE).
 - 제품에 쓰신다면 문서나 소개·라이선스 화면에 "Powered by newmean.ai"를 표시해 주시면 감사하겠습니다(라이선스 조건이 아니라 요청입니다).
 - 공개 테스트셋: CC BY-NC 4.0(연구와 평가; 상업적 사용은 문의).
-- 학습·검증 데이터: [데이터 요청 양식](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform)으로 요청 시 제공(연구용은 무료; 상업적 사용은 문의). 조건은 승인 메일이나 계약서로 드립니다([tools/data-request](tools/data-request)).
+- 학습·검증 데이터: [데이터 요청 양식](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform)으로 요청 시 제공(연구용은 무료; 상업적 사용은 문의; 신청은 지금 받고 데이터는 2026년 12월부터 공유). 조건은 승인 메일이나 계약서로 드립니다([tools/data-request](tools/data-request)).
 - 제3자 저작권 표시: [NOTICE](NOTICE).
 
 [newmean.ai](https://newmean.ai)가 만들었습니다.

@@ -128,6 +128,6 @@ per-language and per-level numbers and the conditions of the comparison are in t
 ## License and use
 
 CC BY-NC 4.0: free for research and evaluation with attribution. For commercial use contact hoonjae@newmean.ai. The training and validation data are not on the Hub; request them
-through the [data request form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform).
+through the [data request form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform) (requests open now; the data is shared from December 2026).
 
 Made by [newmean.ai](https://newmean.ai).

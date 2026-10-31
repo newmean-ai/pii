@@ -426,7 +426,7 @@ onnxruntime)에서, 트랜스포머 탐지기는 L4 GPU에서 돌렸다.
 `@newmean-ai/pii`(코드는 https://github.com/newmean-ai/pii), 네 모델은 https://huggingface.co/newmean-ai (pii-nano,
 pii-small, pii-medium, pii-large)에 있다. 공개 테스트셋(https://huggingface.co/datasets/newmean-ai/pii-multilingual-test)은
 CC BY-NC 4.0으로 연구와 평가에 무료, 상업 사용은 문의. 공개·비공개 테스트셋 점수는
-https://huggingface.co/spaces/newmean-ai/pii-leaderboard 에, 데모는 https://pii.newmean.ai 에 있다. 학습·검증 데이터는 [양식](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform)을 통한 요청으로 제공한다(연구는 비상업 라이선스로 무료; 사업 사용은 상업 라이선스로, 문의; 연락처
+https://huggingface.co/spaces/newmean-ai/pii-leaderboard 에, 데모는 https://pii.newmean.ai 에 있다. 학습·검증 데이터는 [양식](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform)을 통한 요청으로 제공한다(신청은 지금 받고 데이터는 2026년 12월부터 공유; 연구는 비상업 라이선스로 무료; 사업 사용은 상업 라이선스로, 문의; 연락처
 hoonjae@newmean.ai). 비공개 테스트셋과 교사 모델은 비공개로 남는다. 생성기 코드, 프롬프트, 국가 명세, 이름 풀은 공개하지 않으며,
 이 보고서와 부록 M이 방법을 설명한다.
 

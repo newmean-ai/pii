@@ -80,7 +80,7 @@ the 11.3 MB model takes about 26 ms for a 40-token message.
 - SDK code and model weights: [Apache-2.0](LICENSE).
 - If you use them in a product, we would appreciate a "Powered by newmean.ai" mention in your docs or an about or licenses screen (a request, not a license condition).
 - Public test dataset: CC BY-NC 4.0 (research and evaluation; commercial use by inquiry).
-- Training and validation data: on request through the [data request form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform) (research use free; commercial use by inquiry); the terms come with the approval email or the contract ([tools/data-request](tools/data-request)).
+- Training and validation data: on request through the [data request form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform) (research use free; commercial use by inquiry; requests open now, data shared from December 2026); the terms come with the approval email or the contract ([tools/data-request](tools/data-request)).
 - Third-party attributions: [NOTICE](NOTICE).
 
 Made by [newmean.ai](https://newmean.ai).

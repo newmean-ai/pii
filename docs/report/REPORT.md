@@ -445,7 +445,7 @@ that every value is fictional. We will remove any value on request (hoonjae@newm
 https://huggingface.co/newmean-ai (pii-nano, pii-small, pii-medium, pii-large). The public test dataset
 (https://huggingface.co/datasets/newmean-ai/pii-multilingual-test) under CC BY-NC 4.0: free for research and evaluation,
 commercial use by inquiry; scores on it and on the private test dataset at
-https://huggingface.co/spaces/newmean-ai/pii-leaderboard, and a demo at https://pii.newmean.ai. Training and validation data on request through a [form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform) (research free under a
+https://huggingface.co/spaces/newmean-ai/pii-leaderboard, and a demo at https://pii.newmean.ai. Training and validation data on request through a [form](https://docs.google.com/forms/d/e/1FAIpQLScSMp2UvhNIlzc0EkDc2i6TwqKSzFc4bLR45DCnZSESlJzHzA/viewform) (requests open now, data shared from December 2026; research free under a
 non-commercial license; business use under a commercial license, by inquiry; contact hoonjae@newmean.ai). The private test dataset
 and the teachers remain private. The generator code, prompts, country specs and name pools are not released; this report and
 Appendix M describe the method.
