@@ -115,8 +115,7 @@ modelFile(size, file)          // 'q4', 'q4e', 'tokenizer'의 공개 경로·크
 테스트): large·medium·small(q4, q4e), nano q4e, sensitivity 0.5의 medium q4e는 412/412, sensitivity 0과 −1의 nano q4는
 410/412. 다른 두 행에서는 평가기가 레이블이 다른 겹친 스팬 두 개를 내고, `detect`는 npm 패키지처럼 이를 한 영역으로
 합칩니다. 이모지, 국기, 결합 문자, CRLF, NUL, 짝 없는 서로게이트를 섞은 합성 텍스트 151개(nano·medium, `regex` 켜고
-끈 경우)에서 스팬, source, 세 가지 가림 모드 결과가 604건 중 592건 npm 패키지와 같았습니다. 다른 12건은 아래의 알려진
-차이 두 가지입니다.
+끈 경우)에서 스팬, source, 세 가지 가림 모드 결과가 604건 모두 npm 패키지와 같았습니다.
 
 Apple M5 Pro(macOS)에서 한 번에 한 호출, 한 문장 텍스트 기준 `detect` 속도: nano 약 11 ms, medium 약 16 ms(백그라운드
 isolate가 약 0.5 ms를 더함). 폴더에서 로드(SHA-256 검사 포함): nano 40 ms, medium 110 ms, large 145 ms. 휴대폰은 더
@@ -128,18 +127,10 @@ isolate가 약 0.5 ms를 더함). 폴더에서 로드(SHA-256 검사 포함): na
 ## 동작 방식
 
 이 패키지는 저장소의 `native/core`를 컴파일합니다. Python·Android·iOS·Flutter 패키지가 함께 쓰는 C 라이브러리
-하나입니다. 공개된 ONNX 파일을 직접 읽고(ONNX Runtime 없음), Hugging Face `tokenizers`와 똑같이 토큰화하며, 로짓은 npm
+하나입니다. 공개된 ONNX 파일을 직접 읽고(ONNX Runtime 없음), npm 패키지와 똑같이 토큰화하며(토큰 id와 오프셋이 같음), 로짓은 npm
 패키지의 WebAssembly 엔진과 비트 단위로 같습니다. 패턴 레이어(`regexSpans`, npm 패키지 `regex.ts`의 포팅)와 마스킹
 방식은 Dart로 되어 있고, 패턴 스팬은 npm 패키지의 `combine`과 같은 규칙으로 C 코어에서 모델 스팬과 합쳐집니다. 곱셈과
 덧셈을 합치지(fuse) 않게 빌드하므로 모든 CPU에서 결과가 같고, 같은 이유로 32비트 ARM은 엔진의 스칼라 경로를 씁니다.
-
-npm 패키지와 알려진 차이(둘 다 드묾):
-
-- 토크나이저의 정규화가 결합 문자열(예: `e` + U+0301)을 바꾸는 곳에서는 스팬 경계가 결합 문자 뒤가 아니라 앞에 놓이거나,
-  스팬이 그 자리에서 둘로 나뉠 수 있습니다. 일치 테스트 텍스트에서 바뀐 스팬은 없었습니다.
-- 레이블이 다른 스팬이 겹치거나 패턴 매치에 걸쳐 하나로 합쳐질 때(주로 `regex: true`), 합친 영역은 가장 긴 모델 스팬의
-  레이블을 받습니다. 그 길이를 코어는 코드 포인트로, npm 패키지는 UTF-16 단위로 재므로, 영역 안에 이모지처럼 BMP 밖의
-  문자가 있으면 레이블이 다를 수 있습니다(영역 자체는 같음).
 
 ## 개발
 

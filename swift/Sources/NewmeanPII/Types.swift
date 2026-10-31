@@ -95,7 +95,7 @@ public struct PIISpan: Sendable, Hashable {
   }
 }
 
-/// A token of the model's tokenizer (without `<s>` and `</s>`), with offsets as Hugging Face tokenizers gives them.
+/// A token of the model's tokenizer (without `<s>` and `</s>`), with offsets as the npm package's tokenizer gives them.
 public struct PIIToken: Sendable, Hashable {
   public let id: Int
   public let range: Range<String.Index>

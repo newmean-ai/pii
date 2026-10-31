@@ -115,8 +115,7 @@ parity test of the npm package): 412/412 for large, medium and small (q4 and q4e
 sensitivity 0.5; 410/412 for nano q4 at sensitivity 0 and −1. In the two differing rows the evaluator reports two
 overlapping spans with different labels, which `detect` merges into one region, as the npm package does. On 151
 synthetic texts with emoji, flags, combining marks, CRLF, NUL and lone surrogates mixed in (nano and medium, with and
-without `regex`), spans, sources and all three redaction modes equal the npm package's in 592 of 604 cases; the 12
-differences are the two known ones below.
+without `regex`), spans, sources and all three redaction modes equal the npm package's in all 604 cases.
 
 Speed on Apple M5 Pro (macOS), one call at a time, a one-sentence text: nano about 11 ms, medium about 16 ms per `detect`
 (the background isolate adds about 0.5 ms). Loading from a folder, SHA-256 checks included: nano 40 ms, medium 110 ms,
@@ -129,19 +128,11 @@ Accuracy across 54 languages and against other detectors: the
 ## How it works
 
 The package compiles `native/core` of the repository: one C library shared by the Python, Android, iOS and Flutter
-packages. It reads the published ONNX files directly (no ONNX Runtime), tokenizes like Hugging Face `tokenizers`, and its
-logits are bit-identical to the npm package's WebAssembly engine. The pattern layer (`regexSpans`, a port of the npm
+packages. It reads the published ONNX files directly (no ONNX Runtime), tokenizes like the npm package (token ids and
+offsets equal), and its logits are bit-identical to the npm package's WebAssembly engine. The pattern layer (`regexSpans`, a port of the npm
 package's `regex.ts`) and the redaction modes are Dart; pattern spans are merged with the model's in the C core, by the
 same rule as the npm package's `combine`. Builds never fuse multiply and add, so results are the same on every CPU; 32-bit
 ARM uses the engine's scalar path for the same reason.
-
-Known differences from the npm package, both rare:
-
-- Where the tokenizer's normalizer rewrites a combining sequence (for example `e` + U+0301), a span edge can fall before
-  the combining mark instead of after it, or a span can be split there. It changed no span on the parity texts.
-- When spans of different labels overlap or touch a pattern match (mostly with `regex: true`), the merged region takes the
-  label of the longest model span. The core measures that length in code points and the npm package in UTF-16 units, so
-  with emoji or other characters outside the BMP inside the region the label can differ (the region itself is the same).
 
 ## Development
 

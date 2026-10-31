@@ -1,6 +1,7 @@
 // Unigram tokenizer, a port of js/src/tokenizer.ts (which reproduces the Hugging Face `tokenizers` pipeline of the model):
 // Precompiled (SentencePiece) normalizer over extended grapheme clusters -> WhitespaceSplit -> Metaspace("▁", prepend
 // always, split) -> Unigram (Viterbi). Works on code points; offsets are code point indices of the original text.
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -139,17 +140,9 @@ typedef struct {
   size_t s, e;
 } aligned;
 
-typedef struct {  // a normalized character and its alignment change (tokenizers' NormalizedString::transform)
-  uint32_t ch;
-  int32_t change;  // 0: replaces one original character, > 0: inserted, < 0: replaces 1 - change characters
-} tchar;
-
-// Replacement characters with their alignment changes, as `replace` in tokenizers' precompiled.rs: every new character
-// has change 0, except that the last (new - old) characters get +1 when the replacement is longer, and the last pushed
-// character (possibly from an earlier part) absorbs the difference when it is shorter. Code points as TextDecoder reads
-// the UTF-8 bytes (each maximal invalid subpart becomes one U+FFFD).
-static int push_replacement(pii_vec *out, const uint8_t *s, size_t n, size_t old_count) {
-  const size_t first = out->n;
+// Replacement characters, each aligned to the original range [s, e). Code points as TextDecoder reads the UTF-8 bytes
+// (each maximal invalid subpart becomes one U+FFFD).
+static int push_replacement(pii_vec *out, const uint8_t *s, size_t n, size_t from, size_t to) {
   size_t i = 0;
   while (i < n) {
     uint8_t c = s[i];
@@ -169,17 +162,13 @@ static int push_replacement(pii_vec *out, const uint8_t *s, size_t n, size_t old
         if (t == need) v = x;
       }
     }
-    tchar *e = pii_vec_push(out);
+    aligned *e = pii_vec_push(out);
     if (!e) return -1;
     e->ch = v;
+    e->s = from;
+    e->e = to;
     i = j;
   }
-  const size_t added = out->n - first;
-  tchar *tc = out->p;
-  if (added > old_count)
-    for (size_t k = out->n - (added - old_count); k < out->n; k++) tc[k].change = 1;
-  else if (added < old_count && out->n)
-    tc[out->n - 1].change -= (int32_t)(old_count - added);
   return 0;
 }
 
@@ -309,7 +298,7 @@ pii_tok *pii_tok_load(const uint8_t *json, size_t n, char *err, size_t errlen) {
   }
   for (size_t i = 0; i < count && (i + 1) * 4 <= raw_n; i++) memcpy(&t->scores[i], raw + i * 4, 4);
   free(raw);
-  double mn = 1.0 / 0.0;
+  double mn = HUGE_VAL;
   for (size_t i = 0; i < count; i++) mn = t->scores[i] < mn ? t->scores[i] : mn;
   t->unk_score = mn - UNK_PENALTY;
   // trie nodes: at most one per piece character, plus the root
@@ -390,7 +379,6 @@ fail:
 
 // ---------------------------------------------------------------- encoding
 typedef struct {
-  pii_vec trans;  // tchar
   pii_vec chars;  // aligned
   pii_vec word;   // aligned: a piece with "▁" prepended
   pii_vec score;  // double
@@ -400,14 +388,13 @@ typedef struct {
   int unk_prev;
 } scratch;
 
-// Normalized characters of cps[a, b), each aligned to the original character it came from. Graphemes and characters are
-// replaced as tokenizers' Precompiled normalizer does, then aligned like NormalizedString::transform: a character with
-// change <= 0 takes the range of the original character under the cursor and moves it 1 - change characters on; an
-// inserted one (change > 0) takes the range of the character before the cursor. (tokenizer.ts instead aligns every
-// character of a replaced grapheme to the whole grapheme, which differs from Hugging Face on a few combining sequences.)
-static int normalize(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, pii_vec *trans, pii_vec *out) {
+// Normalized characters of cps[a, b), each aligned to the original characters it came from, as tokenizer.ts does: a
+// grapheme the Precompiled normalizer replaces as a whole aligns every new character to the whole grapheme; otherwise
+// each character (replaced or kept) aligns to itself. (Hugging Face's NormalizedString::transform differs on a few
+// combining sequences; all packages follow the npm SDK.)
+static int normalize(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, pii_vec *out) {
   uint8_t key[64];
-  trans->n = 0;
+  out->n = 0;
   for (size_t i = a; i < b;) {
     const size_t end = grapheme_end(cps, i, b);
     size_t bytes = 0;
@@ -418,7 +405,7 @@ static int normalize(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, 
       const uint8_t *rep;
       size_t rep_n;
       if (transform(t, key, kn, &rep, &rep_n)) {
-        if (push_replacement(trans, rep, rep_n, end - i)) return -1;
+        if (push_replacement(out, rep, rep_n, i, end)) return -1;
         i = end;
         continue;
       }
@@ -428,31 +415,17 @@ static int normalize(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, 
       const uint8_t *rep;
       size_t rep_n;
       if (transform(t, key, kn, &rep, &rep_n)) {
-        if (push_replacement(trans, rep, rep_n, 1)) return -1;
+        if (push_replacement(out, rep, rep_n, k, k + 1)) return -1;
       } else {
-        tchar *e = pii_vec_push(trans);
+        aligned *e = pii_vec_push(out);
         if (!e) return -1;
         e->ch = cps[k];
+        e->s = k;
+        e->e = k + 1;
       }
     }
     i = end;
   }
-  if (pii_vec_reserve(out, trans->n)) return -1;
-  const tchar *tc = trans->p;
-  aligned *o = out->p;
-  size_t cur = a;
-  for (size_t k = 0; k < trans->n; k++) {
-    o[k].ch = tc[k].ch;
-    if (tc[k].change > 0) {
-      o[k].s = cur > a ? cur - 1 : a;  // tokenizers: the previous character's alignment, or (0, 0) at the start
-      o[k].e = cur > a ? cur : a;
-    } else {
-      o[k].s = cur < b ? cur : b;
-      o[k].e = cur < b ? cur + 1 : b;
-      cur += 1 + (size_t)(-(int64_t)tc[k].change);
-    }
-  }
-  out->n = trans->n;
   return 0;
 }
 
@@ -461,7 +434,7 @@ static int viterbi(const pii_tok *t, const aligned *w, size_t n, scratch *sc, pi
   double *best = sc->score.p;
   int32_t *bid = sc->bid.p, *bstart = sc->bstart.p;
   for (size_t i = 0; i <= n; i++) {
-    best[i] = -1.0 / 0.0;
+    best[i] = -HUGE_VAL;
     bid[i] = -1;
     bstart[i] = -1;
   }
@@ -531,7 +504,7 @@ static int viterbi(const pii_tok *t, const aligned *w, size_t n, scratch *sc, pi
 static int run(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, scratch *sc, pii_vec *ids, pii_vec *st, pii_vec *en) {
   if (b <= a) return 0;
   sc->chars.n = 0;
-  if (normalize(t, cps, a, b, &sc->trans, &sc->chars)) return -1;
+  if (normalize(t, cps, a, b, &sc->chars)) return -1;
   const aligned *ch = sc->chars.p;
   const size_t n = sc->chars.n;
   for (size_t i = 0; i < n;) {
@@ -593,7 +566,6 @@ static size_t match_special(const pii_tok *t, const uint32_t *cps, size_t n, siz
 int pii_tok_encode(const pii_tok *t, const uint32_t *cps, size_t n, pii_vec *ids, pii_vec *st, pii_vec *en) {
   scratch sc;
   memset(&sc, 0, sizeof sc);
-  pii_vec_init(&sc.trans, sizeof(tchar));
   pii_vec_init(&sc.chars, sizeof(aligned));
   pii_vec_init(&sc.word, sizeof(aligned));
   pii_vec_init(&sc.score, sizeof(double));
@@ -621,7 +593,6 @@ int pii_tok_encode(const pii_tok *t, const uint32_t *cps, size_t n, pii_vec *ids
     last = i = e;
   }
   if (!rc) rc = run(t, cps, last, n, &sc, ids, st, en);
-  pii_vec_free(&sc.trans);
   pii_vec_free(&sc.chars);
   pii_vec_free(&sc.word);
   pii_vec_free(&sc.score);

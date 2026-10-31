@@ -3,10 +3,9 @@
  * One C library shared by the Python, Android, iOS and Flutter packages. It reads the published model files
  * (onnx/model_<variant>.onnx and tokenizer.web.json from https://huggingface.co/newmean-ai/pii-<size>), tokenizes,
  * runs the model and decodes spans like detect() of the npm package @newmean-ai/pii with regex: false: the same token
- * ids, logits bit-identical to its wasm engine (see pii_build_info), and token offsets that follow Hugging Face
- * tokenizers, which differ from the npm package only where the normalizer rewrites a combining sequence such as
- * "e" + U+0301 (see pii_tokenize). The pattern (regex) layer and the redaction modes are left to each language; their
- * spans can be merged here (pii_options.extra) so that every package shares one combine step.
+ * ids and token offsets, and logits bit-identical to its wasm engine (see pii_build_info). The pattern (regex) layer
+ * and the redaction modes are left to each language; their spans can be merged here (pii_options.extra) so that every
+ * package shares one combine step.
  *
  * Threads: a pii_model is immutable after pii_model_load; any number of threads may call pii_detect and pii_tokenize
  * on the same model at once (each call uses its own scratch memory). Nothing is global.
@@ -154,8 +153,8 @@ PII_API int pii_detect(const pii_model *model, const char *utf8, size_t len, con
                        size_t *n_out);
 PII_API void pii_spans_free(pii_span *spans);
 
-/* Token ids and offsets without <s> and </s>, as Hugging Face tokenizers gives them (ids as the npm tokenizer; offsets of
- * characters replaced inside a grapheme, e.g. "e" + U+0301, follow Hugging Face where tokenizer.ts differs). */
+/* Token ids and offsets without <s> and </s>, as the npm package's tokenizer gives them: the ids and offsets of Hugging
+ * Face tokenizers, except that a grapheme the normalizer replaces (e.g. "e" + U+0301) aligns as a whole. */
 PII_API int pii_tokenize(const pii_model *model, const char *utf8, size_t len, pii_token **out, size_t *n_out);
 PII_API void pii_tokens_free(pii_token *tokens);
 

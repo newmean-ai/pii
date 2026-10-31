@@ -92,8 +92,8 @@ PIIRegex.spans(in: text)                         // the pattern layer on its own
 
 `PIISpan` has `range` (`Range<String.Index>` in the text it was detected in), `utf16Range` (NSString / NSRange offsets,
 the npm package's `start` and `end`), `scalarRange` (Unicode scalars, Python's offsets), `label` and `source`
-(`.model`, `.regex`, `.modelAndRegex`). Spans fall on Unicode scalar boundaries but can end inside a Character (before a
-combining mark): slice with `text.unicodeScalars[span.range]` or `utf16Range`, not `text[span.range]`, which Swift rounds
+(`.model`, `.regex`, `.modelAndRegex`). Spans fall on Unicode scalar boundaries, which need not be Character boundaries
+(an emoji ZWJ sequence is one Character of several scalars): slice with `text.unicodeScalars[span.range]` or `utf16Range`, not `text[span.range]`, which Swift rounds
 to Character boundaries. `.mask` writes one mask character per Unicode scalar, like the npm package.
 
 **Threads.** `PIIRedactor` is `Sendable` and needs no locking: any number of tasks may call `detect` on one instance at
@@ -127,7 +127,7 @@ The parity tests read the private fixtures and model copies in place (`PII_FIXTU
 
 | Test | Checks |
 |---|---|
-| tokenizer | ids and offsets of `tokenize()` vs Hugging Face tokenizers on `tokenize.jsonl` (3,273 rows) |
+| tokenizer | ids and offsets of `tokenize()` vs Hugging Face tokenizers on `tokenize.jsonl` (3,273 rows; ids all, offsets all but 3 rows at most, as the npm test) |
 | prediction | spans of `detect()` vs the Python evaluator on every run of `js/test/predict.test.ts` (412 rows each, ≥ 99%) |
 | regex | `PIIRegex` vs the Python baseline on `regex.jsonl` (3,273 rows); JavaScript `\s` cases |
 | redaction, offsets | modes of `js/test/combine.test.ts`; emoji, ZWJ sequences, flags and combining marks; bridged NSString |

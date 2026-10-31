@@ -131,7 +131,7 @@ class Redactor:
         return RedactResult(apply_redaction(text, spans, mode, mask_char, replace), spans)
 
     def tokenize(self, text: str) -> List[Token]:
-        """Token ids and offsets (code points) without <s> and </s>, as Hugging Face tokenizers gives them."""
+        """Token ids and offsets (code points) without <s> and </s>, as the npm package's tokenizer gives them."""
         if not isinstance(text, str):
             raise TypeError(f"text must be str, not {type(text).__name__}")
         return [Token(*t) for t in self._core_model().tokenize(text)]

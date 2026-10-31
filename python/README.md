@@ -130,9 +130,6 @@ network), and, when the private fixtures and model copies exist (`PII_FIXTURES`,
 every run of the npm test (`PII_SIZES=nano,medium` limits them). `NEWMEAN_PII_NETWORK_TESTS=1` adds one download from
 Hugging Face. Wheels: `cibuildwheel` (configured in `pyproject.toml`, workflow `.github/workflows/python-wheels.yml`).
 
-Span edges can differ from the npm package by one combining mark in rare text (the native tokenizer follows Hugging Face
-offsets; see `native/core/README.md`).
-
 ## License
 
 [Apache-2.0](LICENSE), for the package code and the model weights; third-party notices in [NOTICE](NOTICE). If you use

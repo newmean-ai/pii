@@ -119,8 +119,9 @@ typedef struct {
   size_t start, end;  // code points
   int label, source;
 } pii_cspan;
-// Model and extra spans (sorted in place) -> masking regions in out (capacity n); returns the count. Exposed for tests.
-size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, pii_cspan *out);
+// Model and extra spans (sorted in place) -> masking regions in out (capacity n); returns the count. Overlapping model
+// spans rank by length in UTF-16 units (u16: the text's n + 1 UTF-16 offsets; NULL counts code points). Exposed for tests.
+size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, const size_t *u16, pii_cspan *out);
 #define PII_WINDOW 256
 #define PII_STRIDE 64
 

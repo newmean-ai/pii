@@ -166,15 +166,23 @@ static void selftest_combine(void) {
   pii_cspan in[2], out[2];
   in[0] = cs(5, 12, PII_PHONE, PII_SOURCE_MODEL);
   in[1] = cs(3, 14, PII_FINANCIAL, PII_SOURCE_REGEX);
-  EXPECT(pii_combine(in, 2, PII_LABELS_ALL, out) == 1 && out[0].start == 3 && out[0].end == 14 && out[0].label == PII_PHONE &&
+  EXPECT(pii_combine(in, 2, PII_LABELS_ALL, NULL, out) == 1 && out[0].start == 3 && out[0].end == 14 && out[0].label == PII_PHONE &&
          out[0].source == (PII_SOURCE_MODEL | PII_SOURCE_REGEX));
   in[0] = cs(0, 20, PII_URL_L2, PII_SOURCE_MODEL);
   in[1] = cs(0, 20, PII_URL, PII_SOURCE_REGEX);
-  EXPECT(pii_combine(in, 2, PII_LABELS_LEVEL1, out) == 0);
+  EXPECT(pii_combine(in, 2, PII_LABELS_LEVEL1, NULL, out) == 0);
   in[0] = cs(0, 9, PII_ORG, PII_SOURCE_MODEL);
   in[1] = cs(0, 16, PII_EMAIL, PII_SOURCE_REGEX);
-  EXPECT(pii_combine(in, 2, PII_LABEL_BIT(PII_EMAIL), out) == 1 && out[0].start == 0 && out[0].end == 16 &&
+  EXPECT(pii_combine(in, 2, PII_LABEL_BIT(PII_EMAIL), NULL, out) == 1 && out[0].start == 0 && out[0].end == 16 &&
          out[0].label == PII_EMAIL && out[0].source == PII_SOURCE_REGEX);
+  // overlapping model spans rank by UTF-16 length: "😀😀abcd", [0, 3) is 5 units, [2, 6) is 4 code points but 4 units
+  const size_t u16[] = {0, 2, 4, 5, 6, 7, 8};
+  in[0] = cs(0, 3, PII_PERSON, PII_SOURCE_MODEL);
+  in[1] = cs(2, 6, PII_ADDRESS, PII_SOURCE_MODEL);
+  EXPECT(pii_combine(in, 2, PII_LABELS_ALL, u16, out) == 1 && out[0].label == PII_PERSON && out[0].end == 6);
+  in[0] = cs(0, 3, PII_PERSON, PII_SOURCE_MODEL);
+  in[1] = cs(2, 6, PII_ADDRESS, PII_SOURCE_MODEL);
+  EXPECT(pii_combine(in, 2, PII_LABELS_ALL, NULL, out) == 1 && out[0].label == PII_ADDRESS);
 }
 
 // More than 32 spans (merge sort) in reverse order; the result must equal the one of the sorted input.
@@ -183,7 +191,7 @@ static void selftest_combine_many(void) {
   pii_cspan in[N], out[N];
   for (size_t i = 0; i < N; i++) in[i] = cs((N - 1 - i) * 10, (N - 1 - i) * 10 + 5, (int)(i % PII_LABEL_COUNT), i % 3 ? PII_SOURCE_MODEL : PII_SOURCE_REGEX);
   in[N - 1] = cs(0, 25, PII_EMAIL, PII_SOURCE_REGEX);  // overlaps 10-15 and 20-25: one region
-  size_t n = pii_combine(in, N, PII_LABELS_ALL, out);
+  size_t n = pii_combine(in, N, PII_LABELS_ALL, NULL, out);
   EXPECT(n == N - 2);
   int sorted = 1;
   for (size_t i = 1; i < n; i++) sorted &= out[i - 1].end <= out[i].start;

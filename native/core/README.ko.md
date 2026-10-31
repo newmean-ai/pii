@@ -4,8 +4,8 @@
 
 모든 네이티브 패키지(Python, Android, iOS, Flutter)가 함께 컴파일하는 C 라이브러리입니다. 공개된
 `newmean-pii-<size>` 모델 파일을 읽어 토큰화하고 모델을 실행해 가릴 구간(span)을 돌려줍니다. 결과는 npm 패키지
-[`@newmean-ai/pii`](../../js)의 `detect()`(`regex: false`)와 같습니다(토큰 id가 같고 로짓이 비트 단위로 같음; 토큰 오프셋은
-npm 토크나이저가 다른 곳에서 Hugging Face를 따름, 맨 끝 참고). 순수 C11이며 의존성, 네트워크 통신, 전역 상태가 없습니다.
+[`@newmean-ai/pii`](../../js)의 `detect()`(`regex: false`)와 같습니다(토큰 id와 오프셋이 같고 로짓이 비트 단위로 같음).
+순수 C11이며 의존성, 네트워크 통신, 전역 상태가 없습니다.
 
 ## 구성
 
@@ -48,8 +48,9 @@ pii_model_free(m);
 
 - **구간**은 `[start, end)`를 UTF-8 바이트, 코드 포인트(Python `str`), UTF-16 단위(JavaScript, Java/Kotlin, Dart,
   `NSString`) 세 가지로 모두 담으므로 래퍼가 변환할 필요가 없습니다. 잘못된 UTF-8 바이트는 하나당 코드 포인트 하나로 셉니다.
-  오프셋은 항상 코드 포인트 경계에 놓이지만, 정규화가 버린 결합 문자 앞에서 구간이 끝날 수 있습니다(맨 끝 참고). 그래서
-  자를 때는 코드 포인트나 UTF-16 단위를 쓰고 Swift `Character` 인덱스는 쓰지 않습니다. 입력은 표준 UTF-8로 넘깁니다. JVM에서는
+  오프셋은 항상 코드 포인트 경계에 놓입니다. 토크나이저의 정규화가 바꾸는 문자소(예: `e` + U+0301)는 쪼개지지 않지만,
+  모델이 ZWJ 연쇄 같은 다른 문자소 안에서 구간을 끝낼 수는 있습니다. 그래서 자를 때는 코드 포인트나 UTF-16 단위를 쓰고
+  Swift `Character` 인덱스는 쓰지 않습니다. 입력은 표준 UTF-8로 넘깁니다. JVM에서는
   `String.getBytes(UTF_8)`을 쓰고 JNI `GetStringUTFChars`는 쓰지 않습니다(수정 UTF-8은 이모지를 서로게이트로, NUL을 두 바이트로
   나눠 토큰과 오프셋이 달라짐). Python에서는 `str.encode("utf-8", "surrogatepass")`를 씁니다.
 - **오류**: 함수는 `PII_OK`나 `PII_ERR_*` 코드를 돌려줍니다(`pii_strerror`가 메시지를 줌). `pii_model_load`는 이유를 `err`에
@@ -104,7 +105,7 @@ Python 표준 라이브러리만 씁니다. 픽스처와 모델 사본은 비공
 |---|---|---|
 | pins | 모델 파일이 고정된 크기·SHA-256과 일치 | 전부 |
 | selftest | `js/test/combine.test.ts`의 `combine` 사례; 인자, 라벨 필터, UTF-16 단위 `extra` 구간, 잘못된 UTF-8, 긴 글; 잘리거나 변조된 모델·토크나이저 파일이 오류로 끝남 | 전부 |
-| tokenizer | `tokenize.jsonl`(3,273행)에서 Hugging Face `tokenizers`와 id·오프셋 비교 | 100% |
+| tokenizer | `tokenize.jsonl`(3,273행)에서 npm 패키지의 `Tokenizer`(node + `js/dist`), Hugging Face `tokenizers`와 id·오프셋 비교 | npm: 100%; Hugging Face: id 100%, 오프셋은 많아야 3행까지 다를 수 있음(npm 테스트와 같음) |
 | offsets | 까다로운 글에서 UTF-8·코드 포인트·UTF-16 오프셋을 Python과 비교: 이모지와 ZWJ 연쇄, 국기, 결합 문자, CJK, RTL과 양방향 제어 문자, 폭 없는 문자, CRLF, NUL, 짝 없는 서로게이트, 잘못된 UTF-8, 빈 글과 공백뿐인 글, 특수 토큰 문자열, 10,000토큰 이상; 구간이 정렬되고 글 안에 있음 | 전부 |
 | predict | `js/test/predict.test.ts`의 모든 실행(각 412행)에서 Python 평가기와 구간 비교 | npm 테스트처럼 99% 이상 |
 | js | npm 패키지 자체 WebAssembly 엔진(`node`, `js/dist`, `tests/js_detect.mjs`)과 구간 비교; `PII_JS=all`이면 모든 실행 | 100% |
@@ -151,12 +152,13 @@ Python 평가기와 다른 행은 npm 패키지에서도 다릅니다. 평가기
 `pii_engine`과 호출별 작업 메모리(`pii_ws`)로 바꿨습니다. 커널, `.piiw` 배치, 4비트 패널 형식, exp/erf 근사, 모든 합의
 순서는 그대로이며 `js/engine/pii.c`는 건드리지 않았습니다. 엔진을 고칠 때는 두 파일을 함께 고치고 `js` 테스트로 확인합니다.
 
-TypeScript 토크나이저와 일부러 다르게 한 점이 하나 있습니다. 정규화가 문자소를 바꿀 때(예: `e` + U+0301 → `é`)
-`tokenizer.ts`는 새 문자를 모두 문자소 전체에 맞추지만, Hugging Face는 각 문자를 원문 문자 하나에 맞춥니다
-(`NormalizedString::transform`). C 토크나이저는 Hugging Face를 따르므로 3,273행 모두에서 오프셋이 일치합니다(npm 테스트는
-3행까지 불일치를 허용). 예측 픽스처에서는 이 차이로 바뀐 구간이 없었습니다. 결합 문자, 한글 자모, ZWJ를 무작위로 섞은
-글에서는 86개 중 8개에서 구간 경계가 그런 문자 하나만큼 npm 패키지와 달랐습니다(구간이 그 문자 앞에서 끝나거나 둘로
-나뉨). 토큰 id, 따라서 로짓은 86개 모두 같았습니다.
+npm 패키지가 Hugging Face나 코드 포인트 수와 다르게 하는 곳에서는 토크나이저와 `combine`도 npm을 따릅니다.
+
+- 정규화가 문자소를 바꿀 때(예: `e` + U+0301 → `é`) 새 문자를 모두 문자소 전체에 맞춥니다(`tokenizer.ts`와 같음).
+  Hugging Face는 각 문자를 원문 문자 하나에 맞춥니다(`NormalizedString::transform`). 그래서 토큰 오프셋은 3,273행 모두
+  npm 패키지와 같고, Hugging Face와는 3,272행이 같습니다(`e\u0301cole`: `[0, 1]`이 아니라 `[0, 2]`). 구간이 글자와,
+  정규화가 그 글자에 합친 결합 문자 사이에서 끝나는 일은 없습니다.
+- 겹친 모델 구간을 한 영역으로 합칠 때 가장 긴 구간의 라벨을 쓰며, 길이는 `redactor.ts`처럼 UTF-16 단위로 셉니다(이모지는 2).
 
 ## 라이선스
 

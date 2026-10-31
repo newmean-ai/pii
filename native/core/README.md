@@ -4,8 +4,8 @@ English | [한국어](README.ko.md)
 
 One C library that every native package (Python, Android, iOS, Flutter) compiles: it loads the published
 `newmean-pii-<size>` model files, tokenizes, runs the model and returns the spans to mask, the same spans as `detect()` of
-the npm package [`@newmean-ai/pii`](../../js) with `regex: false` (same token ids and bit-identical logits; token offsets
-follow Hugging Face where the npm tokenizer differs, see the end). Plain C11, no dependencies, no network, no global state.
+the npm package [`@newmean-ai/pii`](../../js) with `regex: false` (same token ids and offsets, bit-identical logits).
+Plain C11, no dependencies, no network, no global state.
 
 ## Layout
 
@@ -48,8 +48,9 @@ pii_model_free(m);
 
 - **Spans** carry `[start, end)` in UTF-8 bytes, code points (Python `str`) and UTF-16 units (JavaScript, Java/Kotlin,
   Dart, `NSString`), so wrappers convert nothing. Invalid UTF-8 bytes count as one code point each. Offsets fall on code
-  point boundaries, but a span can end before a combining mark that the normalizer dropped (see the end): slice by code
-  points or UTF-16 units, not by Swift `Character` indices. Pass standard UTF-8: `String.getBytes(UTF_8)` on the JVM, not
+  point boundaries; a grapheme the tokenizer's normalizer rewrites (for example `e` + U+0301) stays whole, but a span
+  can still end inside another grapheme, such as a ZWJ sequence the model splits: slice by code points or UTF-16 units,
+  not by Swift `Character` indices. Pass standard UTF-8: `String.getBytes(UTF_8)` on the JVM, not
   JNI `GetStringUTFChars` (modified UTF-8 splits emoji into surrogates and NUL into two bytes, which changes tokens and
   offsets); `str.encode("utf-8", "surrogatepass")` in Python.
 - **Errors**: functions return `PII_OK` or a `PII_ERR_*` code (`pii_strerror` gives the message); `pii_model_load` writes
@@ -108,7 +109,7 @@ they are absent. `PII_SIZES=nano,medium` limits the sizes. `fuzz` runs only when
 |---|---|---|
 | pins | model files match the pinned size and SHA-256 | all |
 | selftest | `combine` cases of `js/test/combine.test.ts`; arguments, label filter, `extra` spans in UTF-16 units, invalid UTF-8, long texts; truncated and mutated model and tokenizer files fail cleanly | all |
-| tokenizer | ids and offsets vs Hugging Face `tokenizers` on `tokenize.jsonl` (3,273 rows) | 100% |
+| tokenizer | ids and offsets vs the npm package's `Tokenizer` (node + `js/dist`) and vs Hugging Face `tokenizers` on `tokenize.jsonl` (3,273 rows) | npm: 100%; Hugging Face: ids 100%, offsets all but 3 rows at most (as the npm test) |
 | offsets | UTF-8, code point and UTF-16 offsets vs Python on hard texts: emoji and ZWJ sequences, flags, combining marks, CJK, RTL and bidi controls, zero-width characters, CRLF, NUL, lone surrogates, invalid UTF-8, empty and blank input, special-token strings, 10,000+ tokens; spans sorted and inside the text | all |
 | predict | spans vs the Python evaluator for every run of `js/test/predict.test.ts` (412 rows each) | ≥ 99% of rows, as the npm test |
 | js | spans vs the npm package's own WebAssembly engine (`node`, `js/dist`, `tests/js_detect.mjs`); `PII_JS=all` for every run | 100% |
@@ -157,12 +158,14 @@ state becomes an immutable `pii_engine` plus per-call scratch (`pii_ws`). Kernel
 format, the exp/erf approximations and the order of every sum are unchanged; `js/engine/pii.c` itself is not touched.
 Changes to the engine should be made in both files and checked with the `js` test.
 
-One deliberate difference from the TypeScript tokenizer: when the normalizer replaces a grapheme (for example `e` +
-U+0301 → `é`), `tokenizer.ts` aligns every new character to the whole grapheme, while Hugging Face aligns each to one
-original character (`NormalizedString::transform`). The C tokenizer follows Hugging Face, so its offsets match on all
-3,273 rows (the npm test allows up to 3 mismatches). It changed no span on the prediction fixtures; on random mixes of
-combining marks, Hangul jamo and ZWJ, 8 of 86 texts got span edges that differ from the npm package by such a mark (a
-span can then end before the mark, or split in two); token ids, and so logits, were identical on all 86.
+The tokenizer and `combine` follow the npm package where it differs from Hugging Face or from a code point count:
+
+- When the normalizer replaces a grapheme (for example `e` + U+0301 → `é`), every new character is aligned to the whole
+  grapheme, as `tokenizer.ts` does; Hugging Face aligns each to one original character (`NormalizedString::transform`).
+  Token offsets therefore equal the npm package's on all 3,273 rows and Hugging Face's on 3,272 (`e\u0301cole`: `[0, 2]`
+  rather than `[0, 1]`). A span never ends between a letter and a combining mark the normalizer merged with it.
+- Where overlapping model spans are merged into one region, the longest span gives the label, its length counted in
+  UTF-16 units as `redactor.ts` does (an emoji counts 2).
 
 ## Licence
 

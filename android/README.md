@@ -112,8 +112,8 @@ PiiRegex.spans(text)                      // the pattern layer on its own
 ```
 
 `PiiSpan` has `start` and `end` (UTF-16 indices into the text, as `String.substring` takes them and as the npm package
-returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`). Spans fall on code point boundaries but can end
-inside a grapheme (before a combining mark). `MASK` writes one mask character per code point, like the npm package.
+returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`). Spans fall on code point boundaries, which need not be
+grapheme boundaries (an emoji ZWJ sequence is one grapheme of several code points). `MASK` writes one mask character per code point, like the npm package.
 
 **Threads.** `PiiRedactor` is thread-safe: any number of threads or coroutines may call `detect` and `redact` on one
 instance at once (each call has its own scratch memory). They are blocking CPU work: call them from
@@ -146,7 +146,7 @@ The parity tests read the private fixtures and model copies in place (`PII_FIXTU
 
 | Test | Checks |
 |---|---|
-| tokenizer | ids and offsets vs Hugging Face tokenizers on `tokenize.jsonl` (3,273 rows) |
+| tokenizer | ids and offsets vs Hugging Face tokenizers on `tokenize.jsonl` (3,273 rows; ids all, offsets all but 3 rows at most, as the npm test) |
 | prediction | spans of `detect()` vs the Python evaluator on every run of `js/test/predict.test.ts` (412 rows each, ≥ 99%) |
 | npm | spans, labels and sources equal to the npm package's `detect()` (with `regex`, `labels`, `sensitivity`): `PII_NPM_SPANS` from `scripts/npm_spans.mjs` |
 | regex | `PiiRegex` vs the Python baseline on `regex.jsonl` (3,273 rows); JavaScript `\s` and Unicode digit cases |

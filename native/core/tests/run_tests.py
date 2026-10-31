@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Parity tests of the native core against the npm package's fixtures (Python standard library only).
 
-  (a) tokenizer: ids and offsets equal to Hugging Face tokenizers on js/test/fixtures/tokenize.jsonl (100% required)
+  (a) tokenizer: ids equal to Hugging Face tokenizers on js/test/fixtures/tokenize.jsonl (100% required); offsets equal
+      to the npm package's Tokenizer (node + js/dist) and to Hugging Face but for at most 3 rows, as js/test/tokenizer.test.ts
+      allows (a grapheme the normalizer replaces aligns to the whole grapheme, which differs on a few combining sequences)
   (b) predictions: spans equal to the Python evaluator for every run of js/test/predict.test.ts (99% of rows or more)
   (c) the same on a subset under AddressSanitizer + UndefinedBehaviorSanitizer (build/asan/pii_cli)
   (d) several threads sharing one model give the results of one thread
@@ -94,8 +96,21 @@ def first_model():
     return None
 
 
+def js_tokenize(tok, texts):
+    """The npm package's Tokenizer on texts ({"ids", "offsets"} per row, UTF-16 offsets), or None without node or js/dist."""
+    node = shutil.which("node")
+    if os.environ.get("PII_JS") == "0" or not node or not (JS_DIST / "index.js").exists():
+        return None
+    payload = "".join(json.dumps({"text": t}) + "\n" for t in texts)
+    p = subprocess.run([node, str(HERE / "js_tokenize.mjs"), str(JS_DIST), str(tok)], input=payload.encode(), capture_output=True)
+    if p.returncode:
+        check(False, f"node tokenizer failed: {p.stderr.decode()[-1000:]}")
+        return None
+    return [json.loads(l) for l in p.stdout.decode().splitlines()]
+
+
 def test_tokenizer(cli, limit=None, label="tokenizer"):
-    print(f"[{label}] parity with Hugging Face tokenizers")
+    print(f"[{label}] parity with Hugging Face tokenizers and the npm package's Tokenizer")
     fix = FIX / "tokenize.jsonl"
     m = first_model()
     if not fix.exists() or not m:
@@ -104,24 +119,34 @@ def test_tokenizer(cli, limit=None, label="tokenizer"):
     t0 = time.time()
     got = run_cli(cli, ["tokenize", m[1], m[2]], [r["text"] for r in rows])
     ms = (time.time() - t0) * 1e3
-    bad_ids = bad_off = bad_units = 0
+    js = js_tokenize(m[2], [r["text"] for r in rows])
+    bad_ids = bad_off = bad_units = bad_js = 0
     shown = 0
-    for r, g in zip(rows, got):
+    for i, (r, g) in enumerate(zip(rows, got)):
         u16, u8 = units(r["text"])
         ids_ok = g["ids"] == r["ids"]
         off_ok = g["cp"] == [list(o) for o in r["offsets"]]  # fixture offsets count code points
         bad_ids += not ids_ok
         bad_off += not off_ok
         bad_units += g["u16"] != [[u16[s], u16[e]] for s, e in g["cp"]] or g["u8"] != [[u8[s], u8[e]] for s, e in g["cp"]]
-        if (not ids_ok or not off_ok) and shown < 5:
+        js_ok = js is None or (js[i]["ids"] == g["ids"] and js[i]["offsets"] == g["u16"])
+        bad_js += not js_ok
+        if (not ids_ok or not off_ok or not js_ok) and shown < 5:
             shown += 1
             print(f"    {json.dumps(r['text'])[:100]}\n      hf ids {r['ids'][:16]} {r['offsets'][:6]}\n      c  ids {g['ids'][:16]} {g['cp'][:6]}")
+            if js is not None:
+                print(f"      npm (UTF-16) {js[i]['offsets'][:6]}, c (UTF-16) {g['u16'][:6]}")
     n = len(rows)
     if limit is None:
-        summary.append(("tokenizer", f"ids {n - bad_ids}/{n}, offsets {n - bad_off}/{n} identical to Hugging Face"))
+        summary.append(("tokenizer", f"ids {n - bad_ids}/{n}, offsets {n - bad_off}/{n} identical to Hugging Face"
+                        + (f", {n - bad_js}/{n} to npm" if js is not None else "")))
     check(len(got) == n, f"{len(got)}/{n} rows answered ({ms:.0f} ms)")
     check(bad_ids == 0, f"ids: {n - bad_ids}/{n} rows identical")
-    check(bad_off == 0, f"offsets: {n - bad_off}/{n} rows identical")
+    check(bad_off <= 3, f"offsets: {n - bad_off}/{n} rows identical to Hugging Face (at most 3 may differ)")
+    if js is None:
+        skip("offsets vs npm: node or js/dist absent (cd js && npm run build)")
+    else:
+        check(bad_js == 0, f"ids and offsets: {n - bad_js}/{n} rows identical to the npm package's Tokenizer")
     check(bad_units == 0, f"UTF-16 and UTF-8 offsets consistent with code points: {n - bad_units}/{n}")
 
 

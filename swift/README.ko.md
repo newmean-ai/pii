@@ -89,7 +89,7 @@ PIIRegex.spans(in: text)                         // 패턴 층만 따로
 
 `PIISpan`에는 `range`(찾은 텍스트의 `Range<String.Index>`), `utf16Range`(NSString·NSRange 오프셋, npm 패키지의 `start`·`end`),
 `scalarRange`(유니코드 스칼라, Python 오프셋), `label`, `source`(`.model`, `.regex`, `.modelAndRegex`)가 있습니다. 구간은
-유니코드 스칼라 경계에 놓이지만 Character 안(결합 문자 앞)에서 끝날 수 있습니다. 자를 때는 `text[span.range]`(Swift가
+유니코드 스칼라 경계에 놓이며, 이 경계가 Character 경계와 늘 같지는 않습니다(이모지 ZWJ 연쇄는 스칼라 여러 개로 된 Character 하나). 자를 때는 `text[span.range]`(Swift가
 Character 경계로 맞춤)가 아니라 `text.unicodeScalars[span.range]`나 `utf16Range`를 쓰세요. `.mask`는 npm 패키지처럼 유니코드
 스칼라마다 가림 문자 하나를 씁니다.
 
@@ -123,7 +123,7 @@ xcodebuild -scheme NewmeanPII -destination 'generic/platform=iOS Simulator' buil
 
 | 테스트 | 확인 내용 |
 |---|---|
-| 토크나이저 | `tokenize()`의 id·오프셋 vs Hugging Face tokenizers, `tokenize.jsonl`(3,273행) |
+| 토크나이저 | `tokenize()`의 id·오프셋 vs Hugging Face tokenizers, `tokenize.jsonl`(3,273행; id는 전부, 오프셋은 npm 테스트처럼 많아야 3행까지 다를 수 있음) |
 | 예측 | `detect()` 구간 vs Python 평가기, `js/test/predict.test.ts`의 모든 실행(각 412행, 99% 이상) |
 | 정규식 | `PIIRegex` vs Python 기준선, `regex.jsonl`(3,273행); JavaScript `\s` 사례 |
 | 가림·오프셋 | `js/test/combine.test.ts`의 모드; 이모지, ZWJ 시퀀스, 국기, 결합 문자; 브리지된 NSString |

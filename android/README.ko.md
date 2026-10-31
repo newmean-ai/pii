@@ -110,8 +110,8 @@ PiiRegex.spans(text)                      // 패턴 층만
 ```
 
 `PiiSpan`에는 `start`·`end`(텍스트의 UTF-16 인덱스, `String.substring`이 받는 값이자 npm 패키지가 돌려주는 값), `label`,
-`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`)가 있습니다. 구간은 코드 포인트 경계에 놓이지만 문자소 안(결합 부호 앞)에서
-끝날 수 있습니다. `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
+`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`)가 있습니다. 구간은 코드 포인트 경계에 놓이며, 이 경계가
+문자소 경계와 늘 같지는 않습니다(이모지 ZWJ 연쇄는 코드 포인트 여러 개로 된 문자소 하나). `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
 
 **스레드.** `PiiRedactor`는 스레드 안전합니다. 여러 스레드나 코루틴이 한 인스턴스의 `detect`·`redact`를 동시에 불러도
 됩니다(호출마다 작업 메모리가 따로). 둘 다 CPU를 쓰는 블로킹 호출이므로 메인 스레드가 아니라 `Dispatchers.Default`나
@@ -142,7 +142,7 @@ JNI 브리지(`pii/src/main/cpp/pii_jni.c`)와 `CMakeLists.txt`는 `native/core`
 
 | 테스트 | 확인 내용 |
 |---|---|
-| tokenizer | `tokenize.jsonl`(3,273행)에서 Hugging Face tokenizers와 id·오프셋 비교 |
+| tokenizer | `tokenize.jsonl`(3,273행)에서 Hugging Face tokenizers와 id·오프셋 비교(id는 전부, 오프셋은 npm 테스트처럼 많아야 3행까지 다를 수 있음) |
 | prediction | `js/test/predict.test.ts`의 모든 실행에서 `detect()` 구간을 Python 평가기와 비교(실행마다 412행, 99% 이상) |
 | npm | npm 패키지 `detect()`와 구간·레이블·출처가 같음(`regex`, `labels`, `sensitivity` 포함): `scripts/npm_spans.mjs`로 만든 `PII_NPM_SPANS` |
 | regex | `regex.jsonl`(3,273행)에서 `PiiRegex`를 Python 기준과 비교; JavaScript `\s`와 유니코드 숫자 사례 |

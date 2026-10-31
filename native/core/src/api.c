@@ -105,19 +105,26 @@ void pii_model_get_info(const pii_model *m, pii_model_info *info) {
 }
 
 // ---------------------------------------------------------------- spans
-static int cmp_start(const pii_cspan *a, const pii_cspan *b) { return a->start < b->start ? -1 : a->start > b->start; }
-static int cmp_start_end_desc(const pii_cspan *a, const pii_cspan *b) {
+// Comparators get the text's UTF-16 offsets (or NULL: code points); only lengths depend on them.
+static int cmp_start(const pii_cspan *a, const pii_cspan *b, const size_t *u16) {
+  (void)u16;
+  return a->start < b->start ? -1 : a->start > b->start;
+}
+static int cmp_start_end_desc(const pii_cspan *a, const pii_cspan *b, const size_t *u16) {
+  (void)u16;
   if (a->start != b->start) return a->start < b->start ? -1 : 1;
   return a->end > b->end ? -1 : a->end < b->end;
 }
-static int cmp_len_desc(const pii_cspan *a, const pii_cspan *b) {
-  size_t la = a->end - a->start, lb = b->end - b->start;
+// Longest first, in UTF-16 units like redactor.ts (an emoji counts 2).
+static int cmp_len_desc(const pii_cspan *a, const pii_cspan *b, const size_t *u16) {
+  size_t la = u16 ? u16[a->end] - u16[a->start] : a->end - a->start, lb = u16 ? u16[b->end] - u16[b->start] : b->end - b->start;
   return la > lb ? -1 : la < lb;
 }
 
 // Stable sort (Array.prototype.sort is stable): bottom-up merge sort, insertion sort for short lists (or without memory).
 // Model spans plus many pattern spans of a long text would make insertion sort quadratic.
-static void sort_spans(pii_cspan *s, size_t n, int (*cmp)(const pii_cspan *, const pii_cspan *)) {
+static void sort_spans(pii_cspan *s, size_t n, int (*cmp)(const pii_cspan *, const pii_cspan *, const size_t *),
+                       const size_t *u16) {
   pii_cspan *tmp = n > 32 ? malloc(n * sizeof *tmp) : NULL;
   if (tmp) {
     for (size_t w = 1; w < n; w *= 2)
@@ -125,7 +132,7 @@ static void sort_spans(pii_cspan *s, size_t n, int (*cmp)(const pii_cspan *, con
         const size_t mid = lo + w, hi = n - lo > 2 * w ? lo + 2 * w : n;
         memcpy(tmp, s + lo, w * sizeof *tmp);
         size_t a = 0, b = mid, o = lo;
-        while (a < w && b < hi) s[o++] = cmp(&s[b], &tmp[a]) < 0 ? s[b++] : tmp[a++];
+        while (a < w && b < hi) s[o++] = cmp(&s[b], &tmp[a], u16) < 0 ? s[b++] : tmp[a++];
         while (a < w) s[o++] = tmp[a++];
       }
     free(tmp);
@@ -134,7 +141,7 @@ static void sort_spans(pii_cspan *s, size_t n, int (*cmp)(const pii_cspan *, con
   for (size_t i = 1; i < n; i++) {
     pii_cspan x = s[i];
     size_t j = i;
-    for (; j > 0 && cmp(&x, &s[j - 1]) < 0; j--) s[j] = s[j - 1];
+    for (; j > 0 && cmp(&x, &s[j - 1], u16) < 0; j--) s[j] = s[j - 1];
     s[j] = x;
   }
 }
@@ -148,7 +155,7 @@ static int blank(const pii_text *t, size_t a, size_t b) {
 
 // Same-label spans separated only by whitespace (or overlapping) are merged (decode.ts mergeAdjacent).
 static size_t merge_adjacent(pii_cspan *s, size_t n, const pii_text *t) {
-  sort_spans(s, n, cmp_start);
+  sort_spans(s, n, cmp_start, NULL);
   size_t k = 0;
   for (size_t i = 0; i < n; i++) {
     if (k && s[k - 1].label == s[i].label && blank(t, s[k - 1].end, s[i].start)) {
@@ -159,8 +166,8 @@ static size_t merge_adjacent(pii_cspan *s, size_t n, const pii_text *t) {
 }
 
 // Model and extra spans -> masking regions (redactor.ts combine). Writes into out (capacity n); returns the count.
-size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, pii_cspan *out) {
-  sort_spans(all, n, cmp_start_end_desc);
+size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, const size_t *u16, pii_cspan *out) {
+  sort_spans(all, n, cmp_start_end_desc, u16);
   size_t nout = 0;
   for (size_t g0 = 0; g0 < n;) {
     size_t g1 = g0 + 1, end = all[g0].end;
@@ -177,7 +184,7 @@ size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, pii_cspan *out) {
         memmove(g + nm + 1, g + nm, (i - nm) * sizeof x);
         g[nm++] = x;
       }
-    sort_spans(g, nm, cmp_len_desc);
+    sort_spans(g, nm, cmp_len_desc, u16);
     uint32_t fam = 0;
     for (size_t i = 0; i < nm; i++) fam |= 1u << family(g[i].label);
     int first = -1, has_model = 0, has_extra = 0;
@@ -360,7 +367,7 @@ int pii_detect(const pii_model *m, const char *utf8, size_t len, const pii_optio
   if (!rc && spans.n) {
     comb = malloc(spans.n * sizeof *comb);
     if (!comb) rc = PII_ERR_NOMEM;
-    else n = pii_combine(spans.p, spans.n, o.labels, comb);
+    else n = pii_combine(spans.p, spans.n, o.labels, tx.u16, comb);
   }
   if (!rc && n) {
     pii_span *res = calloc(n, sizeof *res);

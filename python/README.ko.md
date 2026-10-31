@@ -126,9 +126,6 @@ C 확장은 `native/core`(모든 네이티브 패키지가 공유하는 코어)�
 `NEWMEAN_PII_NETWORK_TESTS=1`이면 Hugging Face 다운로드 테스트 하나가 더 돕니다. 휠: `cibuildwheel`(설정은
 `pyproject.toml`, 워크플로는 `.github/workflows/python-wheels.yml`).
 
-드문 텍스트에서 구간 경계가 npm 패키지와 결합 문자 하나만큼 다를 수 있습니다(네이티브 토크나이저는 Hugging Face
-오프셋을 따름; `native/core/README.ko.md` 참고).
-
 ## 라이선스
 
 패키지 코드와 모델 가중치 모두 [Apache-2.0](LICENSE)이며, 제3자 고지는 [NOTICE](NOTICE)에 있습니다. 제품에 쓰신다면 문서나
