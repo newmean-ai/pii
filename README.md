@@ -9,7 +9,7 @@ English | [한국어](README.ko.md)
 - Four model sizes: **nano 2.6 MB**, **small 7.1 MB**, **medium 11.3 MB** (default), **large 15.5 MB**
 - Runs in WebAssembly: the SDK's own built-in engine (default, about 20 KB) or onnxruntime-web
 - Free for any use, including commercial use
-- Python and mobile (Android, iOS, Flutter) packages on the same models are planned
+- The same models for Python, iOS, Android and Flutter ([Install](#install))
 
 ```bash
 npm install @newmean-ai/pii
@@ -24,6 +24,46 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 ```
 
 See [js/README.md](js/README.md) for the full API.
+
+## Install
+
+| Platform | Package | Install |
+|---|---|---|
+| Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
+| Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.0.0` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.0.0")` |
+| Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
+
+The Python, iOS, Android and Flutter packages run the same models on the device through one C engine
+([`native/core`](native/core)), whose token ids, offsets and logits equal the npm package's. Model files are downloaded once
+from Hugging Face and checked against pinned SHA-256 values, or bundled with the app.
+
+```python
+from newmean_pii import create_redactor
+
+create_redactor(size="medium").redact("My email is kim@example.com").text  # 'My email is [EMAIL]'
+```
+
+```swift
+import NewmeanPII
+
+let (text, _) = try await PIIRedactor(size: .medium).redact("My email is kim@example.com")
+```
+
+```kotlin
+import ai.newmean.pii.PiiRedactor
+
+val (text, spans) = PiiRedactor.create(context).redact("My email is kim@example.com")  // create: suspend, model from the app's assets
+```
+
+```dart
+import 'package:newmean_pii/newmean_pii.dart';
+
+final r = await (await NewmeanPii.create(size: 'medium')).redact('My email is kim@example.com');
+```
+
+Guides: [Python](python/README.md) · [Swift](swift/README.md) · [Android](android/README.md) · [Flutter](flutter/README.md)
 
 ## Links
 
@@ -68,6 +108,11 @@ the 11.3 MB model takes about 26 ms for a 40-token message.
 | folder | contents |
 |---|---|
 | [`js/`](js) | the SDK, `@newmean-ai/pii`, with its test page, the public demo (`playground/`) and the phone benchmark (`experiments/`) |
+| [`native/core/`](native/core) | the C engine shared by the Python, iOS, Android and Flutter packages |
+| [`python/`](python) | the Python package `newmean-pii` |
+| [`swift/`](swift), `Package.swift` | the Swift package `NewmeanPII` (iOS, macOS) |
+| [`android/`](android) | the Android library `ai.newmean:pii` |
+| [`flutter/`](flutter) | the Flutter and Dart package `newmean_pii` |
 | [`docs/report/`](docs/report) | the technical report and its two appendices (also in Korean) |
 | [`leaderboard/`](leaderboard) | code of the leaderboard Space on Hugging Face |
 | [`site/`](site) | the Worker that serves the demo and the phone benchmark at pii.newmean.ai |

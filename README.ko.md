@@ -9,7 +9,7 @@
 - 모델 크기 네 가지: **nano 2.6 MB**, **small 7.1 MB**, **medium 11.3 MB**(기본), **large 15.5 MB**
 - WebAssembly로 실행: SDK 자체 내장 엔진(기본, 약 20 KB) 또는 onnxruntime-web
 - 상업적 사용을 포함해 어떤 용도로도 무료
-- 같은 모델로 Python, 모바일(Android, iOS, Flutter) 패키지를 준비하고 있습니다
+- 같은 모델을 Python, iOS, Android, Flutter에서도 씀([설치](#설치))
 
 ```bash
 npm install @newmean-ai/pii
@@ -24,6 +24,45 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 ```
 
 전체 API는 [js/README.ko.md](js/README.ko.md)를 보세요.
+
+## 설치
+
+| 플랫폼 | 패키지 | 설치 |
+|---|---|---|
+| 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
+| Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.0.0`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.0.0")` |
+| Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
+
+Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
+로짓이 npm 패키지와 같습니다. 모델 파일은 Hugging Face에서 한 번 내려받아 고정된 SHA-256으로 검사하거나, 앱에 함께 넣습니다.
+
+```python
+from newmean_pii import create_redactor
+
+create_redactor(size="medium").redact("제 메일은 kim@example.com입니다").text  # '제 메일은 [EMAIL]입니다'
+```
+
+```swift
+import NewmeanPII
+
+let (text, _) = try await PIIRedactor(size: .medium).redact("제 메일은 kim@example.com입니다")
+```
+
+```kotlin
+import ai.newmean.pii.PiiRedactor
+
+val (text, spans) = PiiRedactor.create(context).redact("제 메일은 kim@example.com입니다")  // create는 suspend, 모델은 앱 assets에서
+```
+
+```dart
+import 'package:newmean_pii/newmean_pii.dart';
+
+final r = await (await NewmeanPii.create(size: 'medium')).redact('제 메일은 kim@example.com입니다');
+```
+
+안내: [Python](python/README.ko.md) · [Swift](swift/README.ko.md) · [Android](android/README.ko.md) · [Flutter](flutter/README.ko.md)
 
 ## 링크
 
@@ -67,6 +106,11 @@ Gretel에서 라이브러리의 긴 글 모드로 돌렸습니다. 휴대폰(네
 | 폴더 | 내용 |
 |---|---|
 | [`js/`](js) | SDK `@newmean-ai/pii`와 테스트 페이지, 공개 데모(`playground/`), 휴대폰 벤치마크(`experiments/`) |
+| [`native/core/`](native/core) | Python, iOS, Android, Flutter 패키지가 함께 쓰는 C 엔진 |
+| [`python/`](python) | Python 패키지 `newmean-pii` |
+| [`swift/`](swift), `Package.swift` | Swift 패키지 `NewmeanPII`(iOS, macOS) |
+| [`android/`](android) | Android 라이브러리 `ai.newmean:pii` |
+| [`flutter/`](flutter) | Flutter·Dart 패키지 `newmean_pii` |
 | [`docs/report/`](docs/report) | 기술 보고서와 부록 두 개(한국어판 포함) |
 | [`leaderboard/`](leaderboard) | Hugging Face의 리더보드 Space 코드 |
 | [`site/`](site) | pii.newmean.ai에서 데모와 휴대폰 벤치마크를 제공하는 Worker |
