@@ -26,7 +26,8 @@ jobs:
         with:
           sdk: stable
       - name: The tag must match the package version
-        run: grep -qx "version: ${GITHUB_REF_NAME#flutter-v}" pubspec.yaml
+        run: |
+          grep -qx "version: ${GITHUB_REF_NAME#flutter-v}" pubspec.yaml
       - run: dart pub get
       - run: dart run tool/vendor_core.dart
       - run: dart pub publish --dry-run
