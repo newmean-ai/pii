@@ -23,7 +23,7 @@ from ._redactor import LABELS, LEVEL1_LABELS, TABLE_CONTEXTS, TABLE_DELIMITERS, 
 from ._regex import REGEX_RULES, regex_spans
 from ._types import RedactResult, Span, Token
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 __all__ = [
     "DEFAULT_SIZE",

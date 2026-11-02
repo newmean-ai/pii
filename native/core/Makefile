@@ -13,7 +13,7 @@ ifeq ($(FMA),1)
 BASE += -DPII_FMA $(if $(filter x86_64 amd64,$(shell uname -m)),-mfma)
 endif
 SRC = src/api.c src/engine.c src/onnx.c src/tokenizer.c src/util.c src/sha256.c src/models.c
-HDR = pii.h src/internal.h src/simd.h src/unicode_tables.h
+HDR = pii.h src/internal.h src/simd.h src/unicode_tables.h src/word_tables.h
 B = build
 UNAME := $(shell uname -s)
 SHLIB = $(B)/libpii.$(if $(filter Darwin,$(UNAME)),dylib,so)

@@ -31,8 +31,8 @@ See [js/README.md](js/README.md) for the full API.
 |---|---|---|
 | Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.2.0` |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.2.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.3.0` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.3.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 The Python, iOS, Android and Flutter packages run the same models on the device through one C engine
@@ -140,7 +140,9 @@ option (above). The short-text, emoji and table sets are private and synthetic.
 
 Emoji, model only and model + SDK 1.2: share of 4,501 texts (one to three emoji placed outside the PII) in which an emoji
 is masked. No emoji is cut in half; what is left is mostly a keycap next to a name, masked with it because keycaps are read
-as digits. PII characters missed on these texts also fall (large 0.87% to 0.31%, medium 1.03% to 0.61%).
+as digits. PII characters missed on these texts also fall (large 0.87% to 0.31%, medium 1.03% to 0.61%). Release 1.0
+masks an emoji in 7.42% (large), 9.46% (medium), 16.69% (small) and 21.88% (nano) of these texts and cuts one in half in
+1.9% to 7.6%.
 
 | model | model only | model + SDK 1.2 |
 |---|---|---|
@@ -161,8 +163,18 @@ Opus 5.5, which wrote none of our training data; the set was built after the SDK
 
 `context: "header"` cuts the misses to about a quarter for every size, at 2.3 to 3.7 more points of PII-free cells masked.
 Table mode alone misses about as much as reading the whole file, but keeps the table valid and masks whole contact columns.
-small and nano mask many PII-free cells in every mode (16% to 27%). Two more sets, on which the options were chosen, and the
-full numbers: [technical report, Section 6.2](docs/report/REPORT.md).
+small and nano mask many PII-free cells in every mode (16% to 27%). Release 1.0 (v1.0 models, no table mode) reads these
+files whole and misses more: large 7.52 / 11.30, medium 9.50 / 9.37, small 9.80 / 13.43, nano 8.04 / 24.36. Two more sets,
+on which the options were chosen, and the full numbers: [technical report, Section 6.2](docs/report/REPORT.md).
+
+What 1.3 adds. SDK 1.3.0, same v1.1 models; two options, both off by default, so 1.2 code gets the same spans.
+`strictShortNames`: a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be
+read as a name, so 「경기」, 「남성」 or 「네이버」 alone are left unmasked. Short PII-free items masked fall from 7.9% to 4.3%
+(large; medium 7.8% to 4.5%, small 9.4% to 4.7%, nano 11.1% to 5.9%), and lone names found fall from 98.9% to 96.5% (medium
+97.5% to 95.4%, small 97.0% to 93.5%, nano 96.7% to 94.4%); longer texts are unchanged (public test and KDPII within 0.07
+points). `wholeWords`: a span that ends inside a word covers the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`),
+which lowers misses on every set by 0.1 to 1.3 points and masks more around names (on KDPII, Korean particles written onto
+a name). Every package also gains `info` with the package and model versions and the checked model files.
 
 ## Repository layout
 

@@ -48,6 +48,10 @@ final class PiiOptionsC extends Struct {
   external int extraUnit;
   @Int()
   external int keepEmoji;
+  @Int()
+  external int wholeWords;
+  @Int()
+  external int strictShortNames;
 }
 
 final class PiiTableOptionsC extends Struct {

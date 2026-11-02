@@ -5,7 +5,8 @@
 //   pii_cli table MODEL.onnx TOKENIZER.json [SENS]        pii_detect_table: the same with the source bits appended to each span
 //     Optional fields of an input line (detect and table): "extra": [[cp_s, cp_e, "LABEL"], ...] (pii_options.extra in
 //     code points), "labels": ["PERSON", ...]; table only: "delimiter": "auto" | "," | "\t" | ";" | "markdown",
-//     "header": bool, "vote": bool, "context": "none" | "header".
+//     "header": bool, "vote": bool, "context": "none" | "header"; detect, table and apply: "words": bool (whole_words);
+//     detect and table: "strict": bool (strict_short_names).
 //   pii_cli apply                                         pii_table_apply without a model (parity of the table steps): each
 //     line also has "spans": [[cp_s, cp_e, "LABEL", source], ...] (sorted, non-overlapping, as detect gives them before
 //     snapping); {"spans": [[cp_s, cp_e, "LABEL", source], ...]} out
@@ -49,7 +50,7 @@ typedef struct {
   pii_extra_span *extra;  // code points
   size_t n_extra;
   uint32_t labels;
-  int delimiter, header, vote, context;
+  int delimiter, header, vote, context, words, strict;
   pii_cspan *spans;  // "spans" (pii_cli apply), code points
   size_t n_spans;
 } input;
@@ -62,6 +63,8 @@ static void read_line_options(const pii_json *j, input *in) {
   in->delimiter = 0;
   in->header = in->vote = 1;
   in->context = 0;
+  in->words = 0;
+  in->strict = 0;
   in->spans = NULL;
   in->n_spans = 0;
   const pii_json *v = pii_json_get(j, "spans");
@@ -98,6 +101,8 @@ static void read_line_options(const pii_json *j, input *in) {
   if ((v = pii_json_get(j, "header")) && v->type == PJ_BOOL) in->header = v->num != 0;
   if ((v = pii_json_get(j, "vote")) && v->type == PJ_BOOL) in->vote = v->num != 0;
   if ((v = pii_json_get(j, "context")) && v->type == PJ_STR) in->context = !strcmp(v->str, "header") ? PII_TABLE_CONTEXT_HEADER : 0;
+  if ((v = pii_json_get(j, "words")) && v->type == PJ_BOOL) in->words = v->num != 0;
+  if ((v = pii_json_get(j, "strict")) && v->type == PJ_BOOL) in->strict = v->num != 0;
 }
 
 // pii_options of an input line (base: the command-line options).
@@ -107,6 +112,8 @@ static pii_options line_options(const pii_options *base, const input *in) {
   o.extra = in->extra;
   o.n_extra = in->n_extra;
   o.extra_unit = PII_UNIT_CODEPOINT;
+  o.whole_words = in->words;
+  o.strict_short_names = in->strict;
   return o;
 }
 
@@ -324,6 +331,40 @@ static size_t snap(const char *text, pii_cspan *s, size_t n) {
   n = pii_snap_graphemes(s, n, tx.cp, tx.n, NULL, 0);
   pii_text_free(&tx);
   return n;
+}
+
+// The wholeWords cases of js/test/words.test.ts: the span over `part` of `text`, widened, equals `want` (one span).
+static int words1(const char *text, const char *part, const char *want) {
+  pii_cspan s[1] = {find(text, part, 0, PII_PERSON, PII_SOURCE_MODEL)};
+  pii_text tx;
+  if (pii_text_init(&tx, text, strlen(text))) return 0;
+  const size_t n = pii_snap_spans(s, 1, tx.cp, tx.n, NULL, 0, 1);
+  pii_text_free(&tx);
+  const pii_cspan w = find(text, want, 0, PII_PERSON, PII_SOURCE_MODEL);
+  return n == 1 && s[0].start == w.start && s[0].end == w.end;
+}
+
+static void selftest_words(void) {
+  EXPECT(words1("남성", "남", "남성"));
+  EXPECT(words1("경기도", "경기", "경기도"));
+  EXPECT(words1("R23", "R", "R23"));
+  EXPECT(words1("카카오 블로그", "카", "카카오"));
+  EXPECT(words1("Jean-Luc Picard", "Luc", "Jean-Luc"));
+  EXPECT(words1("call O'Brien.", "Brien", "O'Brien"));
+  EXPECT(words1("Kim Minji, hi", "Kim Minji", "Kim Minji"));
+  EXPECT(words1("(kim@example.com)", "kim@example.com", "kim@example.com"));
+  EXPECT(words1("田中太郎さん", "田中太郎", "田中太郎"));
+  EXPECT(words1("คุณสมชาย", "สมชาย", "สมชาย"));
+  EXPECT(words1("x \xf0\x9d\x90\x80\xf0\x9d\x90\x81" "c y", "\xf0\x9d\x90\x81", "\xf0\x9d\x90\x80\xf0\x9d\x90\x81" "c"));  // astral letters
+  // spans that meet in one word merge; the longest original span keeps its label
+  pii_cspan s[2] = {cs(0, 1, PII_USERNAME, PII_SOURCE_MODEL), cs(2, 5, PII_ID_NUMBER, PII_SOURCE_MODEL)};
+  pii_text tx;
+  EXPECT(!pii_text_init(&tx, "AB12CD", 6));
+  EXPECT(pii_snap_spans(s, 2, tx.cp, tx.n, NULL, 0, 1) == 1 && s[0].start == 0 && s[0].end == 6 && s[0].label == PII_ID_NUMBER);
+  // off: unchanged
+  s[0] = cs(0, 2, PII_PERSON, PII_SOURCE_MODEL);
+  EXPECT(pii_snap_spans(s, 1, tx.cp, tx.n, NULL, 0, 0) == 1 && s[0].end == 2);
+  pii_text_free(&tx);
 }
 
 static void selftest_snap(void) {
@@ -987,6 +1028,7 @@ int main(int argc, char **argv) {
     selftest_combine_many();
     selftest_static();
     selftest_snap();
+    selftest_words();
     selftest_table_parse();
     selftest_table_apply();
     selftest_table_vote();
@@ -1003,8 +1045,8 @@ int main(int argc, char **argv) {
       pii_cspan *out = NULL;
       size_t n = 0;
       if (pii_text_init(&tx, texts[i].s, texts[i].n) ||
-          pii_table_apply(&tx, texts[i].spans, texts[i].n_spans, texts[i].delimiter, texts[i].header, texts[i].vote, texts[i].labels,
-                          &out, &n)) {
+          pii_table_apply_ext(&tx, texts[i].spans, texts[i].n_spans, NULL, 0, texts[i].delimiter, texts[i].header, texts[i].vote,
+                              texts[i].labels, texts[i].words, &out, &n)) {
         rc = 1;
         break;
       }

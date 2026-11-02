@@ -280,9 +280,16 @@ export function headerContextCells(text: string, t: Table): { cell: Cell; text: 
   return out;
 }
 
-export function detectTableSpans(text: string, spans: Span[], options: TableOptions = {}, enabled?: Set<string>, extra: Span[] = []): Span[] {
+export function detectTableSpans(
+  text: string,
+  spans: Span[],
+  options: TableOptions = {},
+  enabled?: Set<string>,
+  extra: Span[] = [],
+  words = false,
+): Span[] {
   const { spans: out, cells } = tableSteps(text, spans, options, enabled, extra);
-  return snapGraphemes(text, out, cells ?? undefined);
+  return snapGraphemes(text, out, cells ?? undefined, words);
 }
 
 function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?: Set<string>, extra: Span[] = []): { spans: Span[]; cells: Cell[] | null } {
@@ -388,6 +395,69 @@ function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?
   return { spans: merged, cells };
 }
 
+// ---------------------------------------------------------------- whole words (option wholeWords)
+// Same rule as the C core (native/core/src/api.c, word_start / word_end), whose table native/core/src/word_tables.h is
+// generated from isWordChar below by native/core/scripts/gen_words.mjs.
+/** Scripts written without spaces between words (Thai, Lao, Tibetan, Myanmar, Khmer, CJK, kana, Bopomofo, Yi): their letters
+ *  never extend a span, since a "word" there would be a whole phrase. [lo, hi] pairs, sorted. */
+export const NO_SPACE: readonly number[] = [
+  0x0e00, 0x0eff, 0x0f00, 0x0fff, 0x1000, 0x109f, 0x1780, 0x17ff, 0x19e0, 0x19ff, 0x2e80, 0x2fdf, 0x3000, 0x312f, 0x3190, 0x31ff,
+  0x3400, 0x4dbf, 0x4e00, 0x9fff, 0xa000, 0xa4cf, 0xa9e0, 0xa9ff, 0xaa60, 0xaa7f, 0xf900, 0xfaff, 0xff66, 0xff9f, 0x16fe0, 0x18cff,
+  0x1aff0, 0x1b2ff, 0x20000, 0x3ffff,
+];
+
+const LETTER = /[\p{L}\p{N}\p{M}]/u;
+
+/** A letter, digit or mark (Unicode L, N, M) outside NO_SPACE. */
+export function isWordChar(c: number): boolean {
+  for (let i = 0; i < NO_SPACE.length; i += 2) {
+    if (c < NO_SPACE[i]) break;
+    if (c <= NO_SPACE[i + 1]) return false;
+  }
+  return LETTER.test(String.fromCodePoint(c));
+}
+
+/** Apostrophes and hyphens join two words into one: O'Brien, Jean-Luc. */
+const isJoiner = (c: number) => c === 0x27 || c === 0x2019 || c === 0x2d || c === 0x2010;
+
+const before = (t: string, i: number): [number, number] => {
+  const lo = t.charCodeAt(i - 1);
+  if (i >= 2 && lo >= 0xdc00 && lo <= 0xdfff) {
+    const hi = t.charCodeAt(i - 2);
+    if (hi >= 0xd800 && hi <= 0xdbff) return [t.codePointAt(i - 2)!, 2];
+  }
+  return [lo, 1];
+};
+const at = (t: string, i: number): [number, number] => {
+  const c = t.codePointAt(i)!;
+  return [c, c > 0xffff ? 2 : 1];
+};
+
+/** Start of the word that the code point at `i` belongs to (UTF-16 index); `i` itself when that code point is not a word
+ *  character. */
+export function wordStart(text: string, i: number): number {
+  if (i >= text.length || !isWordChar(at(text, i)[0])) return i;
+  while (i > 0) {
+    const [c, n] = before(text, i);
+    if (isWordChar(c)) i -= n;
+    else if (isJoiner(c) && i - n > 0 && isWordChar(before(text, i - n)[0])) i -= n;
+    else break;
+  }
+  return i;
+}
+
+/** End of the word that the code point before `i` belongs to; `i` itself when that code point is not a word character. */
+export function wordEnd(text: string, i: number): number {
+  if (i <= 0 || !isWordChar(before(text, i)[0])) return i;
+  while (i < text.length) {
+    const [c, n] = at(text, i);
+    if (isWordChar(c)) i += n;
+    else if (isJoiner(c) && i + n < text.length && isWordChar(at(text, i + n)[0])) i += n;
+    else break;
+  }
+  return i;
+}
+
 type Segments = { containing(i: number): { segment: string; index: number } | undefined };
 const segmenter: { segment(s: string): Segments } | null =
   typeof Intl !== "undefined" && (Intl as any).Segmenter ? new (Intl as any).Segmenter(undefined, { granularity: "grapheme" }) : null;
@@ -397,20 +467,24 @@ const segmenter: { segment(s: string): Segments } | null =
  *  its winner: each next span replaces the winner only when its original (pre-snap) length in code points is strictly
  *  greater, so ties keep the earlier span. Empty spans stay as they are. `cells` (table mode, in text order): a span inside
  *  a cell's value range is clamped to that range after widening, so snapping never crosses a delimiter, quote or line break.
- *  Without Intl.Segmenter (e.g. Hermes builds without it, older browsers) the spans are returned unchanged: their bounds
- *  are still on code points, but a span may cover part of an emoji sequence or combining sequence. */
-export function snapGraphemes(text: string, spans: Span[], cells?: readonly { start: number; end: number }[]): Span[] {
-  if (!segmenter || !spans.length) return spans;
-  const segs = segmenter.segment(text);
+ *  Without Intl.Segmenter (e.g. Hermes builds without it, older browsers) the bounds are not moved to cluster edges: they
+ *  are still on code points, but a span may cover part of an emoji sequence or combining sequence.
+ *  `words` (option wholeWords): before that, a span that starts or ends inside a word is widened to the whole word
+ *  (isWordChar: letters, digits and marks, joined by apostrophes and hyphens; not in scripts written without spaces). */
+export function snapGraphemes(text: string, spans: Span[], cells?: readonly { start: number; end: number }[], words = false): Span[] {
+  if (!spans.length || (!segmenter && !words)) return spans;
+  const segs = segmenter ? segmenter.segment(text) : null;
   let j = 0;
   const snapped = spans
     .map((s) => {
       const len = cpLength(text, s.start, s.end);
       if (s.end <= s.start) return { span: { ...s }, len };
-      const a = segs.containing(s.start);
-      const b = segs.containing(s.end - 1);
-      let start = a ? a.index : s.start;
-      let end = b ? b.index + b.segment.length : s.end;
+      const ws = words ? wordStart(text, s.start) : s.start;
+      const we = words ? wordEnd(text, s.end) : s.end;
+      const a = segs?.containing(ws);
+      const b = segs?.containing(we - 1);
+      let start = a ? a.index : ws;
+      let end = b ? b.index + b.segment.length : we;
       if (cells) {
         while (j < cells.length && cells[j].end <= s.start) j++; // cells are in text order with increasing ends
         const c = cells[j];

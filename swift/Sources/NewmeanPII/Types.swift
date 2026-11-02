@@ -170,3 +170,20 @@ public enum PIIError: Error, LocalizedError, Sendable {
     if rc != PII_OK { throw PIIError.core(code: Int(rc), message: String(cString: pii_strerror(rc))) }
   }
 }
+
+/// What a redactor runs (`PIIRedactor.info`).
+public struct PIIRedactorInfo: Sendable, Hashable {
+  /// Version of this package and its C core ("1.3.0").
+  public let packageVersion: String
+  /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
+  public let modelVersion: String
+  public let size: PIISize
+  public let variant: PIIVariant
+  /// Always "native" (the C core).
+  public let engine: String
+  /// The weight file and the tokenizer, with the size and SHA-256 the loaded bytes were checked against.
+  public let model: PIIModelFile
+  public let tokenizer: PIIModelFile
+  /// Kernel build of the C core ("neon", "sse", ...).
+  public let build: String
+}

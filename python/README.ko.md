@@ -54,7 +54,9 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
     labels=None,               # 가릴 레이블; 기본 전체(LABELS); 모르는 이름은 ValueError
     regex=False,               # 몇 가지 패턴(이메일, URL, 카드/계좌, 전화, 주민등록번호)도 가림;
                                # 기본 꺼짐: 추가 탐지는 거의 없고 과잉 마스킹이 두 배
-    keep_emoji=False,          # True: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
+    keep_emoji=False,          # True: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
+    whole_words=False,         # True: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
+    strict_short_names=False,  # True: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
     model_dir=None,            # tokenizer.web.json과 onnx/model_<variant>.onnx가 있는 폴더; 다운로드하지 않음
     cache_dir=None,            # 기본: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii 또는 ~/.cache/newmean-pii
     model_url=None,            # newmean-ai/pii-<size> 미러의 기준 URL (https://, http://, file://)
@@ -68,6 +70,7 @@ redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="n
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # 다시 불러오지 않음
 redactor.tokenize(text)                # -> [Token(id, start, end)]
+redactor.info()                        # package_version, model_version, size, variant, files(path, bytes, sha256), 모델 구조, build
 redactor.close()                       # 또는: with create_redactor() as r: ...
 
 apply_redaction(text, spans, mode="tag", mask_char="*", replace=None)
@@ -79,7 +82,11 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
   npm 패키지는 같은 구간을 UTF-16 인덱스로 냅니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기, 결합 문자열은
   통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`, `"model+regex"`, `"table"` 중 하나입니다.
 - **이모지**: 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간 안의
-  이모지는 구간을 둘로 나눕니다. `keep_emoji=True`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
+  이모지는 구간을 둘로 나눕니다. `keep_emoji=True`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
+- **낱말 단위**: `whole_words=True`면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`, "R23" → `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다.
+- **짧은 값**: `strict_short_names=True`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다.
+- **버전**: `redactor.version`은 모델 버전(1.1.0)입니다. 감사 기록에 남길 패키지 버전은 `newmean_pii.__version__`이나
+  `info()["package_version"]`입니다.
 - **`tag` 모드**는 레이블 계열을 씁니다. `PERSON_L2`는 `[PERSON]`, `URL_L2`는 `[URL]`이 됩니다. `mask`는 코드 포인트마다
   `mask_char` 하나를 씁니다.
 - **스레드**: redactor 하나를 함께 써도 됩니다. 모델은 불변이고 실행 중에는 GIL을 풀기 때문에 스레드 풀로 병렬

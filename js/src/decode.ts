@@ -19,8 +19,9 @@ export function makeWindows(ids: number[], bos: number, eos: number, window = 25
 }
 
 /** Per-token tag index. Where windows overlap, a token takes the prediction of the window in which it sits farther
- *  from the edge. `logits` holds one [n_tokens + 2, n_tags] row-major block per window. */
-export function bestTags(nTokens: number, windows: Window[], logits: Float32Array[], nTags: number, oBias = 0): Int32Array {
+ *  from the edge. `logits` holds one [n_tokens + 2, n_tags] row-major block per window. `oBias` is added to the O logit,
+ *  `personBias` to the PERSON and PERSON_L2 logits (tags 1–4). */
+export function bestTags(nTokens: number, windows: Window[], logits: Float32Array[], nTags: number, oBias = 0, personBias = 0): Int32Array {
   const tag = new Int32Array(nTokens).fill(0);
   const dist = new Int32Array(nTokens).fill(-1);
   windows.forEach((w, k) => {
@@ -31,8 +32,9 @@ export function bestTags(nTokens: number, windows: Window[], logits: Float32Arra
       let best = 0;
       let bestV = lg[base] + oBias;
       for (let t = 1; t < nTags; t++) {
-        if (lg[base + t] > bestV) {
-          bestV = lg[base + t];
+        const v = lg[base + t] + (t <= 4 ? personBias : 0);
+        if (v > bestV) {
+          bestV = v;
           best = t;
         }
       }

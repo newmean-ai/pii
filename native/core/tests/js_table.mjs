@@ -1,5 +1,5 @@
 // Spans of the npm package's detectTable() (builtin WebAssembly engine, regex layer on) for JSON lines with "text" and the
-// optional table-mode fields of pii_cli ("delimiter", "header", "vote", "labels"); one line per input:
+// optional fields of pii_cli table ("delimiter", "header", "vote", "labels", "context", "words", "strict"); one line per input:
 //   {"spans": [[start, end, label, source], ...], "extra": [[cp_start, cp_end, label], ...]}
 // spans in UTF-16 units with source as pii.h bits (model 1, regex 2, model+regex 3, table 4); extra = the package's regex
 // spans in code points, which run_tests.py passes to pii_cli table as pii_options.extra so both sides see the same patterns.
@@ -32,7 +32,7 @@ if (process.argv[2] === "apply") {
     if (row.delimiter !== undefined) table.delimiter = row.delimiter;
     if (row.header !== undefined) table.header = row.header;
     if (row.vote !== undefined) table.vote = row.vote;
-    const got = detectTableSpans(text, spans, table, new Set(row.labels ?? ALL));
+    const got = detectTableSpans(text, spans, table, new Set(row.labels ?? ALL), [], row.words ?? false);
     out.push(JSON.stringify({ spans: got.map((s) => [cpOf.get(s.start) ?? -1, cpOf.get(s.end) ?? -1, s.label, BITS[s.source]]) }));
   }
   await new Promise((done) => process.stdout.write(out.join("\n") + "\n", done)); // flush the pipe before exiting
@@ -45,8 +45,8 @@ const localFetch = async (url) => new Response(readFileSync(new URL(url)));
 const SOURCE = { model: 1, regex: 2, "model+regex": 3, table: 4 };
 const redactors = new Map(); // labels key -> Redactor (labels are a redactor option)
 
-async function redactor(labels) {
-  const key = labels ? JSON.stringify(labels) : "";
+async function redactor(labels, words, strict) {
+  const key = (labels ? JSON.stringify(labels) : "") + (words ? " words" : "") + (strict ? " strict" : "");
   if (!redactors.has(key)) {
     const r = await pkg.createRedactor({
       engine: "builtin",
@@ -59,6 +59,8 @@ async function redactor(labels) {
       regex: true,
       sensitivity: Number(sens),
       ...(labels ? { labels } : {}),
+      ...(words ? { wholeWords: true } : {}),
+      ...(strict ? { strictShortNames: true } : {}),
     });
     if (typeof r.detectTable !== "function") throw new Error("this js/dist has no detectTable (rebuild: npm run build)");
     redactors.set(key, r);
@@ -84,7 +86,7 @@ const lines = readFileSync(0, "utf8").split("\n").filter((l) => l.trim());
 const out = [];
 for (const l of lines) {
   const row = JSON.parse(l);
-  const r = await redactor(row.labels);
+  const r = await redactor(row.labels, row.words, row.strict);
   const table = {};
   if (row.delimiter !== undefined) table.delimiter = row.delimiter;
   if (row.header !== undefined) table.header = row.header;

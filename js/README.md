@@ -69,10 +69,13 @@ createRedactor(options?: {
   labels?: string[];           // labels to mask; default all
   regex?: boolean;             // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
-  keepEmoji?: boolean;         // true: the model also reads emoji (1.1 behaviour); default false: never read or masked
+  keepEmoji?: boolean;         // true: the model also reads emoji (1.0 behaviour); default false: never read or masked
+  wholeWords?: boolean;        // true: a span that ends inside a word covers the whole word; default false
+  strictShortNames?: boolean;  // true: short texts (≤ 8 tokens) need stronger evidence to be read as names; default false
   cache?: boolean;             // keep model files in the Cache API; default true
   verify?: boolean;            // check SHA-256 of model files; default true
   onProgress?: (p) => void;    // download progress
+  fetch?: typeof fetch;        // used to download the model files; default globalThis.fetch (pass one in Node or tests)
   wasmPaths?: string;          // onnxruntime: where onnxruntime-web loads its .wasm from
   threads?: number;            // onnxruntime: WebAssembly threads (cross-origin isolated pages)
   relaxedSimd?: boolean;       // builtin: force the fused multiply-add build on or off (default: detected)
@@ -84,13 +87,24 @@ redactor.detectTable(text, table?)           // table mode (see Tables)
 redactor.redactTable(text, table?, options?) // → { text, spans }; options as redact
 redactor.setSensitivity(value)
 redactor.engine                  // "onnxruntime" | "builtin"
+redactor.version                 // model release ("1.1.0"); the package version is VERSION or info.packageVersion
+redactor.info                    // { packageVersion, modelVersion, size, variant, engine, modelUrl,
+                                 //   files: { model, tokenizer: { path, bytes, sha256 } }, verified }
 redactor.dispose()
 ```
 
 Offsets are UTF-16 indices, as used by `String.prototype.slice`. Spans are widened to whole grapheme clusters, so an emoji,
 flag or combining sequence is masked whole or kept whole (this needs `Intl.Segmenter`; where it is missing, spans stay on code
 point boundaries). By default emoji are taken out of the text the model reads, so the model does not read them as PII: offsets still refer to the
-input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.1 behaviour).
+input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.0 behaviour).
+With `wholeWords: true`, a span that starts or ends inside a word is widened to the whole word: 「경기도」 becomes `[PERSON]`
+instead of `[PERSON]기도`, and "R23" `[ID_NUMBER]` instead of `[ID_NUMBER]23`. A word is a run of letters, digits and marks
+joined by apostrophes and hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never
+extend a span. It masks a little more text and nothing less; in table mode it stays inside the cell.
+
+With `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
+`info` names what ran, for audit records: the package and model versions and the size and SHA-256 of the two model files
+(checked when `verify` is on).
 Inference runs on the calling thread; for long texts, create the redactor inside a Web Worker.
 
 ## Tables

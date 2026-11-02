@@ -13,7 +13,7 @@ Swift Package Manager: in Xcode, File › Add Package Dependencies… › `https
 `NewmeanPII`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.2.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.3.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -80,7 +80,9 @@ try await PIIRedactor(
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                     // default false (model only): almost no extra coverage, double the over-masking
-  keepEmoji: Bool = false,          // true: the model also reads emoji (1.1 behaviour); default: never read or masked
+  keepEmoji: Bool = false,          // true: the model also reads emoji (1.0 behaviour); default: never read or masked
+  wholeWords: Bool = false,         // true: a span that ends inside a word covers the whole word
+  strictShortNames: Bool = false,   // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
   modelDirectory: URL? = nil)       // folder with the model files; nil: download once into Caches
 
 try await redactor.detect(text)                  // [PIISpan], sorted, non-overlapping
@@ -99,7 +101,9 @@ the npm package's `start` and `end`), `scalarRange` (Unicode scalars, Python's o
 implements it), so an emoji, flag or combining sequence is masked whole or kept whole. Slice with
 `text.unicodeScalars[span.range]` or `utf16Range`, as `redact` does. `.mask` writes one mask character per Unicode scalar,
 like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets still refer
-to the input; an emoji inside a span splits it); `keepEmoji: true` gives the model the text as given (1.1 behaviour).
+to the input; an emoji inside a span splits it); `keepEmoji: true` gives the model the text as given (1.0 behaviour).
+With `wholeWords: true`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span. With `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged. `redactor.version` is the model release (1.1.0); `redactor.info` adds the package
+version (`PIIRedactor.packageVersion`), size, variant and the two checked model files (`PIIModelFile`: path, bytes, SHA-256).
 
 **Threads.** `PIIRedactor` is `Sendable` and needs no locking: any number of tasks may call `detect` on one instance at
 once. The async methods run the model on a detached task, never on the caller's actor, so calling them from the main

@@ -1,6 +1,7 @@
 import { bestTags, decodeSpans, makeWindows } from "./decode.js";
 import { loadFile, type Progress } from "./loader.js";
-import { MODEL_FILES, MODEL_VERSION, type Size, type Variant } from "./models.js";
+import { MODEL_FILES, MODEL_VERSION, type FileInfo, type Size, type Variant } from "./models.js";
+import { VERSION } from "./version.js";
 import { regexSpans } from "./regex.js";
 import { detectTableSpans, headerContextCells, parseTable, snapGraphemes, type TableOptions } from "./table.js";
 import { restoreSpans, stripEmoji } from "./emoji.js";
@@ -23,6 +24,11 @@ export const LEVEL1_LABELS: Label[] = LABELS.filter((l) => !l.endsWith("_L2"));
 
 export const DEFAULT_VARIANT: Record<Size, Variant> = { large: "q4e", medium: "q4e", small: "q4", nano: "q4" };
 
+// Option strictShortNames: texts of at most SHORT_TOKENS tokens get SHORT_PERSON_BIAS on the PERSON and PERSON_L2 logits
+// (same constants as native/core/src/internal.h).
+const SHORT_TOKENS = 8;
+const SHORT_PERSON_BIAS = -3;
+
 export interface RedactorOptions {
   /** What runs the model. "builtin": the package's own WebAssembly engine (about 6 KB, no extra download; fused
    *  multiply-add where the browser supports relaxed SIMD). "onnxruntime": onnxruntime-web (about 2.4 MB of WebAssembly,
@@ -44,8 +50,17 @@ export interface RedactorOptions {
    *  public test of newmean-pii-dataset they add almost no coverage and double over-masking (dates and timestamps match the account pattern). */
   regex?: boolean;
   /** false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of the input
-   *  (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour). */
+   *  (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour). */
   keepEmoji?: boolean;
+  /** true: a span that starts or ends inside a word is widened to the whole word, so 「경기도」 is masked whole instead of
+   *  「[PERSON]기도」 and "R23" instead of "[ID_NUMBER]23". A word is a run of letters, digits and marks, joined by apostrophes
+   *  and hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span. Masks
+   *  more characters; default false. */
+  wholeWords?: boolean;
+  /** true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger
+   *  evidence to read it as a person's name, so short values such as 「경기」, 「남성」 or 「네이버」 are left alone; a lone
+   *  name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are unchanged. Default false. */
+  strictShortNames?: boolean;
   /** Keep downloaded model files in the Cache API. Default true. */
   cache?: boolean;
   /** Check every model file against its published SHA-256. Default true. */
@@ -57,6 +72,8 @@ export interface RedactorOptions {
   wasmPaths?: string;
   /** onnxruntime engine: WebAssembly threads (needs a cross-origin isolated page). Default: onnxruntime's choice. */
   threads?: number;
+  /** The fetch used to download the model files. Default: globalThis.fetch. Pass one in Node to read self-hosted files,
+   *  add headers, or serve the files from disk in tests. */
   fetch?: typeof fetch;
   /** onnxruntime engine, advanced: a preloaded onnxruntime-web module. */
   ort?: Ort;
@@ -76,11 +93,29 @@ export interface RunStats {
   ms: number;
 }
 
+/** What a redactor runs: package and model versions and the model files it checked. */
+export interface RedactorInfo {
+  /** This package's version (VERSION). */
+  packageVersion: string;
+  /** Model release (MODEL_VERSION; Hugging Face tag v<modelVersion>). */
+  modelVersion: string;
+  size: Size;
+  variant: Variant;
+  engine: EngineName;
+  /** Where the files were read from (modelUrl or the Hugging Face URL). */
+  modelUrl: string;
+  /** Published size and SHA-256 of the two files; with verify (default) the loaded bytes were checked against them. */
+  files: { model: FileInfo & { path: string }; tokenizer: FileInfo & { path: string } };
+  verified: boolean;
+}
+
 export interface Redactor {
   readonly engine: EngineName;
   readonly size: Size;
   readonly variant: Variant;
+  /** Model release (MODEL_VERSION), not the package version: use `info.packageVersion` or `VERSION` for that. */
   readonly version: string;
+  readonly info: RedactorInfo;
   /** Spans to mask, sorted and non-overlapping, widened to whole grapheme clusters (an emoji sequence is masked whole).
    *  The widening needs Intl.Segmenter; where it is missing (Hermes builds without it, older browsers) spans stay on
    *  code point boundaries and may cover part of an emoji or combining sequence. */
@@ -190,6 +225,8 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   const enabled = new Set<string>(options.labels ?? LABELS);
   const useRegex = options.regex ?? false;
   const keepEmoji = options.keepEmoji ?? false;
+  const wholeWords = options.wholeWords ?? false;
+  const strictShortNames = options.strictShortNames ?? false;
   let queue: Promise<unknown> = Promise.resolve(); // one model call at a time
   let lastRun: RunStats | null = null;
 
@@ -202,7 +239,8 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
     }
     const windows = makeWindows(enc.ids, tokenizer.bosId, tokenizer.eosId);
     const logits = await engine.run(windows);
-    const tags = bestTags(enc.ids.length, windows, logits, TAGS.length, oBias);
+    const personBias = strictShortNames && enc.ids.length <= SHORT_TOKENS ? SHORT_PERSON_BIAS : 0;
+    const tags = bestTags(enc.ids.length, windows, logits, TAGS.length, oBias, personBias);
     const spans = decodeSpans(text, enc, tags, TAGS);
     lastRun = { tokens: enc.ids.length, windows: windows.length, ms: performance.now() - t0 };
     return spans;
@@ -222,7 +260,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   }
 
   async function detect(text: string): Promise<Span[]> {
-    return snapGraphemes(text, await detectRaw(text));
+    return snapGraphemes(text, await detectRaw(text), undefined, wholeWords);
   }
 
   async function detectTable(text: string, table: TableOptions = {}): Promise<Span[]> {
@@ -243,7 +281,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
         }
       }
     }
-    return detectTableSpans(text, raw, table, enabled, extra);
+    return detectTableSpans(text, raw, table, enabled, extra, wholeWords);
   }
 
   return {
@@ -251,6 +289,16 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
     size,
     variant,
     version: MODEL_VERSION,
+    info: {
+      packageVersion: VERSION,
+      modelVersion: MODEL_VERSION,
+      size,
+      variant,
+      engine: engineName,
+      modelUrl: base,
+      files: { model: { path: `onnx/model_${variant}.onnx`, ...files[variant] }, tokenizer: { path: "tokenizer.web.json", ...files.tokenizer } },
+      verified: load.verify,
+    },
     detect,
     async redact(text, opts) {
       const spans = await detect(text);

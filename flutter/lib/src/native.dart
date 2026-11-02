@@ -62,7 +62,8 @@ int tableContext(String context) => switch (context) {
 };
 
 /// Spans to mask in [text] (UTF-16 offsets): the model's spans, merged with the pattern layer's when [regex] is true,
-/// filtered by [labels] (a [labelMask]); [keepEmoji]: pii_options.keep_emoji. Same steps as detect() of the npm package.
+/// filtered by [labels] (a [labelMask]); [keepEmoji], [wholeWords], [strictShortNames]: pii_options.keep_emoji, whole_words,
+/// strict_short_names. Same steps as detect() of the npm package.
 /// With [table] (a [tableDelimiter] code, header, vote, a [tableContext] code): table mode (pii_detect_table, detectTable()
 /// of the npm package).
 List<PiiSpan> detectSpans(
@@ -71,7 +72,9 @@ List<PiiSpan> detectSpans(
   double sensitivity,
   int labels,
   bool regex,
-  bool keepEmoji, [
+  bool keepEmoji,
+  bool wholeWords,
+  bool strictShortNames, [
   (int, bool, bool, int)? table,
 ]) => using((arena) {
   // Lone surrogates become U+FFFD (one UTF-16 unit either way), so offsets stay Dart string indices.
@@ -81,7 +84,9 @@ List<PiiSpan> detectSpans(
   opts.ref
     ..sensitivity = sensitivity
     ..labels = labels
-    ..keepEmoji = keepEmoji ? 1 : 0;
+    ..keepEmoji = keepEmoji ? 1 : 0
+    ..wholeWords = wholeWords ? 1 : 0
+    ..strictShortNames = strictShortNames ? 1 : 0;
   if (regex) {
     final extra = regexSpans(text);
     if (extra.isNotEmpty) {

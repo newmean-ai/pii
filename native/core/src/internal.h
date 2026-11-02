@@ -141,15 +141,23 @@ int pii_table_parse(const pii_text *tx, int delimiter, pii_vec *cells, size_t *r
 // none): a span inside a cell's value range is clamped to that range, so snapping never crosses a delimiter, quote or line
 // break. In place; returns the new count.
 size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells);
+// As pii_snap_graphemes; words (pii_options.whole_words): each span is first widened to the words its start and end fall in
+// (snapGraphemes of js/src/table.ts with words), then sorted again by start and merged by the same rule.
+size_t pii_snap_spans(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells, int words);
 // Table-mode steps after whole-text detection: spans (detect's sorted, non-overlapping spans before snapping) -> clipped to
 // cells, column vote and propagation (labels: enabled labels), merge, snapping. Not a table: the snapped spans. *out is
 // malloc'ed (NULL when *n_out is 0). Exposed for tests.
 // As pii_table_apply, with extra spans (inside cells) merged after the vote, before the overlap merge (header context).
+// words: pii_options.whole_words, applied in the last (snapping) step.
 int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra, int delimiter,
-                        int header, int vote, uint32_t labels, pii_cspan **out, size_t *n_out);
+                        int header, int vote, uint32_t labels, int words, pii_cspan **out, size_t *n_out);
 int pii_table_apply(const pii_text *tx, const pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels,
                     pii_cspan **out, size_t *n_out);
 #define PII_WINDOW 256
 #define PII_STRIDE 64
+// pii_options.strict_short_names: texts of at most PII_SHORT_TOKENS tokens get PII_SHORT_PERSON_BIAS on the PERSON and
+// PERSON_L2 logits (tags 1-4); same constants as js/src/redactor.ts.
+#define PII_SHORT_TOKENS 8
+#define PII_SHORT_PERSON_BIAS (-3.0)
 
 #endif

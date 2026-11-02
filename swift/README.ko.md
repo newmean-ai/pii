@@ -12,7 +12,7 @@ Swift Package Manager: Xcode에서 File › Add Package Dependencies… › `htt
 `NewmeanPII`. 또는 `Package.swift`에:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.2.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.3.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -77,7 +77,9 @@ try await PIIRedactor(
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림;
                                     // 기본 false(모델만): 추가로 찾는 것은 거의 없고 과잉 가림이 두 배
-  keepEmoji: Bool = false,          // true: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
+  keepEmoji: Bool = false,          // true: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
+  wholeWords: Bool = false,         // true: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
+  strictShortNames: Bool = false,   // true: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
   modelDirectory: URL? = nil)       // 모델 파일 폴더; nil이면 Caches로 한 번 내려받음
 
 try await redactor.detect(text)                  // [PIISpan], 정렬, 겹침 없음
@@ -95,7 +97,9 @@ PIIRegex.spans(in: text)                         // 패턴 층만 따로
 구간은 문자소 클러스터 단위(UAX #29, C 코어 구현 기준)로 넓혀지므로 이모지, 국기, 결합 문자열은 통째로 가려지거나 통째로 남습니다.
 자를 때는 `redact`처럼 `text.unicodeScalars[span.range]`나 `utf16Range`를 쓰세요. `.mask`는 npm 패키지처럼 유니코드 스칼라마다
 가림 문자 하나를 씁니다. 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의
-이모지는 구간을 나눔). `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
+이모지는 구간을 나눔). `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
+`wholeWords: true`면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`, "R23" → `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다. `strictShortNames: true`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다. `redactor.version`은 모델 버전(1.1.0)이고, `redactor.info`에는 패키지 버전
+(`PIIRedactor.packageVersion`), 크기, 종류, 검사한 두 모델 파일(`PIIModelFile`: 경로, 크기, SHA-256)이 더해집니다.
 
 **스레드.** `PIIRedactor`는 `Sendable`이고 잠글 필요가 없습니다. 여러 작업이 한 인스턴스의 `detect`를 동시에 불러도 됩니다.
 async 메서드는 모델을 분리된 작업(detached task)에서 실행하고 호출한 액터에서 돌리지 않으므로, 메인 액터에서 불러도 UI가

@@ -11,7 +11,7 @@
 ```kotlin
 // 앱 모듈의 build.gradle.kts
 dependencies {
-    implementation("ai.newmean:pii:1.2.0")
+    implementation("ai.newmean:pii:1.3.0")
 }
 ```
 
@@ -97,7 +97,9 @@ PiiRedactor.create(                       // suspend, Dispatchers.IO에서 불�
     regex = false,                        // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림; 기본 false
                                           // (모델만): 추가로 찾는 것은 거의 없고 과마스킹은 두 배
     source = PiiModelSource.Assets(),     // 또는 PiiModelSource.Download(...)
-    keepEmoji = false,                    // true: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
+    keepEmoji = false,                    // true: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
+    wholeWords = false,                   // true: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
+    strictShortNames = false,             // true: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // 디스크의 파일; 바이트는 fromBytes(model, tokenizer, size, ...)
 
@@ -107,6 +109,7 @@ redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → 
 redactor.detectTable(text)                // 표 모드(아래 '표' 참고)
 redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // 모델을 다시 불러오지 않고 임계값 변경
+redactor.info()                           // packageVersion, modelVersion, size, variant, 모델·토크나이저 고정값, 모델 구조
 redactor.close()                          // 모델 해제 (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
 PiiRegex.spans(text)                      // 패턴 층만
@@ -116,7 +119,8 @@ PiiRegex.spans(text)                      // 패턴 층만
 `source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`)가 있습니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기,
 결합 문자열은 통째로 가려지거나 통째로 남습니다. `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의 이모지는 구간을 나눔).
-`keepEmoji = true`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
+`keepEmoji = true`면 모델이 텍스트를 그대로 읽습니다(1.0 동작). `wholeWords = true`면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`, "R23" → `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다. `strictShortNames = true`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다. `redactor.version`은
+모델 버전(1.1.0)이고 패키지 버전은 `info().packageVersion`입니다.
 
 **스레드.** `PiiRedactor`는 스레드 안전합니다. 여러 스레드나 코루틴이 한 인스턴스의 `detect`·`redact`를 동시에 불러도
 됩니다(호출마다 작업 메모리가 따로). 둘 다 CPU를 쓰는 블로킹 호출이므로 메인 스레드가 아니라 `Dispatchers.Default`나

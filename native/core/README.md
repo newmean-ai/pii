@@ -36,6 +36,8 @@ pii_options_init(&o);         // sensitivity 0, all labels
 o.sensitivity = 0.3;          // > 0 masks more, < 0 masks less (npm `sensitivity`)
 o.labels = PII_LABELS_LEVEL1; // npm LEVEL1_LABELS; or PII_LABEL_BIT(PII_EMAIL) | ...
 o.keep_emoji = 0;             // default: emoji are never read or masked (npm `keepEmoji`)
+o.whole_words = 0;            // 1: a span that ends inside a word covers the whole word (npm `wholeWords`)
+o.strict_short_names = 0;     // 1: short texts (<= 8 tokens) need stronger evidence to be read as names (npm `strictShortNames`)
 
 pii_span *spans;
 size_t n;
@@ -69,7 +71,12 @@ pii_model_free(m);
   wins; a pattern label counts only where no model label of the same family covers the text), so the pattern layer can
   stay in each language. `keep_emoji` (default 0) takes emoji out of the text the model reads, so the model does not read them as PII;
   spans keep the input's offsets, an emoji inside a span splits it, and a keycap is read as its bare character (a span over
-  it covers the whole keycap). 1 gives the model the text as given (1.1 behaviour).
+  it covers the whole keycap). 1 gives the model the text as given (1.0 behaviour). `whole_words` (default 0): with 1, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span
+  (table mode: inside the cell). The word table `src/word_tables.h` is generated from `js/src/table.ts`
+  (`node scripts/gen_words.mjs`), so both packages use the same characters. `strict_short_names` (default 0): with 1, a
+  text the model reads as at most 8 tokens (a survey answer, a table cell) gets -3 on the PERSON and PERSON_L2 logits, so
+  「경기」, 「남성」, 「네이버」 are left alone and 「김민지」 is still found (large: short PII-free survey items masked 7.9% →
+  4.3%, lone names found 98.9% → 96.5%); longer texts are unchanged.
 - **Pins and defaults**: `pii_model_file(size, file)` gives the path, size and SHA-256 of each published file;
   `pii_default_variant(size)` the npm default (`q4e` for large and medium, `q4` for small and nano). Default size:
   `PII_DEFAULT_SIZE` (`medium`).

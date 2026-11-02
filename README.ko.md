@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.2.0`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.2.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.3.0`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.3.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
@@ -136,7 +136,8 @@ medium 30.6%에서 7.8%, small 36.8%에서 9.4%, nano 39.3%에서 11.1%), 설문
 
 이모지, 모델만 대 모델 + SDK 1.2: 이모지 1~3개를 개인정보 밖에 넣은 텍스트 4,501개 중 이모지가 가려진 텍스트의 비율입니다.
 이모지가 반으로 잘리는 일은 없습니다. 남은 것은 대부분 이름 옆의 키캡으로, 키캡을 숫자로 읽기 때문에 이름과 함께 가려집니다.
-이 텍스트에서 놓친 개인정보 글자도 줄었습니다(large 0.87%에서 0.31%, medium 1.03%에서 0.61%).
+이 텍스트에서 놓친 개인정보 글자도 줄었습니다(large 0.87%에서 0.31%, medium 1.03%에서 0.61%). 1.0판은 이 텍스트의
+7.42%(large), 9.46%(medium), 16.69%(small), 21.88%(nano)에서 이모지를 가리고, 1.9~7.6%에서 이모지를 반으로 자릅니다.
 
 | 모델 | 모델만 | 모델 + SDK 1.2 |
 |---|---|---|
@@ -157,7 +158,16 @@ medium 30.6%에서 7.8%, small 36.8%에서 9.4%, nano 39.3%에서 11.1%), 설문
 
 `context: "header"`는 모든 크기에서 놓침을 약 4분의 1로 줄이고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 표 모드만으로는 파일
 전체를 읽을 때와 놓침이 거의 같지만, 표를 올바르게 지키고 연락처 열을 통째로 가립니다. small과 nano는 어느 방식이든 개인정보가
-없는 칸을 많이 가립니다(16~27%). 옵션을 정할 때 쓴 세트 두 개와 전체 수치: [기술 보고서 6.2절](docs/report/REPORT.ko.md).
+없는 칸을 많이 가립니다(16~27%). 1.0판(v1.0 모델, 표 모드 없음)은 이 파일을 통째로 읽고 더 놓칩니다: large 7.52 / 11.30,
+medium 9.50 / 9.37, small 9.80 / 13.43, nano 8.04 / 24.36. 옵션을 정할 때 쓴 세트 두 개와 전체 수치: [기술 보고서 6.2절](docs/report/REPORT.ko.md).
+
+1.3에서 더한 것. SDK 1.3.0이며 모델은 v1.1 그대로입니다. 옵션 두 개를 더했고 둘 다 기본은 꺼져 있어 1.2 코드는 같은 구간을 받습니다.
+`strictShortNames`: 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 이름으로 보므로, 단독으로 쓴 「경기」, 「남성」,
+「네이버」는 가리지 않습니다. 개인정보 없는 짧은 항목을 가린 비율은 7.9%에서 4.3%로 줄고(large; medium 7.8%→4.5%, small
+9.4%→4.7%, nano 11.1%→5.9%), 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다(medium 97.5%→95.4%, small 97.0%→93.5%, nano
+96.7%→94.4%). 긴 글은 그대로입니다(공개 테스트와 KDPII 차이 0.07점 이하). `wholeWords`: 낱말 중간에서 끝나는 구간을 낱말 전체로
+넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`). 모든 세트에서 놓침이 0.1~1.3점 줄고, 이름 주변을 더 가립니다(KDPII에서는
+이름에 붙은 조사). 모든 패키지에 패키지·모델 버전과 검사한 모델 파일을 주는 `info`도 더했습니다.
 
 ## 저장소 구성
 

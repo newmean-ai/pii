@@ -18,6 +18,8 @@ class Model:
         labels: int,
         extra: Optional[List[Tuple[int, int, int]]] = ...,
         keep_emoji: bool = ...,
+        whole_words: bool = ...,
+        strict_short_names: bool = ...,
     ) -> List[Tuple[int, int, int, int]]: ...
     def detect_table(
         self,
@@ -30,6 +32,8 @@ class Model:
         vote: bool = ...,
         context: int = ...,
         keep_emoji: bool = ...,
+        whole_words: bool = ...,
+        strict_short_names: bool = ...,
     ) -> List[Tuple[int, int, int, int]]: ...
     def tokenize(self, text: str) -> List[Tuple[int, int, int]]: ...
     def info(self) -> Dict[str, Union[int, str]]: ...

@@ -32,12 +32,14 @@ internal object TestEnv {
     fun requireNative() = assumeTrue("host JNI library not built (cmake missing or -Ppii.hostJni=false)", hasNative)
 
     fun redactor(size: PiiSize, variant: PiiVariant = size.defaultVariant, sensitivity: Double = 0.0, regex: Boolean = false,
-                 labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false): PiiRedactor {
+                 labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false, wholeWords: Boolean = false,
+                 strictShortNames: Boolean = false): PiiRedactor {
         requireNative()
         val dir = modelDir(size)
         val model = File(dir, PiiModels.modelPath(variant))
         assumeTrue("$model not found", model.isFile)
-        return PiiRedactor.createBlocking(model, File(dir, PiiModels.TOKENIZER_PATH), size, variant, sensitivity, labels, regex, keepEmoji)
+        return PiiRedactor.createBlocking(model, File(dir, PiiModels.TOKENIZER_PATH), size, variant, sensitivity, labels, regex, keepEmoji, wholeWords,
+            strictShortNames)
     }
 
     /** The native model handle of [r], for calls straight to the JNI bridge. */

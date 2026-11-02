@@ -6,7 +6,7 @@ library;
 export 'src/loader.dart' show PiiProgress, defaultCacheDir;
 export 'src/models.dart'
     show PiiModelFile, defaultSize, defaultVariant, modelFile, modelSizes, modelVersion, nativeBuildInfo, nativeVersion;
-export 'src/newmean_pii.dart' show NewmeanPii;
+export 'src/newmean_pii.dart' show NewmeanPii, PiiRedactorInfo;
 export 'src/redaction.dart' show PiiRedaction, RedactMode, applyRedaction;
 export 'src/regex.dart' show regexRules, regexSpans;
 export 'src/span.dart' show PiiSpan, labelFamily, level1Labels, piiLabels;

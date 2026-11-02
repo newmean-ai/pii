@@ -8,7 +8,7 @@ options and spans as the npm package [`@newmean-ai/pii`](https://www.npmjs.com/p
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.2.0
+  newmean_pii: ^1.3.0
 ```
 
 ```dart
@@ -79,7 +79,9 @@ NewmeanPii.create({
   Iterable<String>? labels,    // labels to mask; default all (piiLabels)
   bool regex = false,          // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
-  bool keepEmoji = false,      // true: the model also reads emoji (1.1 behaviour); default: never read or masked
+  bool keepEmoji = false,      // true: the model also reads emoji (1.0 behaviour); default: never read or masked
+  bool wholeWords = false,     // true: a span that ends inside a word covers the whole word
+  bool strictShortNames = false, // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
   String? modelDir,            // local folder: tokenizer.web.json, onnx/model_<variant>.onnx
   Future<Uint8List> Function(String path)? readFile,  // e.g. Flutter assets
   Uri? modelUrl,               // self-hosted model folder (ending with "/"); default Hugging Face
@@ -96,6 +98,7 @@ pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blan
 pii.detectSync(text), pii.redactSync(text)  // the same on the calling isolate
 pii.detectTable(text), pii.redactTable(text) // table mode (see Tables); detectTableSync, redactTableSync
 pii.sensitivity = 0.3          // or setSensitivity(0.3); no reload
+pii.info                       // packageVersion, modelVersion, size, variant, model and tokenizer pins, build
 pii.dispose()
 
 regexSpans(text), applyRedaction(text, spans, mode: ...)  // the pattern layer and the redaction modes on their own
@@ -106,7 +109,11 @@ modelFile(size, file)          // published path, size and SHA-256 of 'q4', 'q4e
   widened to whole grapheme clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `source` is
   `"model"`, `"regex"`, `"model+regex"` or `"table"`. `mask` writes one mask character per code point.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
-  input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.1 behaviour).
+  input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.0 behaviour).
+- **Whole words**: with `wholeWords: true`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span.
+- **Short values**: with `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
+- **Versions**: `pii.version` is the model release (1.1.0); `pii.info.packageVersion` (= `nativeVersion`) is the package
+  version.
 - **Isolates**: `detect` and `redact` run the model in a background isolate (`Isolate.run`), so the UI never blocks; the
   overhead is about 0.5 ms per call. One loaded model is shared by all calls and calls may overlap: several `detect`
   calls at once run in parallel on different cores. Inside your own background isolate, `detectSync` avoids the hop.

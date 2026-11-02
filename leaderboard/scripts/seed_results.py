@@ -15,7 +15,7 @@ from pii_leaderboard.adapters import EXT, default_variant  # noqa: E402
 from pii_leaderboard.evaluation import public_summary  # noqa: E402
 from pii_leaderboard.store import LocalStore, result_key  # noqa: E402
 
-NEWMEAN_REVISION = "v1.0.0"   # release tag of newmean-ai/pii-<size> (js/src/models.ts MODEL_VERSION)
+NEWMEAN_REVISION = "v1.0.0"   # release tag of newmean-ai/pii-<size> the seeded L4 reports scored (SDK 1.2 pins v1.1.0, scored by the job)
 # tag of the L4 report → (model, revision, adapter, display name, size as in the dataset card). Our models: the SDK default
 # weight file of each tier (adapters.DEFAULT_VARIANT: q4e for large and medium, q4 for small and nano), what users get.
 SEEDS = {

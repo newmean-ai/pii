@@ -67,7 +67,7 @@ JNIEXPORT jintArray JNICALL FN(modelInfo)(JNIEnv *env, jclass cls, jlong handle)
 // pii_detect (table NULL) or pii_detect_table; spans as [utf16_start, utf16_end, label, source] * n. extra: [utf16_start,
 // utf16_end, label] * n (pattern spans) or null.
 static jintArray run_detect(JNIEnv *env, jlong handle, jbyteArray text, jdouble sensitivity, jint labels, jintArray extra,
-                            jboolean keep_emoji, const pii_table_options *table) {
+                            jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names, const pii_table_options *table) {
   const pii_model *m = model_of(env, handle);
   if (!m) return NULL;
   pii_options o;
@@ -75,6 +75,8 @@ static jintArray run_detect(JNIEnv *env, jlong handle, jbyteArray text, jdouble 
   o.sensitivity = sensitivity;
   o.labels = (uint32_t)labels;
   o.keep_emoji = keep_emoji ? 1 : 0;
+  o.whole_words = whole_words ? 1 : 0;
+  o.strict_short_names = strict_short_names ? 1 : 0;
   pii_extra_span *ex = NULL;
   jsize n_extra = extra ? (*env)->GetArrayLength(env, extra) / 3 : 0;
   if (n_extra > 0) {
@@ -139,15 +141,15 @@ static jintArray run_detect(JNIEnv *env, jlong handle, jbyteArray text, jdouble 
 }
 
 JNIEXPORT jintArray JNICALL FN(detect)(JNIEnv *env, jclass cls, jlong handle, jbyteArray text, jdouble sensitivity, jint labels,
-                                      jintArray extra, jboolean keep_emoji) {
+                                      jintArray extra, jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names) {
   (void)cls;
-  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, NULL);
+  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, NULL);
 }
 
 // Table mode; delimiter: 0 (auto), ',', '\t', ';' or '|' (markdown); context: PII_TABLE_CONTEXT_NONE or _HEADER.
 JNIEXPORT jintArray JNICALL FN(detectTable)(JNIEnv *env, jclass cls, jlong handle, jbyteArray text, jdouble sensitivity,
-                                           jint labels, jintArray extra, jboolean keep_emoji, jint delimiter, jboolean header,
-                                           jboolean vote, jint context) {
+                                           jint labels, jintArray extra, jboolean keep_emoji, jboolean whole_words,
+                                           jboolean strict_short_names, jint delimiter, jboolean header, jboolean vote, jint context) {
   (void)cls;
   pii_table_options t;
   pii_table_options_init(&t);
@@ -155,7 +157,7 @@ JNIEXPORT jintArray JNICALL FN(detectTable)(JNIEnv *env, jclass cls, jlong handl
   t.header = header ? 1 : 0;
   t.vote = vote ? 1 : 0;
   t.context = context;
-  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, &t);
+  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, &t);
 }
 
 // Tokens (without <s> and </s>) as [id, utf16_start, utf16_end] * n.

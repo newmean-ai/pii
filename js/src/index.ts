@@ -7,6 +7,7 @@ export {
   LEVEL1_LABELS,
   DEFAULT_VARIANT,
   type Redactor,
+  type RedactorInfo,
   type RedactorOptions,
   type RedactOptions,
   type RunStats,
@@ -14,6 +15,7 @@ export {
 export { regexSpans, REGEX_RULES } from "./regex.js";
 export type { TableOptions, TableDelimiter } from "./table.js";
 export { Tokenizer, type Encoding, type WebTokenizerFile } from "./tokenizer.js";
+export { VERSION } from "./version.js";
 export { MODEL_FILES, MODEL_VERSION, type Size, type Variant, type FileInfo } from "./models.js";
 export type { Progress } from "./loader.js";
 export type { EngineName } from "./engines/engine.js";

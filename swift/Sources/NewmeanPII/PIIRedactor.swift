@@ -8,7 +8,7 @@ import Foundation
 public final class PIIRedactor: @unchecked Sendable {
   public let size: PIISize
   public let variant: PIIVariant
-  /// Model release ("1.1.0").
+  /// Model release ("1.1.0"), not the package version: see `info.packageVersion`.
   public let version = PIIModelFile.version
   /// Labels to mask.
   public let labels: Set<PIILabel>
@@ -16,8 +16,19 @@ public final class PIIRedactor: @unchecked Sendable {
   public let regex: Bool
   /// Whether the model reads emoji (see `init`).
   public let keepEmoji: Bool
+  /// Whether spans are widened to whole words (see `init`).
+  public let wholeWords: Bool
+  /// Whether short texts need stronger evidence to be read as names (see `init`).
+  public let strictShortNames: Bool
+  /// Package and model versions, size, variant and the two checked model files.
+  public var info: PIIRedactorInfo {
+    PIIRedactorInfo(packageVersion: Self.packageVersion, modelVersion: version, size: size, variant: variant, engine: "native",
+                    model: .model(size, variant), tokenizer: .tokenizer(size), build: Self.buildInfo)
+  }
   /// Kernel build of the C core ("neon", "sse", ...).
   public static var buildInfo: String { String(cString: pii_build_info()) }
+  /// Version of this package and its C core ("1.3.0").
+  public static var packageVersion: String { String(cString: pii_version()) }
 
   private let model: OpaquePointer
   private let labelBits: UInt32
@@ -34,12 +45,20 @@ public final class PIIRedactor: @unchecked Sendable {
   ///   - regex: also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default
   ///     false: on the public test of newmean-pii-dataset they add almost no coverage and double over-masking.
   ///   - keepEmoji: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
-  ///     offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
+  ///     offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour).
+  ///   - wholeWords: true: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도";
+  ///     "R23", not "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of
+  ///     scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Default false.
+  ///   - strictShortNames: true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model
+  ///     needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
+  ///     alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
+  ///     unchanged. Default false.
   ///   - modelDirectory: folder with `tokenizer.web.json` and `onnx/model_<variant>.onnx` (or `model_<variant>.onnx`
   ///     next to it), for example a folder in the app bundle. Default nil: `PIIModelStore.default`, which downloads the
   ///     files from Hugging Face once into Caches. Files are checked against the published SHA-256 either way.
   public init(size: PIISize = .default, variant: PIIVariant? = nil, sensitivity: Double = 0, labels: Set<PIILabel> = PIILabel.all,
-              regex: Bool = false, keepEmoji: Bool = false, modelDirectory: URL? = nil) async throws {
+              regex: Bool = false, keepEmoji: Bool = false, wholeWords: Bool = false, strictShortNames: Bool = false,
+              modelDirectory: URL? = nil) async throws {
     let variant = variant ?? size.defaultVariant
     let dir: URL
     if let modelDirectory {
@@ -54,6 +73,8 @@ public final class PIIRedactor: @unchecked Sendable {
     self.labelBits = labels.reduce(0) { $0 | (1 << UInt32($1.id)) }
     self.regex = regex
     self.keepEmoji = keepEmoji
+    self.wholeWords = wholeWords
+    self.strictShortNames = strictShortNames
     self._sensitivity = sensitivity
   }
 
@@ -137,6 +158,8 @@ public final class PIIRedactor: @unchecked Sendable {
     options.labels = labelBits
     options.extra_unit = Int32(PII_UNIT_UTF16)
     options.keep_emoji = keepEmoji ? 1 : 0
+    options.whole_words = wholeWords ? 1 : 0
+    options.strict_short_names = strictShortNames ? 1 : 0
     var out: UnsafeMutablePointer<pii_span>?
     var n = 0
     let rc = text.withContiguousUTF8 { utf8 in

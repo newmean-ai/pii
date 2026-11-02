@@ -150,4 +150,49 @@ final class TableTests: XCTestCase {
     XCTAssertTrue(keep.keepEmoji)
     _ = try await keep.detect(text)
   }
+
+  func testWholeWords() async throws {
+    let r = try await PIIRedactor(size: .nano, wholeWords: true, modelDirectory: Fixtures.requireModel("nano", "q4"))
+    XCTAssertTrue(r.wholeWords)
+    for text in ["남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n"] {
+      let units = Array(text.utf16)
+      let alnum = { (i: Int) -> Bool in
+        guard let u = UnicodeScalar(units[i]) else { return false }
+        return CharacterSet.alphanumerics.contains(u)
+      }
+      for spans in [try await r.detect(text), try await r.detectTable(text)] {
+        for s in spans {  // no span starts or ends inside a word
+          XCTAssertTrue(s.start == 0 || !(alnum(s.start - 1) && alnum(s.start)), "\(text) \(s)")
+          XCTAssertTrue(s.end == units.count || !(alnum(s.end - 1) && alnum(s.end)), "\(text) \(s)")
+        }
+      }
+    }
+  }
+
+  func testStrictShortNames() async throws {
+    let dir = try Fixtures.requireModel("nano", "q4")
+    let plain = try await PIIRedactor(size: .nano, modelDirectory: dir)
+    let strict = try await PIIRedactor(size: .nano, strictShortNames: true, modelDirectory: dir)
+    XCTAssertTrue(strict.strictShortNames)
+    XCTAssertFalse(plain.strictShortNames)
+    let long = "Hi, I'm Kim Minji, call me at 010-1234-5678. I live in Seoul and work at Example Corp as an engineer."
+    let (strictLong, plainLong) = (try await strict.detect(long), try await plain.detect(long))
+    XCTAssertEqual(strictLong, plainLong)  // longer texts are unchanged
+    let person = { (spans: [PIISpan]) in spans.filter { $0.label == .person || $0.label == .personL2 }.reduce(0) { $0 + $1.end - $1.start } }
+    for text in ["경기", "네이버", "카카오", "남성", "김민지", "Maria Lopez"] {  // never more PERSON than without the option
+      let (a, b) = (person(try await strict.detect(text)), person(try await plain.detect(text)))
+      XCTAssertLessThanOrEqual(a, b, text)
+    }
+  }
+
+  func testInfo() async throws {
+    let r = try await redactor()
+    let i = r.info
+    XCTAssertEqual(i.packageVersion, PIIRedactor.packageVersion)
+    XCTAssertEqual(i.packageVersion, "1.3.0")
+    XCTAssertEqual(i.modelVersion, r.version)
+    XCTAssertEqual(i.model, PIIModelFile.model(r.size, r.variant))
+    XCTAssertEqual(i.tokenizer, PIIModelFile.tokenizer(r.size))
+    XCTAssertEqual(i.engine, "native")
+  }
 }

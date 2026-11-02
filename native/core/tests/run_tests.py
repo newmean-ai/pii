@@ -538,6 +538,15 @@ def table_inputs(n_gen=N_GEN):
     # header context (pii_detect_table only; the model-free apply steps ignore the field): the hand-made inputs and the first
     # 40 generated tables again, with no exact-cell check (the added spans are the model's)
     rows += [(dict(r, context="header"), None, plain) for r, _g, plain in rows[:len(hand) + 40]]
+    # whole_words: the hand-made inputs and the first 40 generated tables again, and the word texts
+    rows += [(dict(r, words=True), None, plain) for r, _g, plain in rows[:len(hand) + 40]]
+    rows += [({"text": t, "words": True}, None, "\n" not in t) for t in WORD_TEXTS]
+    # strict_short_names: short values (where it applies), the word texts and some hand-made tables (whole file longer than
+    # 8 tokens; with the header context the per-cell texts are short)
+    rows += [({"text": t, "strict": True}, None, True) for t in SHORT_TEXTS]
+    rows += [({"text": t, "strict": True, "words": True}, None, "\n" not in t) for t in SHORT_TEXTS + WORD_TEXTS]
+    rows += [(dict(r, strict=True), None, plain) for r, _g, plain in rows[:len(hand)]]
+    rows += [(dict(r, strict=True, context="header"), None, plain) for r, _g, plain in rows[:len(hand)]]
     for t, raw in offset_texts()[:22]:  # one-line texts are not tables: detect's spans (grapheme snapping); no lone surrogates
         if raw is None and not any(0xD800 <= ord(ch) <= 0xDFFF for ch in t):
             rows.append(({"text": t}, None, "\n" not in t))
@@ -609,7 +618,29 @@ def apply_inputs():
                 pos = e + rng.choice([0, 0, 0, 1, 2, 5])
             rows.append({"text": t, "spans": spans})
     rows += edge_inputs(rng)
+    # whole_words: every row again with words on, plus dense short spans over texts that mix spaced and unspaced scripts,
+    # joiners, digits and astral letters
+    rows += [dict(r, words=True) for r in rows]
+    for t in WORD_TEXTS:
+        for _ in range(12):
+            spans, pos = [], rng.randint(0, 3)
+            while pos < len(t):
+                e = pos + rng.randint(1, 3)
+                spans.append([pos, min(e, len(t)), rng.choice(FAMILY_LABELS + OTHER_LABELS), rng.choice([1, 2, 3])])
+                pos = e + rng.choice([0, 1, 2, 4, 7])
+            rows.append({"text": t, "spans": spans, "words": True})
     return rows
+
+
+SHORT_TEXTS = ["남성", "여성", "경기", "경기도", "네이버", "카카오", "홍길동", "김민지", "이서연", "Maria Lopez", "R23", "P3", "5, 7",
+               "서울 강남구", "Kim Minsu 010-1234-5678", "매우 그렇다", "😀 김민지"]
+
+WORD_TEXTS = [
+    "남성, 경기도, R23, 카카오 블로그; 홍길동님 010-1234-5678",
+    "region,id,name\n경기도,R23,김민지\n서울,P10,O'Brien\n부산,S2024001,Jean-Luc Picard\n",
+    "田中太郎さんとคุณสมชาย met Ana-María (ana_maria@example.com) at 𝐀𝐁c-12 — l'été d'Émile",
+    "José Garci\u0301a, Zoë's e\u0301te\u0301, 👩‍💻dev-ops 1️⃣2️⃣, ‐hyphen‐ ’quote’ 'x'",
+]
 
 
 EDGE_LEAD = ["\u0301", "\u200d", "\ufe0f", "\U0001f3fd", "\u093e", "\u0301\u0301"]  # Extend, ZWJ, VS16, skin tone, SpacingMark

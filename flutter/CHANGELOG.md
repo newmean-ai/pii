@@ -1,3 +1,16 @@
+## 1.3.0
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.2.0.
+- `wholeWords` (default false) in `create` / `fromBytes`: a span that starts or ends inside a word is widened to the
+  whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`). Words are runs of letters, digits and
+  marks joined by apostrophes and hyphens; scripts written without spaces never extend a span. Same rule in every package.
+- `info` (`PiiRedactorInfo`): package and model versions, size, variant and the two model files with their size and
+  SHA-256. `version` stays the model release.
+- `strictShortNames` (default false) in `create` / `fromBytes`: on a text the model reads as at most 8 tokens (a survey
+  answer, a table cell), the model needs stronger evidence to read it as a person's name. Short values such as 「경기」,
+  「남성」, 「네이버」 are left alone (large: PII-free short survey items masked 7.9% → 4.3%); a lone name is missed a little
+  more often (98.9% → 96.5% found). Longer texts are unchanged.
+
 ## 1.2.0
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.1.0 below: 1.2.0 is the first published update after 1.0.0, so it carries

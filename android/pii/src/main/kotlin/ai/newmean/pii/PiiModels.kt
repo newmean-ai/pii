@@ -41,7 +41,11 @@ public enum class PiiVariant(public val id: String) {
 /** A published model file: [path] relative to the model folder, its size and SHA-256 (lowercase hex). */
 public data class PiiFilePin(val path: String, val bytes: Long, val sha256: String)
 
-/** Shape of a loaded model: hidden size, layers, layer applications (nano shares one layer), vocabulary, tokens per window, tags, embedding type. */
+/**
+ * What a redactor runs: the model shape (hidden size, layers, layer applications (nano shares one layer), vocabulary, tokens
+ * per window, tags, embedding type), the versions of this package (and its native core) and of the model release, size,
+ * variant, the two model files with the size and SHA-256 the loaded bytes were checked against, and the kernel build.
+ */
 public data class PiiModelInfo(
     val hidden: Int,
     val layers: Int,
@@ -50,6 +54,13 @@ public data class PiiModelInfo(
     val maxTokens: Int,
     val tags: Int,
     val embedding: String,
+    val packageVersion: String = "",
+    val modelVersion: String = "",
+    val size: PiiSize? = null,
+    val variant: PiiVariant? = null,
+    val model: PiiFilePin? = null,
+    val tokenizer: PiiFilePin? = null,
+    val build: String = "",
 )
 
 /** The two files of a model on disk. */

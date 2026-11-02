@@ -166,5 +166,55 @@ void main() {
       await keep.detect(text);
       await keep.dispose();
     });
+
+    test('wholeWords: no span starts or ends inside a word', () async {
+      final words = await NewmeanPii.create(size: 'nano', modelDir: modelDir('nano'), wholeWords: true);
+      expect(words.wholeWords, isTrue);
+      expect(pii.wholeWords, isFalse);
+      final alnum = RegExp(r'[\p{L}\p{N}]', unicode: true);
+      bool word(String t, int i) => alnum.hasMatch(t[i]);
+      for (final text in [
+        '남성',
+        '경기도',
+        'R23',
+        "Hi, I'm Kim Minji, call me at 010-1234-5678.",
+        'region,id\n경기도,R23\n서울,R24\n',
+      ]) {
+        for (final spans in [await words.detect(text), words.detectTableSync(text)]) {
+          for (final s in spans) {
+            expect(s.start == 0 || !(word(text, s.start - 1) && word(text, s.start)), isTrue, reason: '$text $s');
+            expect(s.end == text.length || !(word(text, s.end - 1) && word(text, s.end)), isTrue, reason: '$text $s');
+          }
+        }
+      }
+      await words.dispose();
+    });
+
+    test('strictShortNames: longer texts unchanged, never more PERSON', () async {
+      final strict = await NewmeanPii.create(size: 'nano', modelDir: modelDir('nano'), strictShortNames: true);
+      expect(strict.strictShortNames, isTrue);
+      expect(pii.strictShortNames, isFalse);
+      const long =
+          "Hi, I'm Kim Minji, call me at 010-1234-5678. I live in Seoul and work at Example Corp as an engineer.";
+      expect('${await strict.detect(long)}', '${await pii.detect(long)}');
+      int person(List<PiiSpan> spans) =>
+          spans.where((s) => s.label.startsWith('PERSON')).fold(0, (n, s) => n + s.end - s.start);
+      for (final text in ['경기', '네이버', '카카오', '남성', '김민지', 'Maria Lopez']) {
+        expect(person(await strict.detect(text)), lessThanOrEqualTo(person(await pii.detect(text))), reason: text);
+      }
+      await strict.dispose();
+    });
+
+    test('info', () {
+      final i = pii.info;
+      expect(i.packageVersion, '1.3.0');
+      expect(i.packageVersion, nativeVersion);
+      expect(i.modelVersion, pii.version);
+      expect(
+        (i.model.path, i.model.sha256),
+        (modelFile(pii.size, pii.variant).path, modelFile(pii.size, pii.variant).sha256),
+      );
+      expect(i.tokenizer.sha256, modelFile(pii.size, 'tokenizer').sha256);
+    });
   }, skip: skip);
 }

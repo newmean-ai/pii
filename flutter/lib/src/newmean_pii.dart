@@ -20,7 +20,7 @@ final class NewmeanPii implements Finalizable {
   /// Weight file: "q4" or "q4e".
   final String variant;
 
-  /// Model release ([modelVersion]).
+  /// Model release ([modelVersion]), not the package version: see [info].
   final String version = modelVersion;
 
   /// Whether the pattern layer runs next to the model.
@@ -29,6 +29,24 @@ final class NewmeanPii implements Finalizable {
   /// Whether the model reads emoji (see [create]).
   final bool keepEmoji;
 
+  /// Whether spans are widened to whole words (see [create]).
+  final bool wholeWords;
+
+  /// Whether short texts need stronger evidence to be read as names (see [create]).
+  final bool strictShortNames;
+
+  /// Package and model versions, size, variant and the two model files with the size and SHA-256 the loaded bytes were
+  /// checked against (unless `verify` was false).
+  PiiRedactorInfo get info => PiiRedactorInfo._(
+    nativeVersion,
+    modelVersion,
+    size,
+    variant,
+    modelFile(size, variant),
+    modelFile(size, 'tokenizer'),
+    nativeBuildInfo,
+  );
+
   final int _labels;
   Pointer<PiiModel>? _model;
   int _running = 0;
@@ -36,8 +54,17 @@ final class NewmeanPii implements Finalizable {
 
   static final _finalizer = NativeFinalizer(piiModelFreePointer);
 
-  NewmeanPii._(this.size, this.variant, this.sensitivity, this._labels, this.regex, this.keepEmoji, int model)
-    : _model = Pointer<PiiModel>.fromAddress(model) {
+  NewmeanPii._(
+    this.size,
+    this.variant,
+    this.sensitivity,
+    this._labels,
+    this.regex,
+    this.keepEmoji,
+    this.wholeWords,
+    this.strictShortNames,
+    int model,
+  ) : _model = Pointer<PiiModel>.fromAddress(model) {
     _finalizer.attach(this, _model!.cast(), detach: this);
   }
 
@@ -53,7 +80,15 @@ final class NewmeanPii implements Finalizable {
   /// - [regex]: also mask a few patterns (email, URL, card/account, phone, Korean resident number). Default false: they
   ///   add almost no coverage on the public test and double over-masking.
   /// - [keepEmoji]: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
-  ///   offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
+  ///   offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour).
+  /// - [wholeWords]: true: a span that starts or ends inside a word is widened to the whole word ("경기도", not
+  ///   "[PERSON]기도"; "R23", not "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and
+  ///   hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span.
+  ///   Default false.
+  /// - [strictShortNames]: true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model
+  ///   needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
+  ///   alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
+  ///   unchanged. Default false.
   static Future<NewmeanPii> create({
     String size = defaultSize,
     String? variant,
@@ -61,6 +96,8 @@ final class NewmeanPii implements Finalizable {
     Iterable<String>? labels,
     bool regex = false,
     bool keepEmoji = false,
+    bool wholeWords = false,
+    bool strictShortNames = false,
     String? modelDir,
     Future<Uint8List> Function(String path)? readFile,
     Uri? modelUrl,
@@ -88,6 +125,8 @@ final class NewmeanPii implements Finalizable {
         labels: labels,
         regex: regex,
         keepEmoji: keepEmoji,
+        wholeWords: wholeWords,
+        strictShortNames: strictShortNames,
         verify: verify,
       );
     }
@@ -99,7 +138,7 @@ final class NewmeanPii implements Finalizable {
     }
     try {
       final model = await _loadInIsolate(tokPin, onnxPin, modelDir, modelUrl, cacheDir, cache, verify, port?.sendPort);
-      return NewmeanPii._(size, v, sensitivity, mask, regex, keepEmoji, model);
+      return NewmeanPii._(size, v, sensitivity, mask, regex, keepEmoji, wholeWords, strictShortNames, model);
     } finally {
       port?.close();
     }
@@ -141,6 +180,8 @@ final class NewmeanPii implements Finalizable {
     Iterable<String>? labels,
     bool regex = false,
     bool keepEmoji = false,
+    bool wholeWords = false,
+    bool strictShortNames = false,
     bool verify = true,
   }) async {
     final v = _checkVariant(size, variant);
@@ -157,7 +198,17 @@ final class NewmeanPii implements Finalizable {
       }
       return loadModel(onnx, tokenizer);
     });
-    return NewmeanPii._(size, v, sensitivity, labelMask(labels ?? piiLabels), regex, keepEmoji, model);
+    return NewmeanPii._(
+      size,
+      v,
+      sensitivity,
+      labelMask(labels ?? piiLabels),
+      regex,
+      keepEmoji,
+      wholeWords,
+      strictShortNames,
+      model,
+    );
   }
 
   static String _checkVariant(String size, String? variant) {
@@ -229,8 +280,9 @@ final class NewmeanPii implements Finalizable {
 
   // Only plain values in the closure: it is sent to the background isolate.
   List<PiiSpan> Function() _job(String text, [(int, bool, bool, int)? table]) {
-    final model = _address, sens = sensitivity, labels = _labels, rx = regex, keep = keepEmoji;
-    return () => detectSpans(model, text, sens, labels, rx, keep, table);
+    final model = _address, sens = sensitivity, labels = _labels, rx = regex, keep = keepEmoji, words = wholeWords;
+    final strict = strictShortNames;
+    return () => detectSpans(model, text, sens, labels, rx, keep, words, strict, table);
   }
 
   /// [text] with the spans of [detect] replaced: [RedactMode.tag] → "[EMAIL]", [RedactMode.mask] → "*****" (one
@@ -299,4 +351,35 @@ final class NewmeanPii implements Finalizable {
     freeModel(m.address);
     done.complete();
   }
+}
+
+/// What a redactor runs ([NewmeanPii.info]).
+final class PiiRedactorInfo {
+  /// Version of this package and its native core ("1.3.0").
+  final String packageVersion;
+
+  /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
+  final String modelVersion;
+
+  final String size, variant;
+
+  /// The weight file and the tokenizer, with their published size and SHA-256.
+  final PiiModelFile model, tokenizer;
+
+  /// Kernel build of the native core ("neon", "sse", ...).
+  final String build;
+
+  const PiiRedactorInfo._(
+    this.packageVersion,
+    this.modelVersion,
+    this.size,
+    this.variant,
+    this.model,
+    this.tokenizer,
+    this.build,
+  );
+
+  @override
+  String toString() =>
+      'PiiRedactorInfo(package $packageVersion, model $modelVersion, $size $variant, ${model.path} ${model.sha256}, ${tokenizer.path} ${tokenizer.sha256}, $build)';
 }

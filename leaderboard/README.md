@@ -109,7 +109,9 @@ repositories above, nothing else). Set `ORT_THREADS` to the flavor's vCPUs: insi
 The first rows are the technical report's Colab L4 runs (2026-10-30) on newmean-pii-dataset (public test): the four newmean models
 (each tier's SDK default weight file: `model_q4e.onnx` for large and medium, `model_q4.onnx` for small
 and nano), eight public detectors and the regex baseline (`scripts/seed_results.py`). The job's first run (2026-10-31)
-scored all 13 seeded rows on newmean-pii-dataset (private test). New submissions show "pending" until the next weekly run scores them.
+scored all 13 seeded rows on newmean-pii-dataset (private test). The v1.1.0 models (release 1.2) were queued with
+`scripts/admin_request.py` and scored by the job on 2026-11-02; the newmean rows are named by tier and model version
+(`newmean-pii-large v1.0`, `newmean-pii-large v1.1`). New submissions show "pending" until the next weekly run scores them.
 
 ## Development
 

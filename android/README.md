@@ -12,7 +12,7 @@ device; nothing is sent anywhere.
 ```kotlin
 // build.gradle.kts of the app module
 dependencies {
-    implementation("ai.newmean:pii:1.2.0")
+    implementation("ai.newmean:pii:1.3.0")
 }
 ```
 
@@ -99,7 +99,9 @@ PiiRedactor.create(                       // suspend, loads on Dispatchers.IO; c
     regex = false,                        // also mask a few patterns (email, URL, card/account, phone, Korean resident
                                           // number); default false (model only): almost no extra coverage, double the over-masking
     source = PiiModelSource.Assets(),     // or PiiModelSource.Download(...)
-    keepEmoji = false,                    // true: the model also reads emoji (1.1 behaviour); default: never read or masked
+    keepEmoji = false,                    // true: the model also reads emoji (1.0 behaviour); default: never read or masked
+    wholeWords = false,                   // true: a span that ends inside a word covers the whole word
+    strictShortNames = false,             // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // files on disk; fromBytes(model, tokenizer, size, ...) for bytes
 
@@ -109,6 +111,7 @@ redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → 
 redactor.detectTable(text)                // table mode (see Tables)
 redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // changes the threshold without reloading
+redactor.info()                           // packageVersion, modelVersion, size, variant, model and tokenizer pins, shape
 redactor.close()                          // frees the model (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
 PiiRegex.spans(text)                      // the pattern layer on its own
@@ -118,8 +121,9 @@ PiiRegex.spans(text)                      // the pattern layer on its own
 returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`). Spans are widened to whole grapheme
 clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `MASK` writes one mask character per code
 point, like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets
-still refer to the input; an emoji inside a span splits it); `keepEmoji = true` gives the model the text as given (1.1
-behaviour).
+still refer to the input; an emoji inside a span splits it); `keepEmoji = true` gives the model the text as given (1.0
+behaviour). With `wholeWords = true`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span. With `strictShortNames = true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged. `redactor.version` is the model release (1.1.0); `info().packageVersion`
+is the package version.
 
 **Threads.** `PiiRedactor` is thread-safe: any number of threads or coroutines may call `detect` and `redact` on one
 instance at once (each call has its own scratch memory). They are blocking CPU work: call them from

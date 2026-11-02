@@ -507,8 +507,10 @@ our training data; the set was built after the SDK options were fixed and scored
 
 Context "header" cuts the misses to about a quarter for every tier, at 2.3–3.7 more points of PII-free cells masked. Table mode
 alone barely changes the misses against reading the whole file; it keeps the table valid and fills in contact columns. Small
-and nano mask many PII-free cells in any mode (16–27%). Before this set was scored we fixed a rule: context "header" becomes
-the default if, for medium, it misses at least 2.0 points fewer than table mode and masks at most 2.0 points more PII-free
+and nano mask many PII-free cells in any mode (16–27%). The v1.0 models, released without table mode, miss more on these
+files read whole (large 7.52 / 11.30, medium 9.50 / 9.37, small 9.80 / 13.43, nano 8.04 / 24.36; release 1.0 masks an
+emoji in 7.42 / 9.46 / 16.69 / 21.88% of the emoji texts above, large to nano). Before this set was scored we fixed a rule:
+context "header" becomes the default if, for medium, it misses at least 2.0 points fewer than table mode and masks at most 2.0 points more PII-free
 cells; otherwise table mode stays the default and the option is not shipped. Medium missed 7.93 → 1.93% (passes) and masked
 9.32 → 11.66% of PII-free cells (+2.34, fails by 0.34), so table mode stays the default. We shipped context "header" as an
 opt-in option anyway, a departure from the rule's last clause. The two sets the options were chosen on (600 exports built in

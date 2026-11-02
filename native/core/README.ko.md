@@ -36,6 +36,8 @@ pii_options_init(&o);         // 민감도 0, 모든 라벨
 o.sensitivity = 0.3;          // > 0 더 많이 가림, < 0 덜 가림 (npm `sensitivity`)
 o.labels = PII_LABELS_LEVEL1; // npm LEVEL1_LABELS, 또는 PII_LABEL_BIT(PII_EMAIL) | ...
 o.keep_emoji = 0;             // 기본: 이모지는 읽지도 가리지도 않음(npm `keepEmoji`)
+o.whole_words = 0;            // 1: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘(npm `wholeWords`)
+o.strict_short_names = 0;     // 1: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄(npm `strictShortNames`)
 
 pii_span *spans;
 size_t n;
@@ -69,7 +71,11 @@ pii_model_free(m);
   라벨이 덮지 않는 곳에서만 패턴 라벨 사용). 그래서 패턴 계층은 각 언어에 둘 수 있습니다.
   `keep_emoji`(기본 0)는 이모지를 모델이 읽는 텍스트에서 빼므로 모델이 이모지를 개인정보로 읽지 않습니다. 구간은 입력 기준 오프셋을 그대로
   쓰고, 구간 안의 이모지는 구간을 나누며, 키캡은 바탕 문자로 읽습니다(그 문자를 덮는 구간은 키캡 전체를 덮음). 1이면 모델이
-  텍스트를 그대로 읽습니다(1.1 동작).
+  텍스트를 그대로 읽습니다(1.0 동작). `whole_words`(기본 0)가 1이면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`, "R23" → `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다(표 모드에서는 칸 안에서만). 낱말 표
+  `src/word_tables.h`는 `js/src/table.ts`에서 만들므로(`node scripts/gen_words.mjs`) 두 패키지가 같은 글자를 씁니다.
+  `strict_short_names`(기본 0)가 1이면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)의 PERSON·PERSON_L2 로짓에 −3을 더해
+  「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」는 여전히 찾습니다(large: 개인정보 없는 짧은 설문 항목을 가린 비율 7.9% →
+  4.3%, 단독 이름을 찾은 비율 98.9% → 96.5%). 긴 글은 그대로입니다.
 - **고정값과 기본값**: `pii_model_file(size, file)`은 공개 파일별 경로, 크기, SHA-256을, `pii_default_variant(size)`는 npm
   기본값(large·medium은 `q4e`, small·nano는 `q4`)을 돌려줍니다. 기본 크기는 `PII_DEFAULT_SIZE`(`medium`)입니다.
 - **표 모드**: `pii_detect_table(model, utf8, len, options, table, &out, &n)`은 CSV, TSV, 세미콜론 구분, 마크다운 파이프

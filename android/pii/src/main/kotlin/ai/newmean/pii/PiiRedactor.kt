@@ -28,14 +28,26 @@ public class PiiRedactor private constructor(
     sensitivity: Double,
     /**
      * false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of the
-     * input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
+     * input (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour).
      */
     public val keepEmoji: Boolean,
+    /**
+     * true: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도"; "R23", not
+     * "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of scripts
+     * written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Default false.
+     */
+    public val wholeWords: Boolean,
+    /**
+     * true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger evidence
+     * to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left alone; a lone name is missed a
+     * little more often (large: 98.9% → 96.5% of lone names found). Longer texts are unchanged. Default false.
+     */
+    public val strictShortNames: Boolean,
 ) : AutoCloseable {
     private val lock = ReentrantReadWriteLock()
     private val labelBits = PiiLabels.bits(labels)
 
-    /** Model release. */
+    /** Model release, not the package version: see [info] (packageVersion). */
     public val version: String = PiiModels.VERSION
 
     /** Labels to mask. */
@@ -99,11 +111,11 @@ public class PiiRedactor private constructor(
         val raw = lock.read {
             check(handle != 0L) { "PiiRedactor is closed" }
             if (table == null) {
-                NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra, keepEmoji)
+                NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames)
             } else {
                 NativeBridge.detectTable(
-                    handle, utf8, sensitivity, labelBits, extra, keepEmoji, table.delimiter.code, table.header, table.vote,
-                    table.context.code,
+                    handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames, table.delimiter.code, table.header,
+                    table.vote, table.context.code,
                 )
             }
         }
@@ -125,11 +137,15 @@ public class PiiRedactor private constructor(
         return PiiRedaction(applyRedaction(text, spans, RedactMode.TAG, "*", replace), spans)
     }
 
-    /** Model shape, for diagnostics. */
+    /** Model shape, package and model versions and the two checked model files, for diagnostics and audit records. */
     public fun info(): PiiModelInfo = lock.read {
         check(handle != 0L) { "PiiRedactor is closed" }
         val i = NativeBridge.modelInfo(handle)
-        PiiModelInfo(i[0], i[1], i[2], i[3], i[4], i[5], if (i[6] == 2) "int4" else "int8")
+        PiiModelInfo(
+            i[0], i[1], i[2], i[3], i[4], i[5], if (i[6] == 2) "int4" else "int8",
+            packageVersion = NativeBridge.version(), modelVersion = version, size = size, variant = variant,
+            model = PiiModels.modelPin(size, variant), tokenizer = PiiModels.tokenizerPin(size), build = NativeBridge.buildInfo(),
+        )
     }
 
     internal fun tokenize(text: String): IntArray = lock.read {
@@ -156,7 +172,10 @@ public class PiiRedactor private constructor(
          * @param sensitivity > 0 masks more, < 0 masks less (about -1..1); default 0.
          * @param labels labels to mask; default all ([PiiLabels.ALL]). [PiiLabels.LEVEL1] leaves level 2 visible.
          * @param regex also mask a few patterns (email, URL, card/account, phone, Korean resident number); default false.
-         * @param keepEmoji true: the model reads emoji too (1.1 behaviour); default false: emoji are never read or masked.
+         * @param keepEmoji true: the model reads emoji too (1.0 behaviour); default false: emoji are never read or masked.
+         * @param wholeWords true: spans are widened to whole words ("경기도", not "[PERSON]기도"); default false.
+         * @param strictShortNames true: texts of at most 8 tokens need stronger evidence to be read as names ("경기", "남성" are
+         *   left alone; a lone name is missed a little more often); default false.
          */
         public suspend fun create(
             context: Context,
@@ -167,8 +186,10 @@ public class PiiRedactor private constructor(
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
             keepEmoji: Boolean = false,
+            wholeWords: Boolean = false,
+            strictShortNames: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji)
+            createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji, wholeWords, strictShortNames)
         }
 
         /** [create] from model files on disk (checked against the pins of [size] and [variant]). */
@@ -181,8 +202,10 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
+            wholeWords: Boolean = false,
+            strictShortNames: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
+            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames)
         }
 
         /** Blocking [create]; call it off the main thread. */
@@ -198,6 +221,8 @@ public class PiiRedactor private constructor(
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
             keepEmoji: Boolean = false,
+            wholeWords: Boolean = false,
+            strictShortNames: Boolean = false,
         ): PiiRedactor {
             val modelPin = PiiModels.modelPin(size, variant)
             val tokPin = PiiModels.tokenizerPin(size)
@@ -211,14 +236,19 @@ public class PiiRedactor private constructor(
                             "assets/$dir$path not found: bundle the model files (see the README) or use PiiModelSource.Download",
                         ).apply { initCause(e) }
                     }
-                    load(asset(modelPin.path, modelPin), asset(tokPin.path, tokPin), size, variant, sensitivity, labels, regex, keepEmoji)
+                    load(
+                        asset(modelPin.path, modelPin), asset(tokPin.path, tokPin), size, variant, sensitivity, labels, regex, keepEmoji,
+                        wholeWords, strictShortNames,
+                    )
                 }
                 is PiiModelSource.Download -> {
                     val root = source.dir ?: File(context.cacheDir, "newmean-pii/${PiiModels.VERSION}")
                     val files = PiiModels.download(
                         File(root, "pii-${size.id}"), size, variant, source.baseUrl ?: PiiModels.baseUrl(size), source.onProgress,
                     )
-                    createBlocking(files.model, files.tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
+                    createBlocking(
+                        files.model, files.tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames,
+                    )
                 }
             }
         }
@@ -236,10 +266,12 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
+            wholeWords: Boolean = false,
+            strictShortNames: Boolean = false,
         ): PiiRedactor = load(
             ModelStore.readVerified(model, PiiModels.modelPin(size, variant)),
             ModelStore.readVerified(tokenizer, PiiModels.tokenizerPin(size)),
-            size, variant, sensitivity, labels, regex, keepEmoji,
+            size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames,
         )
 
         /** Blocking [create] from the bytes of the two files (checked against the pins; they may be dropped afterwards). */
@@ -255,10 +287,12 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
+            wholeWords: Boolean = false,
+            strictShortNames: Boolean = false,
         ): PiiRedactor {
             if (!ModelStore.matches(model, PiiModels.modelPin(size, variant))) throw ModelStore.mismatch("model_${variant.id}.onnx")
             if (!ModelStore.matches(tokenizer, PiiModels.tokenizerPin(size))) throw ModelStore.mismatch(PiiModels.TOKENIZER_PATH)
-            return load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
+            return load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames)
         }
 
         /** Replaces [spans] in [text] as [redact] does (for spans kept from [detect] or edited by the app). */
@@ -285,10 +319,14 @@ public class PiiRedactor private constructor(
             labels: Collection<String>,
             regex: Boolean,
             keepEmoji: Boolean,
+            wholeWords: Boolean,
+            strictShortNames: Boolean,
         ): PiiRedactor {
             PiiLabels.bits(labels) // unknown labels fail before the model loads
             checkSensitivity(sensitivity)
-            return PiiRedactor(NativeBridge.modelLoad(model, tokenizer), size, variant, labels, regex, sensitivity, keepEmoji)
+            return PiiRedactor(
+                NativeBridge.modelLoad(model, tokenizer), size, variant, labels, regex, sensitivity, keepEmoji, wholeWords, strictShortNames,
+            )
         }
 
         private fun checkSensitivity(v: Double): Double {

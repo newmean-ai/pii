@@ -32,7 +32,7 @@ def test_constants_match_the_npm_package():
     assert LEVEL1_LABELS == [l for l in LABELS if l not in ("PERSON_L2", "URL_L2")]
     assert len(TAGS) == 27 and TAGS[:3] == ["O", "B-PERSON", "I-PERSON"]
     assert MODEL_VERSION == "1.1.0"
-    assert _core.version() == "1.2.0"
+    assert _core.version() == "1.3.0"
     assert re.fullmatch(r"(neon|sse|vector|scalar)(\+fma)?", _core.build_info())
 
 
@@ -119,3 +119,39 @@ def test_keep_emoji(nano):
     with Redactor("nano", "q4", model_dir=nano_dir(), keep_emoji=True) as r:
         assert r.keep_emoji is True and "keep_emoji=True" in repr(r)
         assert isinstance(r.detect(text), list)
+
+
+def test_info(nano):
+    i = nano.info()
+    assert i["package_version"] == newmean_pii.__version__
+    assert i["model_version"] == MODEL_VERSION == nano.version
+    assert (i["size"], i["variant"], i["engine"]) == ("nano", "q4", "native")
+    for key, file in (("model", "q4"), ("tokenizer", "tokenizer")):
+        pin = model_file("nano", file)
+        f = i["files"][key]
+        assert (f["path"], f["bytes"], f["sha256"]) == (pin.path, pin.bytes, pin.sha256)
+        assert f["local_path"].endswith(pin.path)
+    assert i["layers"] > 0 and i["build"] == _core.build_info()
+
+
+def test_strict_short_names(nano):
+    assert nano.strict_short_names is False
+    with Redactor("nano", "q4", model_dir=nano_dir(), strict_short_names=True) as r:
+        assert r.strict_short_names is True and "strict_short_names=True" in repr(r)
+        long = "Hi, I'm Kim Minji, call me at 010-1234-5678. I live in Seoul and work at Example Corp as an engineer."
+        assert len(r.tokenize(long)) > 8
+        assert r.detect(long) == nano.detect(long)  # longer texts are unchanged
+        for text in ("경기", "네이버", "카카오", "남성", "김민지", "Maria Lopez"):  # never more PERSON than without the option
+            person = lambda spans: sum(s.end - s.start for s in spans if s.label.startswith("PERSON"))
+            assert person(r.detect(text)) <= person(nano.detect(text)), text
+
+
+def test_whole_words(nano):
+    assert nano.whole_words is False
+    with Redactor("nano", "q4", model_dir=nano_dir(), whole_words=True) as r:
+        assert r.whole_words is True and "whole_words=True" in repr(r)
+        for text in ("남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n"):
+            for spans in (r.detect(text), r.detect_table(text)):
+                for s in spans:  # no span starts or ends inside a word
+                    assert s.start == 0 or not (text[s.start - 1].isalnum() and text[s.start].isalnum()), (text, s)
+                    assert s.end == len(text) or not (text[s.end - 1].isalnum() and text[s.end].isalnum()), (text, s)

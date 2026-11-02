@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "internal.h"
+#include "word_tables.h"
 
 struct pii_model {
   pii_engine eng;
@@ -266,6 +267,108 @@ size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp
     }
   }
   return k;
+}
+
+// ---------------------------------------------------------------- whole words (isWordChar, wordStart, wordEnd of js/src/table.ts)
+static int word_cp(uint32_t c) {
+  size_t lo = 0, hi = sizeof PII_WORD_TABLE / sizeof PII_WORD_TABLE[0];
+  while (lo < hi) {
+    const size_t mid = (lo + hi) / 2;
+    if (c > PII_WORD_TABLE[mid][1]) lo = mid + 1;
+    else if (c < PII_WORD_TABLE[mid][0]) hi = mid;
+    else return 1;
+  }
+  return 0;
+}
+static int joiner(uint32_t c) { return c == 0x27 || c == 0x2019 || c == 0x2d || c == 0x2010; }  // apostrophes, hyphens
+
+// Start of the word that cp[a] belongs to (a when cp[a] is not a word character); end of the word of cp[b - 1].
+static size_t word_start(const uint32_t *cp, size_t n, size_t a) {
+  if (a >= n || !word_cp(cp[a])) return a;
+  while (a > 0) {
+    if (word_cp(cp[a - 1])) a--;
+    else if (joiner(cp[a - 1]) && a >= 2 && word_cp(cp[a - 2])) a--;
+    else break;
+  }
+  return a;
+}
+static size_t word_end(const uint32_t *cp, size_t n, size_t b) {
+  if (b == 0 || !word_cp(cp[b - 1])) return b;
+  while (b < n) {
+    if (word_cp(cp[b])) b++;
+    else if (joiner(cp[b]) && b + 1 < n && word_cp(cp[b + 1])) b++;
+    else break;
+  }
+  return b;
+}
+
+typedef struct {
+  pii_cspan s;
+  size_t len;  // original length in code points (the merge winner rule)
+} pii_wspan;
+static int cmp_wstart(const pii_wspan *a, const pii_wspan *b) { return a->s.start < b->s.start ? -1 : a->s.start > b->s.start; }
+
+// snapGraphemes of js/src/table.ts with words: each span widened to its words, then to whole clusters, then clamped to its
+// cell; then a stable sort by start (a span that starts at a hyphen or apostrophe inside a word keeps its start while a later
+// span of the same word moves back, so the order can change) and the same merge as pii_snap_graphemes.
+static size_t snap_words(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells) {
+  pii_wspan *w = malloc(n * sizeof *w), *tmp = malloc(n * sizeof *tmp);
+  uint8_t *bound = malloc(ncp + 1);  // bound[i]: a cluster starts at i (and bound[ncp])
+  if (!w || !tmp || !bound) {
+    free(w), free(tmp), free(bound);
+    return pii_snap_graphemes(s, n, cp, ncp, cells, ncells);  // no memory: graphemes only
+  }
+  memset(bound, 0, ncp + 1);
+  for (size_t i = 0; i < ncp; i = pii_grapheme_end(cp, i, ncp)) bound[i] = 1;
+  bound[ncp] = 1;
+  size_t j = 0;
+  for (size_t i = 0; i < n; i++) {
+    const pii_cspan x = s[i];
+    w[i].s = x;
+    w[i].len = x.end - x.start;
+    if (x.start >= x.end) continue;
+    size_t a = word_start(cp, ncp, x.start), b = word_end(cp, ncp, x.end);
+    while (a > 0 && !bound[a]) a--;
+    while (b < ncp && !bound[b]) b++;
+    if (cells) {
+      while (j < ncells && cells[j].end <= x.start) j++;
+      if (j < ncells && cells[j].start <= x.start && x.end <= cells[j].end) {
+        if (a < cells[j].start) a = cells[j].start;
+        if (b > cells[j].end) b = cells[j].end;
+      }
+    }
+    w[i].s.start = a;
+    w[i].s.end = b;
+  }
+  for (size_t width = 1; width < n; width *= 2)  // stable bottom-up merge sort by start
+    for (size_t lo = 0; lo + width < n; lo += 2 * width) {
+      const size_t mid = lo + width, hi = n - lo > 2 * width ? lo + 2 * width : n;
+      memcpy(tmp, w + lo, width * sizeof *tmp);
+      size_t a = 0, b = mid, o = lo;
+      while (a < width && b < hi) w[o++] = cmp_wstart(&w[b], &tmp[a]) < 0 ? w[b++] : tmp[a++];
+      while (a < width) w[o++] = tmp[a++];
+    }
+  size_t k = 0, win = 0;
+  for (size_t i = 0; i < n; i++) {
+    const pii_wspan x = w[i];
+    if (k && x.s.start < s[k - 1].end) {
+      if (x.s.end > s[k - 1].end) s[k - 1].end = x.s.end;
+      if (x.len > win) {
+        s[k - 1].label = x.s.label;
+        s[k - 1].source = x.s.source;
+        win = x.len;
+      }
+    } else {
+      s[k++] = x.s;
+      win = x.len;
+    }
+  }
+  free(w), free(tmp), free(bound);
+  return k;
+}
+
+size_t pii_snap_spans(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells, int words) {
+  return words && n ? snap_words(s, n, cp, ncp, cells, ncells) : pii_snap_graphemes(s, n, cp, ncp, cells, ncells);
 }
 
 // ---------------------------------------------------------------- table mode
@@ -555,11 +658,11 @@ done:
 
 int pii_table_apply(const pii_text *tx, const pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels,
                     pii_cspan **out, size_t *n_out) {
-  return pii_table_apply_ext(tx, spans, n, NULL, 0, delimiter, header, vote, labels, out, n_out);
+  return pii_table_apply_ext(tx, spans, n, NULL, 0, delimiter, header, vote, labels, 0, out, n_out);
 }
 
 int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra, int delimiter,
-                        int header, int vote, uint32_t labels, pii_cspan **out, size_t *n_out) {
+                        int header, int vote, uint32_t labels, int words, pii_cspan **out, size_t *n_out) {
   *out = NULL;
   *n_out = 0;
   pii_vec cells, all, clip_cell;
@@ -644,7 +747,7 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
     g0 = g1;
   }
 snap:
-  nres = pii_snap_graphemes(res, nres, tx->cp, tx->n, rows < 2 ? NULL : cells.p, cells.n);  // Step 7, inside each cell
+  nres = pii_snap_spans(res, nres, tx->cp, tx->n, rows < 2 ? NULL : cells.p, cells.n, words);  // Step 7, inside each cell
   if (nres) *out = res;
   else free(res);
   *n_out = nres;
@@ -674,8 +777,9 @@ static int tokenize(const pii_model *m, const pii_text *tx, tok_list *tk) {
   return pii_tok_encode(m->tok, tx->cp, tx->n, &tk->ids, &tk->st, &tk->en) ? PII_ERR_NOMEM : PII_OK;
 }
 
-// Model spans (decode.ts: makeWindows, bestTags, decodeSpans) in code points; appended to spans.
-static int model_spans(const pii_model *m, const pii_text *tx, double o_bias, pii_vec *spans) {
+// Model spans (decode.ts: makeWindows, bestTags, decodeSpans) in code points; appended to spans. strict:
+// pii_options.strict_short_names.
+static int model_spans(const pii_model *m, const pii_text *tx, double o_bias, int strict, pii_vec *spans) {
   tok_list tk;
   int rc = tokenize(m, tx, &tk);
   const size_t n = tk.ids.n;
@@ -684,6 +788,7 @@ static int model_spans(const pii_model *m, const pii_text *tx, double o_bias, pi
     return rc;
   }
   const int32_t *ids = tk.ids.p, *st = tk.st.p, *en = tk.en.p;
+  const double person_bias = strict && n <= PII_SHORT_TOKENS ? PII_SHORT_PERSON_BIAS : 0;
   // windows of PII_WINDOW tokens (with <s> and </s>) overlapping by PII_STRIDE
   const size_t win = PII_WINDOW - 2;
   int32_t *tag = calloc(n, sizeof *tag), *dist = malloc(n * sizeof *dist), *wids = malloc((win + 2) * sizeof *wids);
@@ -709,11 +814,13 @@ static int model_spans(const pii_model *m, const pii_text *tx, double o_bias, pi
       const float *row = lg + (j + 1) * N_TAGS;
       int best = 0;
       double best_v = (double)row[0] + o_bias;
-      for (int t = 1; t < N_TAGS; t++)
-        if ((double)row[t] > best_v) {
-          best_v = row[t];
+      for (int t = 1; t < N_TAGS; t++) {
+        const double v = (double)row[t] + (t <= 4 ? person_bias : 0);  // tags 1-4: B/I-PERSON, B/I-PERSON_L2
+        if (v > best_v) {
+          best_v = v;
           best = t;
         }
+      }
       const int32_t c = (int32_t)(j < wn - 1 - j ? j : wn - 1 - j);
       if (c > dist[s + j]) {
         dist[s + j] = c;
@@ -788,7 +895,7 @@ static int marks_only(const uint32_t *cp, size_t a, size_t b) {
   return 1;
 }
 
-static int model_spans_no_emoji(const pii_model *m, const pii_text *tx, double o_bias, pii_vec *spans) {
+static int model_spans_no_emoji(const pii_model *m, const pii_text *tx, double o_bias, int strict, pii_vec *spans) {
   size_t *keep = malloc((tx->n + 1) * sizeof *keep);
   uint32_t *cp = malloc((tx->n + 1) * sizeof *cp);
   if (!keep || !cp) {
@@ -814,12 +921,12 @@ static int model_spans_no_emoji(const pii_model *m, const pii_text *tx, double o
     cp[nk++] = tx->cp[i++];
   }
   int rc;
-  if (nk == tx->n) rc = model_spans(m, tx, o_bias, spans);
+  if (nk == tx->n) rc = model_spans(m, tx, o_bias, strict, spans);
   else {
     const pii_text sub = {cp, nk, NULL, NULL};
     pii_vec raw;
     pii_vec_init(&raw, sizeof(pii_cspan));
-    rc = model_spans(m, &sub, o_bias, &raw);
+    rc = model_spans(m, &sub, o_bias, strict, &raw);
     const pii_cspan *r = raw.p;
     for (size_t i = 0; !rc && i < raw.n; i++) {
       for (size_t k = r[i].start; k < r[i].end;) {
@@ -858,7 +965,9 @@ static int detect_spans(const pii_model *m, const pii_text *tx, const pii_option
   *n = 0;
   pii_vec spans;
   pii_vec_init(&spans, sizeof(pii_cspan));
-  int rc = o->keep_emoji ? model_spans(m, tx, -o->sensitivity, &spans) : model_spans_no_emoji(m, tx, -o->sensitivity, &spans);
+  const int strict = o->strict_short_names != 0;
+  int rc = o->keep_emoji ? model_spans(m, tx, -o->sensitivity, strict, &spans)
+                         : model_spans_no_emoji(m, tx, -o->sensitivity, strict, &spans);
   for (size_t i = 0; !rc && i < o->n_extra; i++) {
     const pii_extra_span *x = &o->extra[i];
     const size_t *units = o->extra_unit == PII_UNIT_UTF8 ? tx->u8 : o->extra_unit == PII_UNIT_UTF16 ? tx->u16 : NULL;
@@ -920,7 +1029,7 @@ int pii_detect(const pii_model *m, const char *utf8, size_t len, const pii_optio
   pii_cspan *comb;
   size_t n;
   int rc = detect_spans(m, &tx, &o, &comb, &n);
-  if (!rc) rc = emit(&tx, comb, pii_snap_graphemes(comb, n, tx.cp, tx.n, NULL, 0), out, n_out);
+  if (!rc) rc = emit(&tx, comb, pii_snap_spans(comb, n, tx.cp, tx.n, NULL, 0, o.whole_words != 0), out, n_out);
   free(comb);
   pii_text_free(&tx);
   return rc;
@@ -1074,7 +1183,8 @@ int pii_detect_table(const pii_model *m, const char *utf8, size_t len, const pii
   int rc = detect_spans(m, &tx, &o, &comb, &n);
   if (!rc && t.context == PII_TABLE_CONTEXT_HEADER && t.header) rc = header_context_spans(m, &tx, utf8 ? utf8 : "", &o, t.delimiter, &ctx);
   if (!rc)
-    rc = pii_table_apply_ext(&tx, comb, n, ctx.p, ctx.n, t.delimiter, t.header != 0, t.vote != 0, o.labels, &res, &nres);
+    rc = pii_table_apply_ext(&tx, comb, n, ctx.p, ctx.n, t.delimiter, t.header != 0, t.vote != 0, o.labels,
+                             o.whole_words != 0, &res, &nres);
   pii_vec_free(&ctx);
   if (!rc) rc = emit(&tx, res, nres, out, n_out);
   free(res);

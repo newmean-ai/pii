@@ -1,7 +1,7 @@
 from typing import Callable, Iterable, List, Optional, Tuple
 
 from . import _core
-from ._models import DEFAULT_SIZE, DEFAULT_VARIANT, MODEL_VERSION, SIZES, VARIANTS, PathLike, Progress, load_file
+from ._models import DEFAULT_SIZE, DEFAULT_VARIANT, MODEL_VERSION, SIZES, VARIANTS, PathLike, Progress, load_file, model_file
 from ._regex import regex_spans
 from ._types import RedactResult, Span, Token
 
@@ -73,6 +73,8 @@ class Redactor:
         labels: Optional[Iterable[str]] = None,
         regex: bool = False,
         keep_emoji: bool = False,
+        whole_words: bool = False,
+        strict_short_names: bool = False,
         model_dir: Optional[PathLike] = None,
         cache_dir: Optional[PathLike] = None,
         model_url: Optional[str] = None,
@@ -92,8 +94,9 @@ class Redactor:
             mask |= 1 << _LABEL_ID[l]
 
         where = dict(model_dir=model_dir, cache_dir=cache_dir, model_url=model_url, on_progress=on_progress)
-        tok, _ = load_file(size, "tokenizer", **where)
-        onnx, _ = load_file(size, variant, **where)
+        tok, tok_path = load_file(size, "tokenizer", **where)
+        onnx, onnx_path = load_file(size, variant, **where)
+        self._paths = {"model": str(onnx_path), "tokenizer": str(tok_path)}
         self._model: Optional[_core.Model] = _core.Model(onnx, tok)
         self._mask = mask
         self._sensitivity = float(sensitivity)
@@ -103,8 +106,16 @@ class Redactor:
         self.labels: List[str] = [l for l in LABELS if mask >> _LABEL_ID[l] & 1]
         self.regex: bool = bool(regex)
         #: False (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of
-        #: the input (an emoji inside a span splits it). True: the model reads the text as given (1.1 behaviour).
+        #: the input (an emoji inside a span splits it). True: the model reads the text as given (1.0 behaviour).
         self.keep_emoji: bool = bool(keep_emoji)
+        #: True: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도"; "R23", not
+        #: "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of scripts
+        #: written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Masks more characters; default False.
+        self.whole_words: bool = bool(whole_words)
+        #: True: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger
+        #: evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left alone; a lone name
+        #: is missed a little more often (large: 98.9% -> 96.5% of lone names found). Longer texts are unchanged. Default False.
+        self.strict_short_names: bool = bool(strict_short_names)
 
     @property
     def sensitivity(self) -> float:
@@ -132,7 +143,7 @@ class Redactor:
     def detect(self, text: str) -> List[Span]:
         """Spans to mask, sorted and non-overlapping, with str indices (code points), widened to whole grapheme clusters."""
         m = self._check(text)
-        return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in m.detect(text, self._sensitivity, self._mask, self._extra(text), self.keep_emoji)]
+        return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in m.detect(text, self._sensitivity, self._mask, self._extra(text), self.keep_emoji, self.whole_words, self.strict_short_names)]
 
     def detect_table(
         self, text: str, delimiter: str = "auto", header: bool = True, vote: bool = True, context: str = "none"
@@ -152,7 +163,7 @@ class Redactor:
         m = self._check(text)
         spans = m.detect_table(
             text, self._sensitivity, self._mask, self._extra(text), TABLE_DELIMITERS[delimiter], bool(header), bool(vote),
-            TABLE_CONTEXTS[context], self.keep_emoji,
+            TABLE_CONTEXTS[context], self.keep_emoji, self.whole_words, self.strict_short_names,
         )
         return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in spans]
 
@@ -194,8 +205,25 @@ class Redactor:
         return [Token(*t) for t in self._check(text).tokenize(text)]
 
     def info(self) -> dict:
-        """Model shape and the native kernel build."""
-        return {**self._core_model().info(), "build": _core.build_info()}
+        """What this redactor runs: package and model versions, size, variant, the two model files (published size and
+        SHA-256, which the loaded bytes were checked against, and where they were read from), the model shape and the
+        native kernel build."""
+        from . import __version__
+
+        def pin(file: str, key: str) -> dict:
+            p = model_file(self.size, file)
+            return {"path": p.path, "bytes": p.bytes, "sha256": p.sha256, "local_path": self._paths[key]}
+
+        return {
+            "package_version": __version__,
+            "model_version": MODEL_VERSION,
+            "size": self.size,
+            "variant": self.variant,
+            "engine": "native",
+            "files": {"model": pin(self.variant, "model"), "tokenizer": pin("tokenizer", "tokenizer")},
+            **self._core_model().info(),
+            "build": _core.build_info(),
+        }
 
     def close(self) -> None:
         """Releases the model (calls running in other threads finish first)."""
@@ -208,7 +236,7 @@ class Redactor:
         self.close()
 
     def __repr__(self) -> str:
-        return f"Redactor(size={self.size!r}, variant={self.variant!r}, sensitivity={self._sensitivity}, regex={self.regex}, keep_emoji={self.keep_emoji})"
+        return f"Redactor(size={self.size!r}, variant={self.variant!r}, sensitivity={self._sensitivity}, regex={self.regex}, keep_emoji={self.keep_emoji}, whole_words={self.whole_words}, strict_short_names={self.strict_short_names})"
 
 
 def create_redactor(
@@ -219,6 +247,8 @@ def create_redactor(
     labels: Optional[Iterable[str]] = None,
     regex: bool = False,
     keep_emoji: bool = False,
+    whole_words: bool = False,
+    strict_short_names: bool = False,
     model_dir: Optional[PathLike] = None,
     cache_dir: Optional[PathLike] = None,
     model_url: Optional[str] = None,
@@ -226,6 +256,7 @@ def create_redactor(
 ) -> Redactor:
     """Same as Redactor(...), named like the npm package's createRedactor."""
     return Redactor(
-        size, variant, sensitivity=sensitivity, labels=labels, regex=regex, keep_emoji=keep_emoji, model_dir=model_dir, cache_dir=cache_dir,
+        size, variant, sensitivity=sensitivity, labels=labels, regex=regex, keep_emoji=keep_emoji, whole_words=whole_words,
+        strict_short_names=strict_short_names, model_dir=model_dir, cache_dir=cache_dir,
         model_url=model_url, on_progress=on_progress,
     )

@@ -88,6 +88,8 @@ hf jobs run --namespace newmean-ai --flavor l4x1 --timeout 1h -s HF_TOKEN -e ORT
 첫 행들은 기술 보고서의 Colab L4 실행(2026-10-30) 공개셋 결과다. newmean 모델 4종(티어별 SDK 기본 가중치 파일: large·medium은 `model_q4e.onnx`, small·nano는
 `model_q4.onnx`), 공개 감지기 8종,
 정규식 기준선(`scripts/seed_results.py`). Job의 첫 실행(2026-10-31)이 시드 13행 모두를 newmean-pii-dataset (비공개 테스트)로 채점했다.
+v1.1.0 모델(1.2판)은 `scripts/admin_request.py`로 큐에 넣어 2026-11-02 Job이 채점했고, newmean 행은 크기와 모델 버전으로
+이름을 붙인다(`newmean-pii-large v1.0`, `newmean-pii-large v1.1`).
 새 제출은 다음 주간 실행이 채점할 때까지 "pending"으로 보인다.
 
 ## 개발

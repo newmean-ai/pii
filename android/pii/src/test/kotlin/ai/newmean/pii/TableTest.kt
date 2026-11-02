@@ -136,7 +136,7 @@ class TableTest {
             assertEquals(ctx, r.redactTable(text, TableOptions(context = TableContext.HEADER)).spans)
             // a context the core does not know (only reachable through the bridge) is PII_ERR_ARG
             assertThrows(IllegalArgumentException::class.java) {
-                NativeBridge.detectTable(TestEnv.handle(r), Utf8.encode(text), 0.0, PiiLabels.bits(PiiLabels.ALL), null, false, 0, true, true, 2)
+                NativeBridge.detectTable(TestEnv.handle(r), Utf8.encode(text), 0.0, PiiLabels.bits(PiiLabels.ALL), null, false, false, false, 0, true, true, 2)
             }
         }
         assertEquals(listOf("none", "header"), TableContext.entries.map { it.id })
@@ -156,6 +156,49 @@ class TableTest {
         TestEnv.redactor(PiiSize.NANO, keepEmoji = true).use { r ->
             assertTrue(r.keepEmoji)
             r.detect(text)
+        }
+    }
+
+    @Test
+    fun wholeWords() {
+        TestEnv.redactor(PiiSize.NANO, wholeWords = true).use { r ->
+            assertTrue(r.wholeWords)
+            for (text in listOf("남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n")) {
+                for (spans in listOf(r.detect(text), r.detectTable(text))) {
+                    for (s in spans) { // no span starts or ends inside a word
+                        assertTrue("$text $s", s.start == 0 || !(text[s.start - 1].isLetterOrDigit() && text[s.start].isLetterOrDigit()))
+                        assertTrue("$text $s", s.end == text.length || !(text[s.end - 1].isLetterOrDigit() && text[s.end].isLetterOrDigit()))
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun strictShortNames() {
+        TestEnv.redactor(PiiSize.NANO).use { plain ->
+            TestEnv.redactor(PiiSize.NANO, strictShortNames = true).use { strict ->
+                assertTrue(strict.strictShortNames)
+                val long = "Hi, I'm Kim Minji, call me at 010-1234-5678. I live in Seoul and work at Example Corp as an engineer."
+                assertEquals(plain.detect(long), strict.detect(long)) // longer texts are unchanged
+                fun person(spans: List<PiiSpan>) = spans.filter { it.label.startsWith("PERSON") }.sumOf { it.end - it.start }
+                for (text in listOf("경기", "네이버", "카카오", "남성", "김민지", "Maria Lopez")) { // never more PERSON than without the option
+                    assertTrue(text, person(strict.detect(text)) <= person(plain.detect(text)))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun info() {
+        TestEnv.redactor(PiiSize.NANO).use { r ->
+            val i = r.info()
+            assertEquals("1.3.0", i.packageVersion)
+            assertEquals(PiiModels.VERSION, i.modelVersion)
+            assertEquals(PiiSize.NANO, i.size)
+            assertEquals(PiiModels.modelPin(PiiSize.NANO, r.variant), i.model)
+            assertEquals(PiiModels.tokenizerPin(PiiSize.NANO), i.tokenizer)
+            assertTrue(i.layers > 0)
         }
     }
 }

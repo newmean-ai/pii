@@ -56,7 +56,9 @@ create_redactor(               # or Redactor(...), same arguments
     labels=None,               # labels to mask; default all (LABELS); unknown names raise ValueError
     regex=False,               # also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                # off by default: almost no extra coverage, double the over-masking
-    keep_emoji=False,          # True: the model also reads emoji (1.1 behaviour); default: emoji are never read or masked
+    keep_emoji=False,          # True: the model also reads emoji (1.0 behaviour); default: emoji are never read or masked
+    whole_words=False,         # True: a span that ends inside a word covers the whole word
+    strict_short_names=False,  # True: short texts (<= 8 tokens) need stronger evidence to be read as names
     model_dir=None,            # folder with tokenizer.web.json and onnx/model_<variant>.onnx; never downloads
     cache_dir=None,            # default: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii or ~/.cache/newmean-pii
     model_url=None,            # base URL of a mirror of newmean-ai/pii-<size> (https://, http:// or file://)
@@ -70,6 +72,7 @@ redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="n
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # no reload
 redactor.tokenize(text)                # -> [Token(id, start, end)]
+redactor.info()                        # package_version, model_version, size, variant, files (path, bytes, sha256), shape, build
 redactor.close()                       # also: with create_redactor() as r: ...
 
 apply_redaction(text, spans, mode="tag", mask_char="*", replace=None)
@@ -81,7 +84,11 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
   npm package uses UTF-16 indices for the same spans. Spans are widened to whole grapheme clusters, so an emoji, flag or
   combining sequence is masked whole or kept whole. `source` is `"model"`, `"regex"`, `"model+regex"` or `"table"`.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
-  input, and an emoji inside a span splits it in two. `keep_emoji=True` gives the model the text as given (1.1 behaviour).
+  input, and an emoji inside a span splits it in two. `keep_emoji=True` gives the model the text as given (1.0 behaviour).
+- **Whole words**: with `whole_words=True`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span.
+- **Short values**: with `strict_short_names=True`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
+- **Versions**: `redactor.version` is the model release (1.1.0); `newmean_pii.__version__` and `info()["package_version"]` give the
+  package version, for audit records.
 - **`tag` mode** writes the label family: `PERSON_L2` becomes `[PERSON]`, `URL_L2` becomes `[URL]`. `mask` writes one
   `mask_char` per code point.
 - **Threads**: a redactor can be shared. The model is immutable and the GIL is released while it runs, so a thread
