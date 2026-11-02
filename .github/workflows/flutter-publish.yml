@@ -28,7 +28,7 @@ jobs:
       - name: The tag must match the package version
         run: |
           grep -qx "version: ${GITHUB_REF_NAME#flutter-v}" pubspec.yaml
-      - run: dart pub get
+      - run: dart pub get --no-example  # example/ needs the Flutter SDK (flutter_test); the package itself does not
       - run: dart run tool/vendor_core.dart
       - run: dart pub publish --dry-run
       - run: dart pub publish --force
