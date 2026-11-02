@@ -7,7 +7,7 @@ class Span(NamedTuple):
     start: int
     end: int
     label: str
-    #: "model", "regex", or "model+regex" when both found it
+    #: "model", "regex", "model+regex" when both found it, or "table" when table mode propagated it down a column
     source: str
 
 

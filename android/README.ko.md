@@ -11,7 +11,7 @@
 ```kotlin
 // 앱 모듈의 build.gradle.kts
 dependencies {
-    implementation("ai.newmean:pii:1.0.0")
+    implementation("ai.newmean:pii:1.2.0")
 }
 ```
 
@@ -48,7 +48,7 @@ try (PiiRedactor redactor = PiiRedactor.createBlocking(context)) {  // 백그라
 여기에 토크나이저 0.8 MB(모든 크기 공용)가 더해집니다. 기본 가중치 파일은 npm 패키지와 같이 large·medium은 `q4e`,
 small·nano는 `q4`입니다. 모든 파일은 쓰기 전에 라이브러리에 고정된 크기와 SHA-256으로 검사합니다.
 
-**앱에 포함(권장).** 한 크기의 두 파일을 Hugging Face(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/`)에서
+**앱에 포함(권장).** 한 크기의 두 파일을 Hugging Face(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/`)에서
 받아 저장소와 같은 구조로 앱 assets에 넣습니다.
 
 ```
@@ -58,14 +58,14 @@ app/src/main/assets/newmean-pii/pii-medium/onnx/model_q4e.onnx
 
 ```bash
 cd app/src/main/assets && mkdir -p newmean-pii/pii-medium/onnx && cd newmean-pii/pii-medium
-curl -LO https://huggingface.co/newmean-ai/pii-medium/resolve/v1.0.0/tokenizer.web.json
-curl -L -o onnx/model_q4e.onnx https://huggingface.co/newmean-ai/pii-medium/resolve/v1.0.0/onnx/model_q4e.onnx
+curl -LO https://huggingface.co/newmean-ai/pii-medium/resolve/v1.1.0/tokenizer.web.json
+curl -L -o onnx/model_q4e.onnx https://huggingface.co/newmean-ai/pii-medium/resolve/v1.1.0/onnx/model_q4e.onnx
 ```
 
 `PiiRedactor.create(context)`가 여기서 읽습니다(다른 폴더는 `source = PiiModelSource.Assets(dir = "models")`, assets 바로 아래는 `""`).
 
 **한 번 내려받기.** `source = PiiModelSource.Download()`이면 처음 쓸 때 Hugging Face에서
-`cacheDir/newmean-pii/1.0.0/pii-<size>/`로 내려받고, 불러올 때마다 다시 검사합니다. 시스템이 캐시를 지우면 다시
+`cacheDir/newmean-pii/1.1.0/pii-<size>/`로 내려받고, 불러올 때마다 다시 검사합니다. 시스템이 캐시를 지우면 다시
 내려받습니다. 다른 곳에 두려면 `dir`, 직접 호스팅한 파일을 쓰려면 `baseUrl`을 넘깁니다.
 
 ```kotlin
@@ -97,12 +97,15 @@ PiiRedactor.create(                       // suspend, Dispatchers.IO에서 불�
     regex = false,                        // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림; 기본 false
                                           // (모델만): 추가로 찾는 것은 거의 없고 과마스킹은 두 배
     source = PiiModelSource.Assets(),     // 또는 PiiModelSource.Download(...)
+    keepEmoji = false,                    // true: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // 디스크의 파일; 바이트는 fromBytes(model, tokenizer, size, ...)
 
 redactor.detect(text)                     // List<PiiSpan>, 정렬, 겹침 없음
 redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → [EMAIL], MASK → ***** (maskChar = "•"),
                                           // BLANK → 삭제; 직접 바꾸려면 redact(text) { span, original -> "..." }
+redactor.detectTable(text)                // 표 모드(아래 '표' 참고)
+redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // 모델을 다시 불러오지 않고 임계값 변경
 redactor.close()                          // 모델 해제 (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
@@ -110,8 +113,10 @@ PiiRegex.spans(text)                      // 패턴 층만
 ```
 
 `PiiSpan`에는 `start`·`end`(텍스트의 UTF-16 인덱스, `String.substring`이 받는 값이자 npm 패키지가 돌려주는 값), `label`,
-`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`)가 있습니다. 구간은 코드 포인트 경계에 놓이며, 이 경계가
-문자소 경계와 늘 같지는 않습니다(이모지 ZWJ 연쇄는 코드 포인트 여러 개로 된 문자소 하나). `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
+`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`)가 있습니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기,
+결합 문자열은 통째로 가려지거나 통째로 남습니다. `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
+기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의 이모지는 구간을 나눔).
+`keepEmoji = true`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
 
 **스레드.** `PiiRedactor`는 스레드 안전합니다. 여러 스레드나 코루틴이 한 인스턴스의 `detect`·`redact`를 동시에 불러도
 됩니다(호출마다 작업 메모리가 따로). 둘 다 CPU를 쓰는 블로킹 호출이므로 메인 스레드가 아니라 `Dispatchers.Default`나
@@ -120,6 +125,39 @@ ms(medium), 130토큰 문단 40~60 ms(Apple M5에서 잰 C 코어 수치; Androi
 
 **R8 / ProGuard.** 추가할 것이 없습니다. AAR에 JNI 클래스 `ai.newmean.pii.internal.NativeBridge`를 지키는 consumer 규칙이
 들어 있습니다.
+
+## 표
+
+```kotlin
+redactor.detectTable(text: String, options: TableOptions = TableOptions()): List<PiiSpan>
+redactor.redactTable(text: String, options: TableOptions = TableOptions(), mode: RedactMode = RedactMode.TAG,
+                     maskChar: String = "*"): PiiRedaction
+redactor.redactTable(text: String, options: TableOptions, replace: (span: PiiSpan, original: String) -> String): PiiRedaction
+TableOptions(delimiter = TableDelimiter.AUTO, header = true, vote = true,   // AUTO, COMMA, TAB, SEMICOLON, MARKDOWN
+             context = TableContext.NONE)                                  // NONE or HEADER
+```
+
+표 모드는 CSV, TSV, 세미콜론 구분, 마크다운 파이프 표를 한 텍스트로 읽고 모든 구간을 칸 값 안으로 자릅니다. 구분자, 따옴표,
+줄바꿈은 가리지 않으므로 결과도 올바른 표입니다. `AUTO`는 구분자를 자동 감지하고, 따옴표 필드는 RFC 4180을 따릅니다. `vote`가
+켜져 있으면, 짧은 값으로 된 열에서 모델이 비어 있지 않은 칸의 80% 이상(4칸 이상; 비어 있지 않은 칸이 5개 미만인 열은 투표하지
+않음)을 이름, 이메일, 전화번호, 사용자 이름으로 찾을 때 그 열 전체를 가립니다. 이 구간의 source는 `TABLE`입니다. 긴 글 열(값의
+중앙값이 40자 또는 4단어 초과)은 투표하지 않고, 자리 표시 값(`N/A`, `-`, `none`, `null`, `없음`)은 건너뛰며, 이메일 열은 `@`,
+전화 열은 숫자 6개 이상이 있는 값만 가립니다. `header`가 켜져 있으면 첫 행은 모델이 찾은 개인정보만 가리고 투표에는 넣지
+않습니다. `context = TableContext.HEADER`이고 머리 행이 있으면, 비어 있지 않은 값의 80% 이상이 서로 다른 열의 비어 있지 않은
+데이터 칸을 "<머리글>: <값>"으로 한 번 더 따로 읽어 그 구간을 더합니다. 이름·연락처·ID 열을 덜 놓치는 대신 개인정보가 없는
+칸을 더 가리고, 그런 칸마다 모델을 한 번 더 부릅니다. 표가 아닌 텍스트는 `detect`와 똑같은 구간을 냅니다. 직접 만든
+`replace`는 구분자, 따옴표, 줄바꿈을 넣으면 안 됩니다. `detect`처럼 블로킹 호출입니다.
+
+```kotlin
+val csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+redactor.redactTable(csv).text
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+redactor.redactTable(tsv, TableOptions(delimiter = TableDelimiter.TAB, vote = false), RedactMode.MASK)
+```
+
+설문·양식 내보내기에서 표 모드는 이름·성이 나뉜 열의 이름을 많이 놓칩니다. `context = TableContext.HEADER`를 쓰면
+놓침이 약 4분의 1로 줄고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 재현율이 먼저라면 이 옵션을 쓰세요. 측정값:
+[저장소 README](https://github.com/newmean-ai/pii/blob/main/README.ko.md#표csv-tsv).
 
 ## 개발
 

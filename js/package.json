@@ -1,6 +1,6 @@
 {
   "name": "@newmean-ai/pii",
-  "version": "1.0.1",
+  "version": "1.2.0",
   "description": "Browser-side multilingual PII detection and masking with small on-device models",
   "license": "Apache-2.0",
   "author": "newmean.ai",

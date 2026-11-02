@@ -8,7 +8,7 @@ options and spans as the npm package [`@newmean-ai/pii`](https://www.npmjs.com/p
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.0.0
+  newmean_pii: ^1.2.0
 ```
 
 ```dart
@@ -35,7 +35,7 @@ Android NDK, clang or gcc, MSVC), so there is no prebuilt binary and no plugin s
 Plus a 0.8 MB tokenizer shared by all sizes. Every file is checked against the size and SHA-256 pinned in the package
 before use, wherever it comes from:
 
-- **Downloaded once** (default) from Hugging Face (`newmean-ai/pii-<size>`, tag `v1.0.0`) into `cacheDir`. The default is
+- **Downloaded once** (default) from Hugging Face (`newmean-ai/pii-<size>`, tag `v1.1.0`) into `cacheDir`. The default is
   `~/Library/Caches/newmean-pii` on iOS and macOS, `~/.cache/newmean-pii` on Linux, `%LOCALAPPDATA%\newmean-pii` on
   Windows and the app's temporary directory on Android; pass `cacheDir` (for example `getApplicationSupportDirectory()`
   of `path_provider`) to keep the files elsewhere. `modelUrl` points at a self-hosted copy of the model folder. Android
@@ -79,6 +79,7 @@ NewmeanPii.create({
   Iterable<String>? labels,    // labels to mask; default all (piiLabels)
   bool regex = false,          // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
+  bool keepEmoji = false,      // true: the model also reads emoji (1.1 behaviour); default: never read or masked
   String? modelDir,            // local folder: tokenizer.web.json, onnx/model_<variant>.onnx
   Future<Uint8List> Function(String path)? readFile,  // e.g. Flutter assets
   Uri? modelUrl,               // self-hosted model folder (ending with "/"); default Hugging Face
@@ -93,6 +94,7 @@ pii.detect(text)              // → Future<List<PiiSpan>> {start, end, label, s
 pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blank → removed; or replace: (span, original) => ...
                                         // → Future<PiiRedaction> {text, spans}
 pii.detectSync(text), pii.redactSync(text)  // the same on the calling isolate
+pii.detectTable(text), pii.redactTable(text) // table mode (see Tables); detectTableSync, redactTableSync
 pii.sensitivity = 0.3          // or setSensitivity(0.3); no reload
 pii.dispose()
 
@@ -100,13 +102,52 @@ regexSpans(text), applyRedaction(text, spans, mode: ...)  // the pattern layer a
 modelFile(size, file)          // published path, size and SHA-256 of 'q4', 'q4e' or 'tokenizer'
 ```
 
-- **Offsets** are UTF-16 code units, the indices of Dart's `String`: `text.substring(span.start, span.end)`. Emoji, flags and
-  other characters outside the BMP never get split. `mask` writes one mask character per code point.
+- **Offsets** are UTF-16 code units, the indices of Dart's `String`: `text.substring(span.start, span.end)`. Spans are
+  widened to whole grapheme clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `source` is
+  `"model"`, `"regex"`, `"model+regex"` or `"table"`. `mask` writes one mask character per code point.
+- **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
+  input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.1 behaviour).
 - **Isolates**: `detect` and `redact` run the model in a background isolate (`Isolate.run`), so the UI never blocks; the
   overhead is about 0.5 ms per call. One loaded model is shared by all calls and calls may overlap: several `detect`
   calls at once run in parallel on different cores. Inside your own background isolate, `detectSync` avoids the hop.
 - **Memory**: a loaded model takes about the size of its file plus the tokenizer; `dispose()` frees it after running
   calls finish (otherwise it is freed when the object is garbage collected).
+
+## Tables
+
+```dart
+pii.detectTable(String text, {String delimiter = 'auto', bool header = true, bool vote = true,
+    String context = 'none'})
+    → Future<List<PiiSpan>>
+pii.redactTable(String text, {String delimiter = 'auto', bool header = true, bool vote = true, String context = 'none',
+    RedactMode mode = RedactMode.tag, String maskChar = '*', String Function(PiiSpan span, String original)? replace})
+    → Future<PiiRedaction>
+pii.detectTableSync(...), pii.redactTableSync(...)  // the same on the calling isolate
+```
+
+Table mode reads a CSV, TSV, semicolon-separated or markdown pipe table as one text and clips every span to a cell value:
+delimiters, quotes and line breaks are never masked, so the output is still a valid table. `delimiter` is `'auto'`
+(detected), `','`, `'\t'`, `';'` or `'markdown'` (anything else throws `ArgumentError`); quoted fields follow RFC 4180.
+With `vote`, a column of short values is masked whole when the model finds names, emails, phone numbers or usernames in at
+least 80% of its non-empty cells (and at least 4; columns with fewer than 5 non-empty cells do not vote); those spans have
+source `"table"`. Free-text columns (median value over 40 characters or 4 words) do not vote, placeholders (`N/A`, `-`,
+`none`, `null`, `없음`) are skipped, an email column needs `@` and a phone column 6 or more digits. With `header`, the first
+row is masked where the model finds PII but never voted on. With `context: 'header'` (default `'none'`; anything else throws
+`ArgumentError`) and a header row, each non-empty data cell of a column whose non-empty values are at least 80% distinct
+is also read on its own as "<header>: <value>" and those spans are added: fewer misses on name, contact and ID columns,
+more PII-free cells masked, one more model call per such cell. Text that is not a table gives exactly the spans of `detect`. A
+custom `replace` must not insert the delimiter, a quote or a line break.
+
+```dart
+const csv = 'name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free';
+final r = await pii.redactTable(csv);
+// r.text: "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+await pii.redactTable(tsv, delimiter: '\t', vote: false, mode: RedactMode.mask);
+```
+
+On survey and form exports, table mode misses many names split into first and last name columns. `context: 'header'` cuts
+the misses to about a quarter, at 2.3 to 3.7 more points of PII-free cells masked; for recall first, use it. Measurements:
+[repository README](https://github.com/newmean-ai/pii#tables-csv-tsv).
 
 ## Results
 

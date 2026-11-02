@@ -46,7 +46,7 @@ const { text, spans } = await redactor.redact("제 메일은 kim@example.com, �
 
 ## 결과
 
-newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정보 글자의 1.6%(large)~3.3%(nano)를 놓칩니다. 비교한 공개 탐지기 8개 중 가장 가까운 것은
+newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정보 글자의 1.6%(large)~2.9%(nano)를 놓칩니다. 비교한 공개 탐지기 8개 중 가장 가까운 것은
 19.6%를 놓칩니다. 외부 데이터셋 4종 점수, 전체 비교, 휴대폰 속도는 [저장소 README](https://github.com/newmean-ai/pii#results)와
 기술 보고서에, 주간 점수는 [리더보드](https://huggingface.co/spaces/newmean-ai/pii-leaderboard)에 있습니다.
 
@@ -58,8 +58,44 @@ newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정�
 
 ## API
 
-[README.md](README.md#api)를 보세요. 위치(offset)는 `String.prototype.slice`와 같은 UTF-16 인덱스입니다. 추론은 호출한 스레드에서
+[README.md](README.md#api)를 보세요. 위치(offset)는 `String.prototype.slice`와 같은 UTF-16 인덱스입니다. 구간은 문자소 클러스터
+단위로 넓혀지므로 이모지, 국기, 결합 문자열은 통째로 가려지거나 통째로 남습니다(`Intl.Segmenter`가 필요하며, 없으면 구간은 코드
+포인트 경계에 머뭅니다). 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간
+안의 이모지는 구간을 둘로 나눕니다. `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.1 동작). 추론은 호출한 스레드에서
 실행되므로, 긴 텍스트는 Web Worker 안에서 redactor를 만드는 것을 권합니다.
+
+## 표
+
+```ts
+redactor.detectTable(text: string, table?: {
+  delimiter?: "auto" | "," | "\t" | ";" | "markdown";  // 기본 "auto"
+  header?: boolean;            // 첫 행이 머리글 행; 기본 true
+  vote?: boolean;              // 열 투표; 기본 true
+  context?: "none" | "header"; // "header": 값이 서로 다른 열의 칸을 "<머리글>: <값>"으로도 읽음; 기본 "none"
+}): Promise<Span[]>
+redactor.redactTable(text: string, table?: TableOptions, options?: RedactOptions): Promise<{ text: string; spans: Span[] }>
+```
+
+표 모드는 CSV, TSV, 세미콜론 구분, 마크다운 파이프 표를 한 텍스트로 읽고(구분자를 주지 않으면 자동 감지, 따옴표 필드는 RFC 4180),
+모든 구간을 칸 값 안으로 자릅니다. 구분자, 따옴표, 줄바꿈은 가리지 않으므로 결과도 올바른 표입니다. `vote`가 켜져 있으면, 짧은 값으로
+된 열에서 모델이 비어 있지 않은 칸의 80% 이상(4칸 이상; 비어 있지 않은 칸이 5개 미만인 열은 투표하지 않음)을 이름, 이메일,
+전화번호, 사용자 이름으로 찾을 때 그 열 전체를 가립니다. 이 구간의 source는 `"table"`입니다. 긴 글 열(값의 중앙값이 40자 또는
+4단어 초과)은 투표하지 않고, 자리 표시 값(`N/A`, `-`, `none`, `null`, `없음`)은 건너뛰며, 이메일 열은 `@`, 전화 열은 숫자 6개
+이상이 있는 값만 가립니다. 머리글 행은 모델이 찾은 개인정보만 가리고 투표에는 넣지 않습니다. `context: "header"`이고 머리글 행이
+있으면, 비어 있지 않은 값의 80% 이상이 서로 다른 열의 비어 있지 않은 데이터 칸을 `"<머리글>: <값>"`으로 한 번 더 따로 읽어
+그 구간을 더합니다. 이름·연락처·ID 열을 덜 놓치는 대신 개인정보가 없는 칸을 더 가리고, 그런 칸마다 모델을 한 번 더 부릅니다.
+표가 아닌 텍스트는 `detect`와 똑같은 구간을 냅니다. 직접 만든 `replace`는 구분자, 따옴표, 줄바꿈을 넣으면 안 됩니다.
+
+```ts
+const csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free";
+const { text } = await redactor.redactTable(csv);
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+await redactor.redactTable(tsv, { delimiter: "\t", vote: false }, { mode: "mask" });
+```
+
+설문·양식 내보내기에서 표 모드는 이름·성이 나뉜 열의 이름을 많이 놓칩니다. `context: "header"`를 쓰면 놓침이 약 4분의 1로
+줄고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 재현율이 먼저라면 이 옵션을 쓰세요. 측정값:
+[저장소 README](https://github.com/newmean-ai/pii/blob/main/README.ko.md#표csv-tsv).
 
 ## 개발
 

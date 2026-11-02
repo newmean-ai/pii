@@ -49,21 +49,62 @@ public enum PIILabel: String, Sendable, CaseIterable, Hashable {
   static let byID: [PIILabel] = (0..<Int32(PII_LABEL_COUNT.rawValue)).map { PIILabel(rawValue: String(cString: pii_label_name($0)))! }
 }
 
-/// Where a span came from: the model, the pattern layer (`regex: true`), or both.
+/// Where a span came from: the model, the pattern layer (`regex: true`), both, or table mode's column vote.
 public enum PIISource: String, Sendable, Hashable {
   case model
   case regex
   case modelAndRegex = "model+regex"
+  /// Propagated down a table column by `detectTable`.
+  case table
 
   init(bits: Int32) {
-    self = bits == PII_SOURCE_MODEL ? .model : bits == PII_SOURCE_REGEX ? .regex : .modelAndRegex
+    self = bits == PII_SOURCE_MODEL ? .model : bits == PII_SOURCE_REGEX ? .regex : bits == PII_SOURCE_TABLE ? .table : .modelAndRegex
+  }
+}
+
+/// Field delimiter of `detectTable` (npm `TableOptions.delimiter`): `.auto` detects comma, tab, semicolon or a markdown
+/// pipe table.
+public enum PIITableDelimiter: String, Sendable, CaseIterable {
+  case auto
+  case comma = ","
+  case tab = "\t"
+  case semicolon = ";"
+  /// Markdown pipe table (`| a | b |`).
+  case markdown
+
+  /// `pii_table_options.delimiter`.
+  var code: Int32 {
+    switch self {
+    case .auto: return 0
+    case .comma: return 0x2C
+    case .tab: return 0x09
+    case .semicolon: return 0x3B
+    case .markdown: return 0x7C
+    }
+  }
+}
+
+/// Extra reading of `detectTable` (npm `TableOptions.context`). `.header`: with a header row, each non-empty data cell of a
+/// column whose non-empty values are at least 80% distinct is also read on its own as "<header>: <value>", and those spans
+/// are added (fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell).
+public enum PIITableContext: String, Sendable, CaseIterable {
+  case none
+  case header
+
+  /// `pii_table_options.context`.
+  var code: Int32 {
+    switch self {
+    case .none: return Int32(PII_TABLE_CONTEXT_NONE)
+    case .header: return Int32(PII_TABLE_CONTEXT_HEADER)
+    }
   }
 }
 
 /// A region of the text to mask.
 public struct PIISpan: Sendable, Hashable {
-  /// The region in the text it was detected in. It always falls on Unicode scalar boundaries but may end inside a
-  /// Character (before a combining mark); slice with `text.unicodeScalars[range]` or `utf16Range`, as `redact` does.
+  /// The region in the text it was detected in. Spans of `detect` and `detectTable` fall on extended grapheme cluster
+  /// boundaries (UAX #29, as the C core implements it); slice with `text.unicodeScalars[range]` or `utf16Range`, as
+  /// `redact` does.
   public let range: Range<String.Index>
   /// [start, end) in UTF-16 code units (NSString, NSRange, the npm package's `start` / `end`).
   public let utf16Range: Range<Int>

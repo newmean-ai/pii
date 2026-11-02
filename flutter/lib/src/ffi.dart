@@ -11,6 +11,9 @@ const piiOk = 0;
 const piiUnitUtf16 = 2;
 const piiSourceModel = 1;
 const piiSourceRegex = 2;
+const piiSourceTable = 4;
+const piiTableContextNone = 0;
+const piiTableContextHeader = 1;
 
 final class PiiModel extends Opaque {}
 
@@ -43,6 +46,15 @@ final class PiiOptionsC extends Struct {
   external int nExtra;
   @Int()
   external int extraUnit;
+  @Int()
+  external int keepEmoji;
+}
+
+final class PiiTableOptionsC extends Struct {
+  @Size()
+  external int structSize;
+  @Int()
+  external int delimiter, header, vote, context;
 }
 
 final class PiiFilePinC extends Struct {
@@ -88,6 +100,30 @@ external int piiDetect(
   Pointer<Uint8> utf8,
   int len,
   Pointer<PiiOptionsC> options,
+  Pointer<Pointer<PiiSpanC>> out,
+  Pointer<Size> nOut,
+);
+
+@Native<Void Function(Pointer<PiiTableOptionsC>)>(symbol: 'pii_table_options_init', isLeaf: true)
+external void piiTableOptionsInit(Pointer<PiiTableOptionsC> table);
+
+@Native<
+  Int Function(
+    Pointer<PiiModel>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<PiiOptionsC>,
+    Pointer<PiiTableOptionsC>,
+    Pointer<Pointer<PiiSpanC>>,
+    Pointer<Size>,
+  )
+>(symbol: 'pii_detect_table')
+external int piiDetectTable(
+  Pointer<PiiModel> model,
+  Pointer<Uint8> utf8,
+  int len,
+  Pointer<PiiOptionsC> options,
+  Pointer<PiiTableOptionsC> table,
   Pointer<Pointer<PiiSpanC>> out,
   Pointer<Size> nOut,
 );

@@ -49,7 +49,7 @@ void main() {
       'tokenizer.web.json',
       'onnx/model_q4.onnx',
     });
-    expect(File('${cache.path}/v1.0.0/pii-nano/onnx/model_q4.onnx').lengthSync(), modelFile('nano', 'q4').bytes);
+    expect(File('${cache.path}/v1.1.0/pii-nano/onnx/model_q4.onnx').lengthSync(), modelFile('nano', 'q4').bytes);
     final spans = await a.detect('kim@example.com');
     await a.dispose();
 
@@ -60,7 +60,7 @@ void main() {
     await b.dispose();
 
     // a corrupted cached copy is replaced
-    final cached = File('${cache.path}/v1.0.0/pii-nano/tokenizer.web.json');
+    final cached = File('${cache.path}/v1.1.0/pii-nano/tokenizer.web.json');
     cached.writeAsStringSync('{}');
     final c = await NewmeanPii.create(size: 'nano', modelUrl: base(), cacheDir: cache.path);
     expect(requests, ['/tokenizer.web.json']);
@@ -74,7 +74,7 @@ void main() {
       NewmeanPii.create(size: 'nano', modelUrl: base(), cacheDir: cache.path),
       throwsA(isA<StateError>().having((e) => e.message, 'message', contains('SHA-256'))),
     );
-    expect(File('${cache.path}/v1.0.0/pii-nano/onnx/model_q4.onnx').existsSync(), isFalse);
+    expect(File('${cache.path}/v1.1.0/pii-nano/onnx/model_q4.onnx').existsSync(), isFalse);
   }, skip: skip);
 
   test('HTTP errors', () async {

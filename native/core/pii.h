@@ -7,16 +7,16 @@
  * and the redaction modes are left to each language; their spans can be merged here (pii_options.extra) so that every
  * package shares one combine step.
  *
- * Threads: a pii_model is immutable after pii_model_load; any number of threads may call pii_detect and pii_tokenize
- * on the same model at once (each call uses its own scratch memory). Nothing is global.
+ * Threads: a pii_model is immutable after pii_model_load; any number of threads may call pii_detect,
+ * pii_detect_table and pii_tokenize on the same model at once (each call uses its own scratch memory). Nothing is global.
  *
  * Offsets: every span and token carries [start, end) in UTF-8 bytes of the input, in code points (Python str), and in
  * UTF-16 code units (JavaScript, Java/Kotlin, Dart, NSString), so wrappers need no conversion. Invalid UTF-8 bytes count
- * as one code point (U+FFFD) each; surrogates in 3-byte form (Python "surrogatepass") count as one code point. Offsets
- * always fall on code point boundaries, but a span may end inside a grapheme (before a combining mark the normalizer
- * dropped): slice by code points or UTF-16 units, not by grapheme (Swift Character) indices. Pass standard UTF-8: from
- * Java/Kotlin String.getBytes(UTF_8), not JNI GetStringUTFChars (modified UTF-8 splits emoji into surrogates and NUL
- * into two bytes, which changes tokens and offsets); from Python str.encode("utf-8", "surrogatepass").
+ * as one code point (U+FFFD) each; surrogates in 3-byte form (Python "surrogatepass") count as one code point. Span
+ * offsets fall on extended grapheme cluster boundaries (UAX #29) of the whole input, so a span never splits an emoji ZWJ
+ * sequence, flag, skin tone, keycap or combining sequence; token offsets fall on code point boundaries only. Pass
+ * standard UTF-8: from Java/Kotlin String.getBytes(UTF_8), not JNI GetStringUTFChars (modified UTF-8 splits emoji into
+ * surrogates and NUL into two bytes, which changes tokens and offsets); from Python str.encode("utf-8", "surrogatepass").
  *
  * Licence: Apache-2.0 (LICENSE, NOTICE). */
 #ifndef NEWMEAN_PII_H
@@ -39,8 +39,8 @@ extern "C" {
 #define PII_API
 #endif
 
-#define PII_VERSION "1.0.0"       /* this library */
-#define PII_MODEL_VERSION "1.0.0" /* model release (Hugging Face tag v1.0.0) */
+#define PII_VERSION "1.2.0"       /* this library */
+#define PII_MODEL_VERSION "1.1.0" /* model release (Hugging Face tag v1.1.0) */
 #define PII_DEFAULT_SIZE "medium"
 
 /* Return codes */
@@ -75,6 +75,7 @@ enum pii_label {
 /* Span sources (bit flags) */
 #define PII_SOURCE_MODEL 1
 #define PII_SOURCE_REGEX 2 /* from pii_options.extra; both bits when model and pattern found the same text */
+#define PII_SOURCE_TABLE 4 /* span propagated down a column by table mode (pii_detect_table; alone, not combined) */
 
 /* Offset units of pii_options.extra */
 #define PII_UNIT_UTF8 0
@@ -116,9 +117,26 @@ typedef struct {
   const pii_extra_span *extra;
   size_t n_extra;
   int extra_unit; /* PII_UNIT_*; default PII_UNIT_UTF8 */
+  /* 0 (default): emoji are taken out of the text the model reads, so the model does not read them as PII; the spans keep the offsets of the input
+   * (an emoji inside a span splits it). 1: the model reads the text as given. Added in 1.2.0. */
+  int keep_emoji;
 } pii_options;
 
-/* Library version ("1.0.0"). */
+/* Table mode (pii_detect_table). */
+typedef struct {
+  size_t struct_size; /* sizeof(pii_table_options); set by pii_table_options_init */
+  int delimiter;      /* 0 = auto (default), ',' , '\t', ';' or '|' (markdown pipe table) */
+  int header;         /* 1 (default): the first row is a header row (never voted on or propagated into) */
+  int vote;           /* 1 (default): column vote and propagation; 0: whole-file detection clipped to cells only */
+  /* PII_TABLE_CONTEXT_NONE (default) or PII_TABLE_CONTEXT_HEADER: with a header row, each non-empty data cell of a column whose
+   * non-empty values are at least 80% distinct is also read on its own as "<header>: <value>", and those spans are added
+   * (fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell). 1.2.0. */
+  int context;
+} pii_table_options;
+#define PII_TABLE_CONTEXT_NONE 0
+#define PII_TABLE_CONTEXT_HEADER 1
+
+/* Library version ("1.2.0"). */
 PII_API const char *pii_version(void);
 /* Message of a return code ("invalid argument", ...); static, never NULL. */
 PII_API const char *pii_strerror(int code);
@@ -145,13 +163,31 @@ typedef struct {
 } pii_model_info;
 PII_API void pii_model_get_info(const pii_model *model, pii_model_info *info);
 
-/* Spans to mask in utf8[0, len), sorted and non-overlapping (the npm package's detect() with regex: false, plus
- * options->extra when given). options may be NULL (defaults). On success *out holds *n_out spans (NULL when none);
+/* Spans to mask in utf8[0, len), sorted and non-overlapping and widened to whole grapheme clusters (the npm package's
+ * detect() with regex: false, plus options->extra when given). options may be NULL (defaults). On success *out holds *n_out spans (NULL when none);
  * free with pii_spans_free. Returns PII_OK or a PII_ERR_* code (pii_strerror). Texts longer than INT32_MAX bytes are
  * PII_ERR_ARG; working memory is about 20 bytes per input byte plus one 256-token window. */
 PII_API int pii_detect(const pii_model *model, const char *utf8, size_t len, const pii_options *options, pii_span **out,
                        size_t *n_out);
 PII_API void pii_spans_free(pii_span *spans);
+
+/* Defaults: auto-detected delimiter, a header row, column vote on. */
+PII_API void pii_table_options_init(pii_table_options *table);
+/* Spans of a CSV, TSV, semicolon-separated or markdown pipe table in utf8[0, len), sorted and non-overlapping, never crossing
+ * a cell boundary (delimiters, quotes, line breaks and separator lines stay unmasked, so a redaction that inserts none of
+ * them keeps the table valid). The whole text is read by pii_detect (same options), its spans are clipped to the cell
+ * values (RFC 4180 fields; header cells included), and with table->vote a column of short values (at least 5 non-empty
+ * data cells, median length <= 40 code points and <= 4 words) whose cells are at least 80% covered by PERSON (or
+ * PERSON_L2), EMAIL, PHONE or USERNAME in at least 4 cells and 80% of them gets that label on every non-empty data cell
+ * (source PII_SOURCE_TABLE; placeholders such as "N/A", EMAIL values without "@" and PHONE values with fewer than 6 digits
+ * are skipped; only labels enabled in options->labels). Spans are widened to whole grapheme clusters as in pii_detect, but
+ * never past the edges of their cell value (a value that starts with a combining mark or ends with a Prepend character
+ * shares a cluster with the delimiter or quote beside it). Text that is not a table (fewer than 2 rows, or no delimiter
+ * found by auto-detection) gives exactly the spans of pii_detect. options and table may be NULL (defaults). Return codes,
+ * ownership (pii_spans_free) and offsets as pii_detect; PII_ERR_ARG for an unknown delimiter. The npm package's
+ * Redactor.detectTable gives the same spans (with its regex layer passed here as options->extra). */
+PII_API int pii_detect_table(const pii_model *model, const char *utf8, size_t len, const pii_options *options,
+                             const pii_table_options *table, pii_span **out, size_t *n_out);
 
 /* Token ids and offsets without <s> and </s>, as the npm package's tokenizer gives them: the ids and offsets of Hugging
  * Face tokenizers, except that a grapheme the normalizer replaces (e.g. "e" + U+0301) aligns as a whole. */
@@ -159,7 +195,7 @@ PII_API int pii_tokenize(const pii_model *model, const char *utf8, size_t len, p
 PII_API void pii_tokens_free(pii_token *tokens);
 
 /* Published model files of release PII_MODEL_VERSION, for download and verification. size: "nano", "small", "medium",
- * "large"; file: "q4", "q4e" or "tokenizer". path is relative to https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/
+ * "large"; file: "q4", "q4e" or "tokenizer". path is relative to https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/
  * ("onnx/model_q4e.onnx", "tokenizer.web.json"). Returns NULL for an unknown size or file. */
 typedef struct {
   const char *size, *file, *path;

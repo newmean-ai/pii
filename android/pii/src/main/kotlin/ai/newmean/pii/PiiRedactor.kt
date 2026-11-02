@@ -15,8 +15,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * Detects and masks personal information on the device with a newmean-pii-<size> model (the same models, defaults and
- * spans as the npm package @newmean-ai/pii). Thread-safe: any number of threads may call [detect] and [redact] at once.
- * Holds the model in native memory until [close].
+ * spans as the npm package @newmean-ai/pii). Thread-safe: any number of threads may call [detect], [redact], [detectTable]
+ * and [redactTable] at once. Holds the model in native memory until [close].
  */
 public class PiiRedactor private constructor(
     private var handle: Long,
@@ -26,6 +26,11 @@ public class PiiRedactor private constructor(
     /** Whether the pattern layer ([PiiRegex]) runs next to the model. */
     public val regex: Boolean,
     sensitivity: Double,
+    /**
+     * false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of the
+     * input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
+     */
+    public val keepEmoji: Boolean,
 ) : AutoCloseable {
     private val lock = ReentrantReadWriteLock()
     private val labelBits = PiiLabels.bits(labels)
@@ -47,13 +52,60 @@ public class PiiRedactor private constructor(
         }
 
     /** Spans to mask, sorted and non-overlapping, with UTF-16 indices into [text]. Blocking (CPU); call off the main thread. */
-    public fun detect(text: String): List<PiiSpan> {
+    public fun detect(text: String): List<PiiSpan> = spans(text, null)
+
+    /**
+     * Table mode for CSV, TSV, semicolon-separated and markdown pipe tables (the npm package's `detectTable`): the whole
+     * text is read at once (cells give each other context), spans are clipped to cell values, and a column of short values
+     * that the model reads as names, emails, phone numbers or usernames almost throughout is masked whole (source
+     * [PiiSource.TABLE]; placeholders such as "N/A" are skipped). Text that is not a table gives the spans of [detect].
+     * Blocking (CPU); call off the main thread.
+     */
+    @JvmOverloads
+    public fun detectTable(text: String, options: TableOptions = TableOptions()): List<PiiSpan> = spans(text, options)
+
+    /**
+     * [detectTable] and replace each span as [redact] does. Spans never cross cells, so delimiters, quotes and line breaks
+     * are kept and the output stays a valid table.
+     */
+    @JvmOverloads
+    public fun redactTable(
+        text: String,
+        options: TableOptions = TableOptions(),
+        mode: RedactMode = RedactMode.TAG,
+        maskChar: String = "*",
+    ): PiiRedaction {
+        val spans = detectTable(text, options)
+        return PiiRedaction(applyRedaction(text, spans, mode, maskChar, null), spans)
+    }
+
+    /**
+     * [detectTable] and replace each span with [replace] (span, original text). The output stays a valid table as long as
+     * [replace] does not insert the delimiter, a quote or a line break.
+     */
+    public fun redactTable(
+        text: String,
+        options: TableOptions,
+        replace: (span: PiiSpan, original: String) -> String,
+    ): PiiRedaction {
+        val spans = detectTable(text, options)
+        return PiiRedaction(applyRedaction(text, spans, RedactMode.TAG, "*", replace), spans)
+    }
+
+    private fun spans(text: String, table: TableOptions?): List<PiiSpan> {
         if (text.isEmpty()) return emptyList()
         val extra = extraOf(if (regex) PiiRegex.spans(text) else emptyList())
         val utf8 = Utf8.encode(text)
         val raw = lock.read {
             check(handle != 0L) { "PiiRedactor is closed" }
-            NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra)
+            if (table == null) {
+                NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra, keepEmoji)
+            } else {
+                NativeBridge.detectTable(
+                    handle, utf8, sensitivity, labelBits, extra, keepEmoji, table.delimiter.code, table.header, table.vote,
+                    table.context.code,
+                )
+            }
         }
         return List(raw.size / 4) { i ->
             PiiSpan(raw[4 * i], raw[4 * i + 1], PiiLabels.ALL[raw[4 * i + 2]], sourceOf(raw[4 * i + 3]))
@@ -104,6 +156,7 @@ public class PiiRedactor private constructor(
          * @param sensitivity > 0 masks more, < 0 masks less (about -1..1); default 0.
          * @param labels labels to mask; default all ([PiiLabels.ALL]). [PiiLabels.LEVEL1] leaves level 2 visible.
          * @param regex also mask a few patterns (email, URL, card/account, phone, Korean resident number); default false.
+         * @param keepEmoji true: the model reads emoji too (1.1 behaviour); default false: emoji are never read or masked.
          */
         public suspend fun create(
             context: Context,
@@ -113,8 +166,9 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
+            keepEmoji: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(context, size, variant, sensitivity, labels, regex, source)
+            createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji)
         }
 
         /** [create] from model files on disk (checked against the pins of [size] and [variant]). */
@@ -126,8 +180,9 @@ public class PiiRedactor private constructor(
             sensitivity: Double = 0.0,
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
+            keepEmoji: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex)
+            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
         }
 
         /** Blocking [create]; call it off the main thread. */
@@ -142,6 +197,7 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
+            keepEmoji: Boolean = false,
         ): PiiRedactor {
             val modelPin = PiiModels.modelPin(size, variant)
             val tokPin = PiiModels.tokenizerPin(size)
@@ -155,14 +211,14 @@ public class PiiRedactor private constructor(
                             "assets/$dir$path not found: bundle the model files (see the README) or use PiiModelSource.Download",
                         ).apply { initCause(e) }
                     }
-                    load(asset(modelPin.path, modelPin), asset(tokPin.path, tokPin), size, variant, sensitivity, labels, regex)
+                    load(asset(modelPin.path, modelPin), asset(tokPin.path, tokPin), size, variant, sensitivity, labels, regex, keepEmoji)
                 }
                 is PiiModelSource.Download -> {
                     val root = source.dir ?: File(context.cacheDir, "newmean-pii/${PiiModels.VERSION}")
                     val files = PiiModels.download(
                         File(root, "pii-${size.id}"), size, variant, source.baseUrl ?: PiiModels.baseUrl(size), source.onProgress,
                     )
-                    createBlocking(files.model, files.tokenizer, size, variant, sensitivity, labels, regex)
+                    createBlocking(files.model, files.tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
                 }
             }
         }
@@ -179,10 +235,11 @@ public class PiiRedactor private constructor(
             sensitivity: Double = 0.0,
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
+            keepEmoji: Boolean = false,
         ): PiiRedactor = load(
             ModelStore.readVerified(model, PiiModels.modelPin(size, variant)),
             ModelStore.readVerified(tokenizer, PiiModels.tokenizerPin(size)),
-            size, variant, sensitivity, labels, regex,
+            size, variant, sensitivity, labels, regex, keepEmoji,
         )
 
         /** Blocking [create] from the bytes of the two files (checked against the pins; they may be dropped afterwards). */
@@ -197,10 +254,11 @@ public class PiiRedactor private constructor(
             sensitivity: Double = 0.0,
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
+            keepEmoji: Boolean = false,
         ): PiiRedactor {
             if (!ModelStore.matches(model, PiiModels.modelPin(size, variant))) throw ModelStore.mismatch("model_${variant.id}.onnx")
             if (!ModelStore.matches(tokenizer, PiiModels.tokenizerPin(size))) throw ModelStore.mismatch(PiiModels.TOKENIZER_PATH)
-            return load(model, tokenizer, size, variant, sensitivity, labels, regex)
+            return load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji)
         }
 
         /** Replaces [spans] in [text] as [redact] does (for spans kept from [detect] or edited by the app). */
@@ -226,10 +284,11 @@ public class PiiRedactor private constructor(
             sensitivity: Double,
             labels: Collection<String>,
             regex: Boolean,
+            keepEmoji: Boolean,
         ): PiiRedactor {
             PiiLabels.bits(labels) // unknown labels fail before the model loads
             checkSensitivity(sensitivity)
-            return PiiRedactor(NativeBridge.modelLoad(model, tokenizer), size, variant, labels, regex, sensitivity)
+            return PiiRedactor(NativeBridge.modelLoad(model, tokenizer), size, variant, labels, regex, sensitivity, keepEmoji)
         }
 
         private fun checkSensitivity(v: Double): Double {
@@ -240,6 +299,7 @@ public class PiiRedactor private constructor(
         private fun sourceOf(bits: Int): PiiSource = when (bits) {
             1 -> PiiSource.MODEL
             2 -> PiiSource.REGEX
+            4 -> PiiSource.TABLE
             else -> PiiSource.MODEL_AND_REGEX
         }
 

@@ -60,7 +60,7 @@ def test_download_verify_and_cache(server, fake_pins, tmp_path):
     seen = []
     data, path = _models.load_file("nano", "q4", cache_dir=cache, model_url=server.url + "pii-nano", on_progress=lambda *a: seen.append(a))
     assert data == BODY
-    assert path == cache / "v1.0.0" / "pii-nano" / "onnx" / "model_q4.onnx" and path.read_bytes() == BODY
+    assert path == cache / "v1.1.0" / "pii-nano" / "onnx" / "model_q4.onnx" and path.read_bytes() == BODY
     assert server.requests == ["/pii-nano/onnx/model_q4.onnx"]
     assert seen[-1] == ("onnx/model_q4.onnx", len(BODY), len(BODY))
     assert [p.name for p in path.parent.iterdir()] == ["model_q4.onnx"]  # no partial files left
@@ -108,7 +108,7 @@ def test_offline_env(fake_pins, tmp_path, monkeypatch):
     monkeypatch.setenv("NEWMEAN_PII_OFFLINE", "1")
     with pytest.raises(ModelFileError, match="NEWMEAN_PII_OFFLINE"):
         _models.load_file("nano", "q4", cache_dir=tmp_path, model_url="http://127.0.0.1:9/")
-    put(tmp_path / "v1.0.0" / "pii-nano", "onnx/model_q4.onnx", BODY)
+    put(tmp_path / "v1.1.0" / "pii-nano", "onnx/model_q4.onnx", BODY)
     assert _models.load_file("nano", "q4", cache_dir=tmp_path)[0] == BODY
 
 
@@ -116,7 +116,7 @@ def test_env_cache_dir(server, fake_pins, tmp_path, monkeypatch):
     put(server.root, "onnx/model_q4.onnx", BODY)
     monkeypatch.setenv("NEWMEAN_PII_CACHE", str(tmp_path / "env"))
     _, path = _models.load_file("nano", "q4", model_url=server.url)
-    assert path == tmp_path / "env" / "v1.0.0" / "pii-nano" / "onnx" / "model_q4.onnx"
+    assert path == tmp_path / "env" / "v1.1.0" / "pii-nano" / "onnx" / "model_q4.onnx"
 
 
 def test_model_dir_is_verified_and_never_downloads(fake_pins, tmp_path):
@@ -142,7 +142,7 @@ def test_redactor_from_local_server(server, tmp_path):
     for rel in ("tokenizer.web.json", "onnx/model_q4.onnx"):
         put(server.root, f"pii-nano/{rel}", (model_dir("nano") / rel).read_bytes())
     folder = newmean_pii.fetch_model("nano", cache_dir=tmp_path, model_url=server.url + "pii-nano/")
-    assert folder == tmp_path / "v1.0.0" / "pii-nano"
+    assert folder == tmp_path / "v1.1.0" / "pii-nano"
     r = Redactor("nano", cache_dir=tmp_path, model_url="http://127.0.0.1:9/")  # cached: no request
     assert len(server.requests) == 2
     text = "Contact maria.lopez@example.com"
@@ -156,4 +156,4 @@ def test_hugging_face_download(tmp_path):
     r = newmean_pii.create_redactor(size="nano", cache_dir=tmp_path)
     out = r.redact("제 메일은 kim@example.com, 전화는 010-1234-5678입니다")
     assert out.text == "제 메일은 [EMAIL], 전화는 [PHONE]입니다", out
-    assert (tmp_path / "v1.0.0" / "pii-nano" / "onnx" / "model_q4.onnx").stat().st_size == newmean_pii.model_file("nano", "q4").bytes
+    assert (tmp_path / "v1.1.0" / "pii-nano" / "onnx" / "model_q4.onnx").stat().st_size == newmean_pii.model_file("nano", "q4").bytes

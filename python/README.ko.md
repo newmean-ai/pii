@@ -30,12 +30,12 @@ Python 3.9 이상. Linux(x86-64, arm64), macOS(arm64, x86-64), Windows(x86-64) �
 | `medium` (기본) | 11.3 MB | 6 레이어, rank-192 임베딩 |
 | `large` | 15.5 MB | 6 레이어, 전체(어휘 가지치기) 임베딩 |
 
-여기에 0.8 MB 토크나이저가 더해집니다. 처음 쓸 때 Hugging Face(`newmean-ai/pii-<size>`, 태그 `v1.0.0`)에서
+여기에 0.8 MB 토크나이저가 더해집니다. 처음 쓸 때 Hugging Face(`newmean-ai/pii-<size>`, 태그 `v1.1.0`)에서
 `~/.cache/newmean-pii`로 내려받고, 이 패키지에 고정된 SHA-256 값과 대조합니다. 이후 불러올 때마다 다시 대조합니다.
 
 모든 개인정보를 찾는 모델은 없습니다. 언어·데이터셋별 놓침률과 과잉 마스킹률은 기술 보고서에 있습니다. 결과는 보장이
 아니라 강력한 1차 처리로 다뤄 주세요. newmean-pii-dataset(공개 테스트, 54개 언어)에서 개인정보 글자 중 놓치는 비율은
-1.6%(large)~3.3%(nano)이며, 전체 비교는 [저장소 README](https://github.com/newmean-ai/pii#results)에 있습니다.
+1.6%(large)~2.9%(nano)이며, 전체 비교는 [저장소 README](https://github.com/newmean-ai/pii#results)에 있습니다.
 
 ## 레이블
 
@@ -54,6 +54,7 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
     labels=None,               # 가릴 레이블; 기본 전체(LABELS); 모르는 이름은 ValueError
     regex=False,               # 몇 가지 패턴(이메일, URL, 카드/계좌, 전화, 주민등록번호)도 가림;
                                # 기본 꺼짐: 추가 탐지는 거의 없고 과잉 마스킹이 두 배
+    keep_emoji=False,          # True: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
     model_dir=None,            # tokenizer.web.json과 onnx/model_<variant>.onnx가 있는 폴더; 다운로드하지 않음
     cache_dir=None,            # 기본: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii 또는 ~/.cache/newmean-pii
     model_url=None,            # newmean-ai/pii-<size> 미러의 기준 URL (https://, http://, file://)
@@ -63,6 +64,8 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
 redactor.detect(text)                  # -> [Span(start, end, label, source)], 정렬, 겹침 없음
 redactor.redact(text, mode="tag")      # -> RedactResult(text, spans); "tag" -> [EMAIL], "mask" -> *****, "blank" -> 삭제
 redactor.redact(text, mask_char="#", replace=None)  # replace(span, original) -> str 가 mode보다 우선
+redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none")  # 표 모드(아래 '표' 참고)
+redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # 다시 불러오지 않음
 redactor.tokenize(text)                # -> [Token(id, start, end)]
 redactor.close()                       # 또는: with create_redactor() as r: ...
@@ -73,7 +76,10 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
 ```
 
 - **오프셋**은 Python `str` 인덱스(코드 포인트)입니다. 이모지가 있어도 `text[span.start:span.end]`가 가릴 텍스트입니다.
-  npm 패키지는 같은 구간을 UTF-16 인덱스로 냅니다. `source`는 `"model"`, `"regex"`, `"model+regex"` 중 하나입니다.
+  npm 패키지는 같은 구간을 UTF-16 인덱스로 냅니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기, 결합 문자열은
+  통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`, `"model+regex"`, `"table"` 중 하나입니다.
+- **이모지**: 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간 안의
+  이모지는 구간을 둘로 나눕니다. `keep_emoji=True`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
 - **`tag` 모드**는 레이블 계열을 씁니다. `PERSON_L2`는 `[PERSON]`, `URL_L2`는 `[URL]`이 됩니다. `mask`는 코드 포인트마다
   `mask_char` 하나를 씁니다.
 - **스레드**: redactor 하나를 함께 써도 됩니다. 모델은 불변이고 실행 중에는 GIL을 풀기 때문에 스레드 풀로 병렬
@@ -88,6 +94,35 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
 - **속도**: Apple M5 Pro 한 스레드에서 짧은 텍스트 하나에 nano 약 10 ms, medium 약 15 ms, 1,000토큰 텍스트는 0.4초(nano)
   ~0.55초(medium). 긴 텍스트는 256토큰 창으로 겹쳐 나눠 처리합니다.
 - 오류: 잘못된 옵션은 `ValueError`, 파일이 없거나 내려받지 못하거나 고정값과 다르면 `ModelFileError`.
+
+## 표
+
+```python
+redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none") -> List[Span]
+redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None) -> RedactResult
+```
+
+표 모드는 CSV, TSV, 세미콜론 구분, 마크다운 파이프 표를 한 텍스트로 읽고 모든 구간을 칸 값 안으로 자릅니다. 구분자, 따옴표,
+줄바꿈은 가리지 않으므로 결과도 올바른 표입니다. `delimiter`는 `"auto"`(자동 감지), `","`, `"\t"`, `";"`, `"markdown"`
+(`TABLE_DELIMITERS`)이고, 따옴표 필드는 RFC 4180을 따릅니다. `vote`가 켜져 있으면, 짧은 값으로 된 열에서 모델이 비어 있지 않은
+칸의 80% 이상(4칸 이상; 비어 있지 않은 칸이 5개 미만인 열은 투표하지 않음)을 이름, 이메일, 전화번호, 사용자 이름으로 찾을 때
+그 열 전체를 가립니다. 이 구간의 source는 `"table"`입니다. 긴 글 열(값의 중앙값이 40자 또는 4단어 초과)은 투표하지 않고, 자리
+표시 값(`N/A`, `-`, `none`, `null`, `없음`)은 건너뛰며, 이메일 열은 `@`, 전화 열은 숫자 6개 이상이 있는 값만 가립니다. `header`가
+켜져 있으면 첫 행은 모델이 찾은 개인정보만 가리고 투표에는 넣지 않습니다. `context="header"`(`TABLE_CONTEXTS`; 기본 `"none"`)이고
+머리 행이 있으면, 비어 있지 않은 값의 80% 이상이 서로 다른 열의 비어 있지 않은 데이터 칸을 `"<머리글>: <값>"`으로 한 번 더 따로
+읽어 그 구간을 더합니다. 이름·연락처·ID 열을 덜 놓치는 대신 개인정보가 없는 칸을 더 가리고, 그런 칸마다 모델을 한 번 더
+부릅니다. 표가 아닌 텍스트는 `detect(text)`와 똑같은 결과를 냅니다. 직접 만든 `replace`는 구분자, 따옴표, 줄바꿈을 넣으면 안 됩니다.
+
+```python
+csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+redactor.redact_table(csv).text
+# 'name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free'
+redactor.redact_table(tsv, "mask", delimiter="\t", vote=False)
+```
+
+설문·양식 내보내기에서 표 모드는 이름·성이 나뉜 열의 이름을 많이 놓칩니다. `context="header"`를 쓰면 놓침이 약 4분의 1로
+줄고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 재현율이 먼저라면 이 옵션을 쓰세요. 측정값:
+[저장소 README](https://github.com/newmean-ai/pii/blob/main/README.ko.md#표csv-tsv).
 
 ## 오프라인 사용
 

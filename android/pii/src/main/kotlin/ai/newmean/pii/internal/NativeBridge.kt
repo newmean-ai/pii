@@ -24,8 +24,20 @@ internal object NativeBridge {
     /** [hidden, layers, layer_applications, vocab, max_tokens, tags, embedding_kind] */
     @JvmStatic external fun modelInfo(handle: Long): IntArray
 
-    /** [utf16_start, utf16_end, label, source] per span; extra: [utf16_start, utf16_end, label] per pattern span. */
-    @JvmStatic external fun detect(handle: Long, utf8: ByteArray, sensitivity: Double, labels: Int, extra: IntArray?): IntArray
+    /**
+     * [utf16_start, utf16_end, label, source] per span; extra: [utf16_start, utf16_end, label] per pattern span; keepEmoji:
+     * pii_options.keep_emoji.
+     */
+    @JvmStatic external fun detect(handle: Long, utf8: ByteArray, sensitivity: Double, labels: Int, extra: IntArray?, keepEmoji: Boolean): IntArray
+
+    /**
+     * [detect] in table mode (pii_detect_table); delimiter: 0 (auto), ',', '\t', ';' or '|' (markdown); context: 0 (none) or
+     * 1 (header).
+     */
+    @JvmStatic external fun detectTable(
+        handle: Long, utf8: ByteArray, sensitivity: Double, labels: Int, extra: IntArray?, keepEmoji: Boolean, delimiter: Int,
+        header: Boolean, vote: Boolean, context: Int,
+    ): IntArray
 
     /** [id, utf16_start, utf16_end] per token, without <s> and </s>. */
     @JvmStatic external fun tokenize(handle: Long, utf8: ByteArray): IntArray

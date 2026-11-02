@@ -12,12 +12,20 @@
   (g) spans identical to the npm package's WebAssembly engine (node + js/dist; skipped without them)
   (h) offsets: UTF-8, code point and UTF-16 offsets agree with Python on hard texts (emoji, ZWJ, combining marks, RTL,
       CRLF, NUL, lone surrogates, invalid UTF-8, empty and blank input, 10,000+ tokens); spans sorted and inside the text
+  (j) table mode (pii_detect_table): hand-written and 300 generated CSV/TSV/semicolon/markdown tables (names, emails, phones,
+      IDs, Likert answers, free-text comments; quoted fields with delimiters, escaped quotes and line breaks; CRLF; blank
+      records; emoji next to values; header, vote, delimiter and label options varied); spans inside one cell value, no
+      propagation into free-text columns or header rows, vote off and label filter respected, non-tables equal to detect;
+      spans, labels and sources identical to the npm package's detectTable (node + js/dist, js_table.mjs, with its regex
+      spans passed as pii_options.extra; skipped without them). Also without a model: the table steps and grapheme snapping
+      (pii_cli apply vs js_table.mjs apply, detectTableSpans of js/src/table.ts) on made-up spans over the same
+      inputs and over grapheme-heavy texts (ZWJ, flags, tags, keycaps, skin tones, combining marks, Indic conjuncts, jamo)
   (i) fuzz (only with --only fuzz): mutated model and tokenizer files and random bytes under ASan + UBSan if built
 
 Fixtures and model copies are private (validation text) and never copied here: they are read from PII_FIXTURES
 (default ../../js/test/fixtures) and PII_MODELS (default ../../js/test/models); every test skips when they are absent.
 PII_SIZES=nano,medium limits the sizes; PII_CLI / PII_ASAN_CLI override the binaries; PII_JS_DIST points at the built
-npm package (default ../../js/dist), PII_JS=0 skips (g). --only pins,selftest,tokenizer,offsets,predict,js,threads,asan
+npm package (default ../../js/dist), PII_JS=0 skips (g). --only pins,selftest,tokenizer,offsets,predict,js,table,threads,asan
 picks tests (fuzz runs only when named; PII_FUZZ=N sets its size, default 100); --bench also measures speed. A PII_FMA build (make FMA=1) is compared with the relaxed-SIMD wasm build in (g).
 """
 import json
@@ -333,6 +341,453 @@ def test_js():
                 print(f"    {json.dumps(t)[:80]}\n      js {a['spans'][:6]}\n      c  {[[s[3], s[4], s[2]] for s in b['spans']][:6]}")
 
 
+# ---------------------------------------------------------------- (j) table mode
+NAMES = ["Maria Lopez", "James Smith", "김민수", "이서연", "山田太郎", "佐藤花子", "Jean Dupont", "Anna Kowalska", "Ahmed Ali",
+         "Olga Petrova", "Lars Nilsen", "Sofia Rossi", "Nguyen Van An", "Priya Sharma", "José García", "José Martínez",
+         "Emma Müller", "Mehmet Yılmaz", "Chen Wei", "Lucas Silva", "प्रिया शर्मा", "স্ত্রী রায়", "O'Brien, Sean", "محمد علي"]
+COMMENTS = ["The delivery was late and the box was badly damaged in transit",
+            "Great service, the courier was polite and arrived right on time",
+            "I would like a refund for the second order because it never came",
+            "Packaging could be better but the product itself works fine 👍🏽",
+            "Please call me back about the warranty extension next week",
+            "Nothing to add, everything was exactly as described online",
+            "The app crashed twice while I was paying, \"very\" annoying",
+            "Five stars 🇰🇷 I will recommend this shop to all my friends",
+            "Support answered quickly and solved my problem in one call",
+            "Delivery person left it at the wrong door again, second time",
+            "First line of my answer\nand a second line, after a line break",
+            "He said \"\"fine\"\" twice; nobody, however, called me back at all",
+            "👩‍👩‍👧 Our family loved it; the kids use it every single day",
+            "배송이 늦었지만 상품은 아주 좋았습니다. 다음에도 주문할게요",
+            "Prices went up again; I am not sure I will order next month\twait"]
+CITIES = ["Seoul", "Paris", "Warsaw", "Osaka", "Oslo", "Rome", "Austin", "Hanoi", "Mumbai", "São Paulo", "Seoul 🇰🇷", "🗼Tokyo"]
+LIKERT = ["Strongly agree", "Agree", "Neutral", "Disagree", "Strongly disagree", "매우 그렇다", "그렇다", "보통", "Agree 👍", "5", "4", "N/A"]
+EMOJI = ["👩‍👩‍👧", "🇰🇷", "👍🏽", "1️⃣", "😀", "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "é"]
+PLACEHOLDERS = ["N/A", "n/a", "-", "--", "—", "", "없음", "NULL", "none", " "]
+
+
+def gen_value(rng, kind, i, name, user):
+    if kind == "id":
+        return str(i + 1)
+    if kind == "cust":
+        return rng.choice([f"C-{rng.randint(10000, 99999)}", f"A{rng.randint(100000, 999999)}", f"ORD-2026-{rng.randint(1, 9999):04d}"])
+    if kind == "name":
+        v = name
+        if rng.random() < 0.12:
+            v = rng.choice([f"{v} {rng.choice(EMOJI)}", f"{rng.choice(EMOJI)}{v}", f"{v}{rng.choice(EMOJI)}"])
+        return v
+    if kind == "email":
+        v = f"{user}@{rng.choice(['example.com', 'mail.example.org', 'example.co.kr'])}"
+        if rng.random() < 0.08:
+            v = v.replace("@", "＠")
+        if rng.random() < 0.1:
+            v = f"{v} {rng.choice(EMOJI)}"
+        return v
+    if kind == "phone":
+        a, b = rng.randint(1000, 9999), rng.randint(1000, 9999)
+        return rng.choice([f"010-{a}-{b}", f"+82 10 {a} {b}", f"({a % 900 + 100}) {a % 1000:03d}-{b}", f"+33 6 {a // 100} {a % 100:02d} {b // 100} {b % 100:02d}",
+                           f"07700 {b}{a % 100:02d}", f"٠٥٠{a}{b}"[:10]])
+    if kind == "city":
+        return rng.choice(CITIES)
+    if kind == "comment":
+        return rng.choice(COMMENTS)
+    if kind == "user":
+        return user
+    if kind == "likert":
+        return rng.choice(LIKERT)
+    return str(rng.randint(1, 5))  # score
+
+
+def gen_table(rng, k):
+    """A generated table: (text, options, cells, kinds, exact). cells: [row, col, cp_start, cp_end] value ranges (header row 0),
+    kinds: column kinds; exact: False when the options give a delimiter other than the one written (cells then unknown)."""
+    kinds = rng.sample(["id", "cust"], rng.randint(1, 2)) + ["name"] + rng.sample(["email", "phone", "city", "comment", "user", "likert", "likert", "score"], rng.randint(2, 6))
+    rng.shuffle(kinds)
+    kinds = [kd if kinds.count(kd) == 1 or kinds.index(kd) == j else kd + "2" for j, kd in enumerate(kinds)]
+    delim = [",", "\t", ";", "markdown"][k % 4]
+    header = rng.random() > 0.2
+    crlf = rng.random() < 0.25
+    nrows = rng.randint(3, 16) if rng.random() < 0.9 else rng.randint(20, 30)
+    rows = [kinds[:]] if header else []
+    for i in range(nrows):
+        name = rng.choice(NAMES)
+        user = "".join(ch for ch in name.split()[0].lower() if ch.isascii() and ch.isalnum()) or "user"
+        user += str(rng.randint(1, 99))
+        row = [gen_value(rng, kd.rstrip("2"), i, name, user) for kd in kinds]
+        for c, kd in enumerate(kinds):
+            if kd in ("name", "email", "phone") and rng.random() < 0.08:
+                row[c] = rng.choice(PLACEHOLDERS)
+            if kd == "email" and rng.random() < 0.04:
+                row[c] = user + " at example.com"  # no '@': never propagated as EMAIL
+            if kd == "phone" and rng.random() < 0.04:
+                row[c] = f"{rng.randint(10000, 99999)}"  # 5 digits: never propagated as PHONE
+        if delim == "markdown":
+            row = [v.replace("\n", " ").replace("\t", " ").replace("|", "/").strip() for v in row]
+        rows.append(row)
+    text, cells, cp = "", [], 0
+    nl = "\r\n" if crlf else "\n"
+
+    def add(piece):
+        nonlocal text, cp
+        text += piece
+        cp += len(piece)
+
+    explicit = k % 3 == 0
+    if delim == "markdown" and explicit and rng.random() < 0.5:  # auto-detection needs a first line starting with '|'
+        add("Survey results\n\n")
+    elif delim != "markdown" and rng.random() < 0.1:
+        add(rng.choice([nl, "  " + nl, '""' + nl]))  # blank records before the header
+    no_last_pipe = delim == "markdown" and rng.random() < 0.25
+    for r, row in enumerate(rows):
+        if delim == "markdown":
+            add("|")
+            for c, v in enumerate(row):
+                add(" ")
+                cells.append([r, c, cp, cp + len(v)])
+                add(v + (" |" if c < len(row) - 1 or not no_last_pipe else ""))
+            add(nl)
+            if r == 0:
+                add("|" + "|".join(rng.choice(["---", ":--", "--:", ":-:", "-"]) for _ in row) + "|" + nl)
+            if rng.random() < 0.05:
+                add(nl)  # a blank line: not a table line
+            continue
+        for c, v in enumerate(row):
+            if c:
+                add(delim)
+            quote = any(ch in v for ch in (delim, '"', "\n", "\r")) or rng.random() < 0.15
+            if quote:
+                add('"')
+                q = v.replace('"', '""').replace("\n", nl)
+                cells.append([r, c, cp, cp + len(q)])
+                add(q + '"')
+            else:
+                if v and rng.random() < 0.05:
+                    v = rng.choice([" ", "  ", " "]) + v + rng.choice(["", " "])
+                cells.append([r, c, cp, cp + len(v)])
+                add(v)
+        if r < len(rows) - 1 or rng.random() < 0.85:  # sometimes no newline at the end
+            add(nl)
+        if rng.random() < 0.06:
+            add(rng.choice([nl, "   " + nl, '""' + nl]))  # blank records: empty, whitespace only, a lone ""
+    opts = {"delimiter": delim if explicit else "auto", "header": header}
+    exact = True
+    if k % 17 == 8:  # a wrong explicit delimiter
+        opts["delimiter"] = {",": ";", "\t": ",", ";": "\t", "markdown": ","}[delim]
+        exact = False
+    if rng.random() < 0.2:
+        opts["vote"] = False
+    if rng.random() < 0.1:
+        opts["labels"] = rng.choice([["EMAIL", "PHONE", "ADDRESS"], ["PERSON_L2", "EMAIL"], ["PERSON", "USERNAME"], ["PHONE"]])
+    return text, opts, cells, kinds, exact
+
+
+N_GEN = 300
+
+# texts full of multi-code-point grapheme clusters (snapping parity, model-free)
+GRAPHEME_TEXTS = [
+    "👩‍👩‍👧 Contact Maria Lopez 🇰🇷🇺🇸 at maria@example.com, 👍🏽 1️⃣ #️⃣ José García 🏴󠁧󠁢󠁥󠁮󠁧󠁿",
+    "क्षत्रिय प्रिया शर्मा, स्त्री, অক্ষয় স্ত্রী রায়, ক্ষ্ম, ଶ୍ରୀ, ജ്ഞാനം, ગ્રાહક, తెలుగు",
+    "각너 김민수 이 한 이서연\r\n둘째 줄 010-1234-5678",
+    "José García é́́ ạ̈ ño ﬁ ç̧ Zoë Ångström",
+    "🇰🇷🇺🇸🇯 odd 🇫🇷🇩🇪🇮🇹 flags, 👨🏽‍💻 👩🏻‍❤️‍💋‍👨🏿 🧑‍🤝‍🧑 ❤️ ☺️ 9️⃣ *️⃣",
+    "ภาษาไทย สมชาย ใจดี, Tiếng Việt Nguyễn Văn An, العربية محمد علي, עברית דוד כהן",
+    "a\r\nb\rc\n\r\n‍‍ x‍y ̀ start with a mark, ﻿BOM, ⁠ word joiner",
+]
+
+
+def table_inputs(n_gen=N_GEN):
+    """(row dict for pii_cli table / js_table.mjs, generated table info or None, True when the text is not a table); the
+    first n_gen generated tables (the same ones for any n_gen)."""
+    import random
+    rng = random.Random(20261101)
+    rows = []
+    hand = [
+        ({"text": "name,email,phone\nMaria Lopez,maria@example.com,010-1234-5678\nKim Minsu,kim@example.com,010-2222-3333\n"}),
+        ({"text": "name\temail\nMaria Lopez\tmaria@example.com\r\n\r\nKim Minsu\tkim@example.com\r\n"}),
+        ({"text": "name;city\nMaria Lopez;Seoul\nKim Minsu;Paris\n"}),
+        ({"text": "| Name | Email |\n|---|:--:|\n| Maria Lopez | maria@example.com |\n| Kim Minsu |  |\n"}),
+        ({"text": "Hello, my name is Maria Lopez.\nI live in Seoul; call me at 010-1234-5678.\n", "plain": True}),
+        ({"text": 'name,note\n"Lopez, Maria","said ""call me"" at 010-1234-5678"\n"Kim\nMinsu",x\n'}),
+        ({"text": 'name,note\n"Lopez, Maria",unclosed "quote\n"Kim Minsu,still open'}),
+        ({"text": "name,email\nMaria Lopez,maria@example.com\nKim Minsu,kim@example.com\n", "header": False}),
+        ({"text": "name,email\nMaria Lopez,maria@example.com\nKim Minsu,kim@example.com\n", "vote": False}),
+        ({"text": "name,email\nMaria Lopez,maria@example.com\nKim Minsu,kim@example.com\n", "delimiter": "\t"}),
+        ({"text": "name,email\nMaria Lopez,maria@example.com\nKim Minsu,kim@example.com\n", "labels": ["EMAIL"]}),
+        ({"text": "👩‍👩‍👧 Contact Maria Lopez 🇰🇷🇺🇸 at maria@example.com, 👍🏽 1️⃣ José García"}),
+        ({"text": "name,emoji\nMaria Lopez 👩‍👩‍👧,🇰🇷\nJosé García,👍🏽 1️⃣\n"}),
+        ({"text": "★ Maria Lopez ★ ☆ call 0️⃣1️⃣0️⃣ 1️⃣2️⃣3️⃣4️⃣ 5️⃣6️⃣7️⃣8️⃣, Nadine8️⃣ 🔟 Ⓜ️ 🅰️"}),
+        ({"text": "Maria 😀\u0301 Lopez \u0600😀Kim 😀"}),
+        ({"text": '\n  \n""\nname,email\r\n"Maria ""Mia"" Lopez" ,maria@example.com\r\nKim Minsu,kim@example.com\rx\r\n'}),
+        ({"text": "| Name | Phone\n| --- | ---\n| Maria Lopez | 010-1234-5678\n|\n| Kim Minsu | 010-2222-3333 |\n"}),
+    ]
+    names = ["Maria Lopez", "Kim Minsu", "Jean Dupont", "Anna Kowalska", "Ahmed Ali", "Sofia Rossi", "Lars Nilsen", "N/A", "Priya Sharma", "Chen Wei"]
+    lines = ["id,name,email,phone,comment"] + [
+        f"{i + 1},{n},{n.split()[0].lower()}{i}@example.com,010-{1000 + i}-{2000 + i},\"{COMMENTS[i]}\"" for i, n in enumerate(names)]
+    hand.append({"text": "\n".join(lines) + "\n"})
+    hand.append({"text": "| id | name | phone |\n|---|---|---|\n" + "".join(f"| {i} | {n} | 010-{3000 + i}-{4000 + i} |\n" for i, n in enumerate(names))})
+    likert = ["respondent;q1;q2;email"] + [f"{n};{LIKERT[i % 5]};{LIKERT[(i * 3) % 5]};{n.split()[0].lower()}@example.com" for i, n in enumerate(names)]
+    hand.append({"text": "\r\n".join(likert) + "\r\n"})
+    for t in GRAPHEME_TEXTS:
+        hand.append({"text": t})
+    for h in hand:
+        plain = h.pop("plain", False) or ("\n" not in h["text"] and set(h) == {"text"})  # one line: never 2 rows
+        rows.append((h, None, plain))
+    for k in range(n_gen):
+        text, opts, cells, kinds, exact = gen_table(rng, k)
+        rows.append(({"text": text, **opts}, (cells, kinds, opts) if exact else None, False))
+    # header context (pii_detect_table only; the model-free apply steps ignore the field): the hand-made inputs and the first
+    # 40 generated tables again, with no exact-cell check (the added spans are the model's)
+    rows += [(dict(r, context="header"), None, plain) for r, _g, plain in rows[:len(hand) + 40]]
+    for t, raw in offset_texts()[:22]:  # one-line texts are not tables: detect's spans (grapheme snapping); no lone surrogates
+        if raw is None and not any(0xD800 <= ord(ch) <= 0xDFFF for ch in t):
+            rows.append(({"text": t}, None, "\n" not in t))
+    return rows
+
+
+FAMILY_LABELS = ["PERSON", "PERSON_L2", "EMAIL", "PHONE", "USERNAME"]
+OTHER_LABELS = ["ADDRESS", "ORG", "ID_NUMBER", "URL", "DATE_OF_BIRTH", "SECRET"]
+
+
+def synth_spans(rng, text, cells):
+    """Whole-text spans as detect gives them before snapping (sorted, non-overlapping, code points), made up so that the table
+    steps meet their edge cases: columns covered by one family at rates around the 80% bars, cells partly covered, split
+    between families or crossing delimiters, and short random spans with boundaries inside grapheme clusters."""
+    n = len(text)
+    if not n:
+        return []
+    cand = []
+    src = lambda: rng.choice([1, 1, 1, 2, 3])
+    cols = sorted({c[1] for c in cells})
+    plan = {c: (rng.choice(FAMILY_LABELS + FAMILY_LABELS + OTHER_LABELS), rng.choice([1.0, 1.0, 0.9, 0.8, 0.75, 0.5])) for c in cols if rng.random() < 0.6}
+    for _r, c, s, e in cells:
+        if c not in plan or e <= s or rng.random() > plan[c][1]:
+            continue
+        lab = plan[c][0]
+        m = rng.random()
+        if m < 0.12:
+            s += rng.randint(1, 3)
+        elif m < 0.24:
+            e -= rng.randint(1, 3)
+        elif m < 0.32:
+            s -= rng.randint(1, 4)
+            e += rng.randint(1, 4)
+        elif m < 0.42 and e - s >= 2:
+            mid = rng.randint(s + 1, e - 1)
+            cand.append([s, mid, lab, src()])
+            s, lab = mid, rng.choice(FAMILY_LABELS + OTHER_LABELS)
+        cand.append([s, e, lab, src()])
+    for _ in range(rng.randint(0, 8)):
+        a = rng.randrange(n)
+        cand.append([a, a + rng.randint(1, 4 if rng.random() < 0.7 else 40), rng.choice(FAMILY_LABELS + OTHER_LABELS), src()])
+    out, end = [], 0
+    for s, e, lab, so in sorted(([max(0, s), min(n, e), lab, so] for s, e, lab, so in cand), key=lambda x: x[0]):
+        if s < e and s >= end:
+            out.append([s, e, lab, so])
+            end = e
+    return out
+
+
+def apply_inputs():
+    """Rows for the model-free parity of the table steps (pii_cli apply vs detectTableSpans): every table input with
+    3 sets of made-up spans, plus dense short spans over the grapheme texts (snapping merges, chains of 3 or more)."""
+    import random
+    rng = random.Random(1101)
+    rows = []
+    for r, gen, _plain in table_inputs():
+        cells = gen[0] if gen else []
+        for v in range(3):
+            row = dict(r, spans=synth_spans(rng, r["text"], cells))
+            if v == 2:
+                row["vote"] = not r.get("vote", True)
+            rows.append(row)
+    for t in GRAPHEME_TEXTS + [t for t, raw in offset_texts()[5:20] if raw is None and not any(0xD800 <= ord(ch) <= 0xDFFF for ch in t)]:
+        for _ in range(12):
+            spans, pos = [], rng.randint(0, 3)
+            while pos < len(t):
+                e = pos + rng.randint(1, 4)
+                spans.append([pos, min(e, len(t)), rng.choice(FAMILY_LABELS + OTHER_LABELS), rng.choice([1, 2, 3])])
+                pos = e + rng.choice([0, 0, 0, 1, 2, 5])
+            rows.append({"text": t, "spans": spans})
+    rows += edge_inputs(rng)
+    return rows
+
+
+EDGE_LEAD = ["\u0301", "\u200d", "\ufe0f", "\U0001f3fd", "\u093e", "\u0301\u0301"]  # Extend, ZWJ, VS16, skin tone, SpacingMark
+EDGE_TRAIL = ["\u0600", "\u06dd", "\u070f", "\u0890", "\u08e2"]  # Prepend
+
+
+def edge_inputs(rng, n=60):
+    """Tables whose cell values start with a grapheme extender or end with a Prepend character next to ',', ';', '|' or a
+    quote (one cluster across the cell boundary), with spans over whole cells, parts of cells and empty spans; marked "edge"
+    so test_table_apply can check that no span covers a delimiter, quote or line break (no value holds one here)."""
+    rows = []
+    for k in range(n):
+        d = [",", ";", "\t", "markdown"][k % 4]
+        sep = "|" if d == "markdown" else d
+        quote = d != "markdown" and k % 3 == 0
+        vals = []
+        for _r in range(7):
+            row = []
+            for _c in range(3):
+                v = rng.choice(["Ann Lee", "Bo", "Kim", "x", "Zoë", "010-1234-5678", "a@b.co"])
+                if rng.random() < 0.5:
+                    v = rng.choice(EDGE_LEAD) + v
+                if rng.random() < 0.5:
+                    v += rng.choice(EDGE_TRAIL)
+                row.append(f'"{v}"' if quote and rng.random() < 0.6 else v)
+            vals.append(row)
+        if d == "markdown":
+            lines = ["|" + "|".join(vals[0]) + "|", "|---|---|---|"] + ["|" + "|".join(r) + "|" for r in vals[1:]]
+        else:
+            lines = [sep.join(r) for r in vals]
+        text = "\n".join(lines) + "\n"
+        spans, pos, n_cp = [], 0, len(text)
+        while pos < n_cp:
+            if text[pos] in ',;\t|"\n':
+                pos += 1
+                continue
+            e = pos
+            while e < n_cp and text[e] not in ',;\t|"\n':
+                e += 1
+            m = rng.random()
+            if m < 0.6:
+                spans.append([pos, e, rng.choice(["PERSON", "PERSON", "EMAIL", "ORG"]), rng.choice([1, 2, 3])])
+            elif m < 0.7:
+                spans.append([pos, pos, "PERSON", 2])
+            elif m < 0.85 and e - pos >= 2:
+                spans.append([pos + 1, e, "PERSON", 1])
+            pos = e + 1
+        rows.append({"text": text, "spans": spans, "delimiter": d, "vote": k % 5 != 4, "edge": True})
+    return rows
+
+
+def test_table_apply(cli, label="table steps"):
+    """Model-free parity: the table steps (parse, clip, vote, merge, snapping) of C and JS on the same made-up spans."""
+    print(f"[{label}] table steps and grapheme snapping without a model: pii_cli apply vs the npm package's detectTableSpans")
+    node, ts = shutil.which("node"), REPO / "js" / "src" / "table.ts"
+    if os.environ.get("PII_JS") == "0" or not node or not ts.exists():
+        return skip("node or js/src/table.ts absent")
+    rows = apply_inputs()
+    payload = "".join(json.dumps(r) + "\n" for r in rows).encode()
+    p = subprocess.run([str(cli), "apply"], input=payload, capture_output=True)
+    q = subprocess.run([node, str(HERE / "js_table.mjs"), "apply", str(ts)], input=payload, capture_output=True)
+    if p.returncode or q.returncode:
+        return check(False, f"apply failed: {p.stderr.decode()[-500:]} {q.stderr.decode()[-500:]}")
+    c = [json.loads(l)["spans"] for l in p.stdout.decode().splitlines()]
+    j = [json.loads(l)["spans"] for l in q.stdout.decode().splitlines()]
+    same = sum(1 for a, b in zip(c, j) if a == b)
+    n_table = sum(1 for s in c for x in s if x[3] == 4)
+    summary.append((label, f"{same}/{len(rows)} identical ({n_table} propagated spans)"))
+    check(same == len(rows) == len(c) == len(j), f"{same}/{len(rows)} inputs identical, spans, labels and sources ({n_table} propagated spans)")
+    check(n_table > 0, f"column vote fired on made-up spans ({n_table} propagated spans)")
+    crossing = sum(1 for r, a in zip(rows, c) if r.get("edge") and any(ch in ',;\t|"\n' for s, e, _l, _s in a for ch in r["text"][s:e]))
+    check(crossing == 0, f"snapping stays inside cells: no span covers a delimiter, quote or line break "
+          f"({sum(1 for r in rows if r.get('edge'))} tables of cells starting with an extender or ending with a Prepend; {crossing} crossing)")
+    shown = 0
+    for r, a, b in zip(rows, c, j):
+        if a != b and shown < 3:
+            shown += 1
+            diff = [x for x in a if x not in b][:4], [x for x in b if x not in a][:4]
+            print(f"    {json.dumps({k: v for k, v in r.items() if k != 'spans'})[:120]}\n      c only {diff[0]}\n      js only {diff[1]}")
+
+
+def js_table(size, variant, rows, fma):
+    node = shutil.which("node")
+    if os.environ.get("PII_JS") == "0" or not node or not (JS_DIST / "index.js").exists():
+        return None, "node or js/dist absent (cd js && npm run build)"
+    payload = "".join(json.dumps(r) + "\n" for r in rows)
+    p = subprocess.run([node, str(HERE / "js_table.mjs"), str(JS_DIST), str(MODELS / f"pii-{size}"), size, variant, "0", "1" if fma else "0"],
+                       input=payload.encode(), capture_output=True)
+    if p.returncode:
+        return None, f"node failed: {p.stderr.decode()[-600:]}"
+    return [json.loads(l) for l in p.stdout.decode().splitlines()], None
+
+
+def test_table(cli, sizes=(("nano", "q4"), ("medium", "q4e")), label="table", js=True, n_gen=N_GEN):
+    """Table mode: structure (spans inside one cell value, free-text columns never propagated, vote off and the label
+    filter respected, non-tables equal to detect) and span-for-span parity with the npm package's detectTable."""
+    print(f"[{label}] table mode and grapheme snapping")
+    inputs = table_inputs(n_gen)
+    n_gen = sum(1 for _, g, _ in inputs if g)  # generated tables with known cells (not the wrong-delimiter ones)
+    fma = cli_is_fma(CLI)
+    for size, variant in sizes:
+        if SIZES and size not in SIZES:
+            continue
+        onnx, tok = model_paths(size, variant)
+        if not onnx.exists() or not tok.exists():
+            skip(f"{size} {variant}: model absent")
+            continue
+        rows = [r for r, _, _ in inputs]
+        t0 = time.time()
+        jsr, why = js_table(size, variant, rows, fma) if js else (None, "not run here")
+        js_ms = (time.time() - t0) * 1e3
+        if jsr is None:
+            skip(f"{size} {variant}: parity with detectTable: {why}")
+        crows = [dict(r, extra=j["extra"]) if jsr else r for r, j in zip(rows, jsr or rows)]
+        payload = "".join(json.dumps(r) + "\n" for r in crows)
+        t0 = time.time()
+        out = {}
+        for cmd in ("table", "detect"):
+            p = subprocess.run([str(cli), cmd, onnx, tok], input=payload.encode(), capture_output=True)
+            if p.returncode:
+                check(False, f"{size} {variant}: pii_cli {cmd} failed: {p.stderr.decode()[-500:]}")
+                break
+            out[cmd] = [json.loads(l) for l in p.stdout.decode().splitlines()]
+        else:
+            ms = (time.time() - t0) * 1e3
+            tab, det = out["table"], out["detect"]
+            bad_units = bad_cell = bad_free = bad_vote = bad_labels = bad_plain = 0
+            n_table = n_tables_voted = 0
+            for (r, gen, _), g, d in zip(inputs, tab, det):
+                t = r["text"]
+                u16, u8 = units(t)
+                prev = 0
+                for cs, ce, _, a, b, x, y, _src in g["spans"]:
+                    bad_units += not (prev <= cs < ce <= len(t) and [a, b, x, y] == [u16[cs], u16[ce], u8[cs], u8[ce]])
+                    prev = ce
+                if "labels" in r:
+                    bad_labels += any(s[2] not in r["labels"] for s in g["spans"])
+                if r.get("vote") is False:
+                    bad_vote += any(s[7] == 4 for s in g["spans"])
+                if gen is None:
+                    continue
+                cells, kinds, _ = gen
+                first = 1 if r.get("header", True) else 0
+                voted = False
+                for cs, ce, lab, *_rest in g["spans"]:
+                    src = _rest[-1]
+                    cell = next((c for c in cells if c[2] <= cs and ce <= c[3]), None)
+                    bad_cell += cell is None
+                    if cell and src == 4:
+                        n_table += 1
+                        voted = True
+                        bad_free += kinds[cell[1]] == "comment" or cell[0] < first
+                n_tables_voted += voted
+            # inputs that are not tables give detect's spans (the same row through pii_cli detect, sources dropped)
+            n_plain = 0
+            for (r, _, plain), g, d in zip(inputs, tab, det):
+                if plain:
+                    n_plain += 1
+                    bad_plain += [s[:7] for s in g["spans"]] != d["spans"]
+            check(len(tab) == len(det) == len(inputs) and not bad_units, f"{size} {variant}: {len(inputs)} inputs answered, offsets consistent "
+                  f"(C {ms:.0f} ms for table + detect" + (f", node {js_ms:.0f} ms)" if jsr else ")"))
+            check(bad_cell == 0, f"{size} {variant}: every span of the {n_gen} generated tables inside one cell value ({bad_cell} outside)")
+            check(bad_free == 0, f"{size} {variant}: no propagation into free-text columns or the header row ({bad_free})")
+            check(bad_vote == 0 and bad_labels == 0, f"{size} {variant}: vote off and the label filter respected ({bad_vote}, {bad_labels})")
+            check(bad_plain == 0, f"{size} {variant}: {n_plain - bad_plain}/{n_plain} texts that are not tables give the spans of detect")
+            check(n_tables_voted > 0, f"{size} {variant}: column vote fired in {n_tables_voted} of {n_gen} generated tables ({n_table} cells)")
+            if jsr is not None:
+                same = sum(1 for a, b in zip(jsr, tab) if a["spans"] == [[s[3], s[4], s[2], s[7]] for s in b["spans"]])
+                summary.append((f"table {size} {variant}", f"{same}/{len(rows)} identical to the npm package's detectTable"))
+                check(same == len(rows) == len(jsr), f"{size} {variant}: {same}/{len(rows)} inputs identical to the npm package's detectTable "
+                      "(spans, labels, sources)")
+                shown = 0
+                for r, a, b in zip(rows, jsr, tab):
+                    if a["spans"] != [[s[3], s[4], s[2], s[7]] for s in b["spans"]] and shown < 3:
+                        shown += 1
+                        print(f"    {json.dumps(r)[:100]}\n      js {a['spans'][:6]}\n      c  {[[s[3], s[4], s[2], s[7]] for s in b['spans']][:6]}")
+
+
 def test_selftest(cli, label="selftest"):
     print(f"[{label}] API checks")
     m = first_model()
@@ -394,6 +849,9 @@ def main():
         test_predict(CLI)
     if want("js"):
         test_js()
+    if want("table"):
+        test_table_apply(CLI)
+        test_table(CLI)
     if want("threads"):
         test_threads(CLI)
     if want("asan"):
@@ -404,6 +862,8 @@ def main():
             test_offsets(ASAN_CLI)
             saved, SIZES = SIZES, ["nano"]
             test_predict(ASAN_CLI, limit=60, label="asan+ubsan predict (nano, 60 rows)")
+            test_table_apply(ASAN_CLI, label="asan+ubsan table steps")
+            test_table(ASAN_CLI, sizes=(("nano", "q4"),), label="asan+ubsan table (nano, 40 generated tables)", js=False, n_gen=40)
             test_threads(ASAN_CLI, n_threads=3, limit=40, label="asan+ubsan threads (nano)")
             SIZES = saved
         else:

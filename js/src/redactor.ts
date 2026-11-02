@@ -2,6 +2,8 @@ import { bestTags, decodeSpans, makeWindows } from "./decode.js";
 import { loadFile, type Progress } from "./loader.js";
 import { MODEL_FILES, MODEL_VERSION, type Size, type Variant } from "./models.js";
 import { regexSpans } from "./regex.js";
+import { detectTableSpans, headerContextCells, parseTable, snapGraphemes, type TableOptions } from "./table.js";
+import { restoreSpans, stripEmoji } from "./emoji.js";
 import { Tokenizer, type WebTokenizerFile } from "./tokenizer.js";
 import type { Label, Span } from "./types.js";
 import type { Engine, EngineName } from "./engines/engine.js";
@@ -41,6 +43,9 @@ export interface RedactorOptions {
   /** Also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default false: on the
    *  public test of newmean-pii-dataset they add almost no coverage and double over-masking (dates and timestamps match the account pattern). */
   regex?: boolean;
+  /** false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of the input
+   *  (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour). */
+  keepEmoji?: boolean;
   /** Keep downloaded model files in the Cache API. Default true. */
   cache?: boolean;
   /** Check every model file against its published SHA-256. Default true. */
@@ -76,9 +81,19 @@ export interface Redactor {
   readonly size: Size;
   readonly variant: Variant;
   readonly version: string;
-  /** Spans to mask, sorted and non-overlapping. */
+  /** Spans to mask, sorted and non-overlapping, widened to whole grapheme clusters (an emoji sequence is masked whole).
+   *  The widening needs Intl.Segmenter; where it is missing (Hermes builds without it, older browsers) spans stay on
+   *  code point boundaries and may cover part of an emoji or combining sequence. */
   detect(text: string): Promise<Span[]>;
   redact(text: string, options?: RedactOptions): Promise<{ text: string; spans: Span[] }>;
+  /** Table mode for CSV, TSV, semicolon-separated and markdown pipe tables: the whole text is read at once (cells give each
+   *  other context), spans are clipped to cell values, and a short-value column that the model reads as names, emails,
+   *  phone numbers or usernames almost throughout is masked whole (source "table"). Grapheme widening stops at the cell
+   *  value's edges. Text that is not a table gives the same spans as `detect`. */
+  detectTable(text: string, table?: TableOptions): Promise<Span[]>;
+  /** `detectTable` + redaction. Spans never cross cells, so delimiters, quotes and line breaks are kept and the output stays
+   *  a valid table, as long as a custom `replace` does not insert the delimiter, a quote or a line break. */
+  redactTable(text: string, table?: TableOptions, options?: RedactOptions): Promise<{ text: string; spans: Span[] }>;
   /** Changes the threshold without reloading the model. */
   setSensitivity(value: number): void;
   readonly lastRun: RunStats | null;
@@ -111,9 +126,15 @@ export function combine(model: Span[], regex: Span[], enabled: Set<string>): Spa
     if (!use.length) continue;
     const hasModel = use.some((s) => s.source === "model");
     const hasRegex = use.some((s) => s.source === "regex");
+    let lo = use[0].start; // loops, not Math.min(...spread): a group can hold more spans than the argument limit
+    let hi = use[0].end;
+    for (const s of use) {
+      if (s.start < lo) lo = s.start;
+      if (s.end > hi) hi = s.end;
+    }
     out.push({
-      start: Math.min(...use.map((s) => s.start)),
-      end: Math.max(...use.map((s) => s.end)),
+      start: lo,
+      end: hi,
       label: use[0].label,
       source: hasModel && hasRegex ? "model+regex" : hasModel ? "model" : "regex",
     });
@@ -168,6 +189,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   let oBias = -(options.sensitivity ?? 0);
   const enabled = new Set<string>(options.labels ?? LABELS);
   const useRegex = options.regex ?? false;
+  const keepEmoji = options.keepEmoji ?? false;
   let queue: Promise<unknown> = Promise.resolve(); // one model call at a time
   let lastRun: RunStats | null = null;
 
@@ -186,11 +208,42 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
     return spans;
   }
 
-  async function detect(text: string): Promise<Span[]> {
-    const run = queue.then(() => modelSpans(text));
+  async function modelSpansNoEmoji(text: string): Promise<Span[]> {
+    const stripped = keepEmoji ? null : stripEmoji(text);
+    return stripped ? restoreSpans(text, await modelSpans(stripped.text), stripped.keep) : modelSpans(text);
+  }
+
+  /** Sorted, non-overlapping spans before grapheme snapping. */
+  async function detectRaw(text: string): Promise<Span[]> {
+    const run = queue.then(() => modelSpansNoEmoji(text));
     queue = run.catch(() => undefined);
     const model = await run;
     return combine(model, useRegex ? regexSpans(text) : [], enabled);
+  }
+
+  async function detect(text: string): Promise<Span[]> {
+    return snapGraphemes(text, await detectRaw(text));
+  }
+
+  async function detectTable(text: string, table: TableOptions = {}): Promise<Span[]> {
+    const context = table.context ?? "none";
+    if (context !== "none" && context !== "header") throw new Error(`[@newmean-ai/pii] unknown table context ${JSON.stringify(context)} ("none", "header")`);
+    const raw = await detectRaw(text);
+    const extra: Span[] = [];
+    const t = context === "header" && (table.header ?? true) ? parseTable(text, table.delimiter ?? "auto") : null;
+    if (t) {
+      for (const { cell, text: sub, offset } of headerContextCells(text, t)) {
+        const run = queue.then(() => modelSpansNoEmoji(sub));
+        queue = run.catch(() => undefined);
+        for (const s of combine(await run, [], enabled)) {
+          if (s.end <= offset) continue;
+          const start = cell.start + Math.max(s.start - offset, 0);
+          const end = Math.min(cell.start + s.end - offset, cell.end);
+          if (start < end) extra.push({ ...s, start, end });
+        }
+      }
+    }
+    return detectTableSpans(text, raw, table, enabled, extra);
   }
 
   return {
@@ -201,6 +254,11 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
     detect,
     async redact(text, opts) {
       const spans = await detect(text);
+      return { text: applyRedaction(text, spans, opts), spans };
+    },
+    detectTable,
+    async redactTable(text, table, opts) {
+      const spans = await detectTable(text, table);
       return { text: applyRedaction(text, spans, opts), spans };
     },
     setSensitivity(value: number) {

@@ -13,7 +13,7 @@ Swift Package Manager: in Xcode, File › Add Package Dependencies… › `https
 `NewmeanPII`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.0.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.2.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -42,7 +42,7 @@ Plus a 0.8 MB tokenizer (shared by all sizes). Default weight file: `q4e` for la
 as in the npm package. Every file is checked against the size and SHA-256 pinned in the package before it is used.
 
 **Bundled in the app (recommended).** Download the two files of one size from Hugging Face
-(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/`): `tokenizer.web.json` and `onnx/model_<variant>.onnx`.
+(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/`): `tokenizer.web.json` and `onnx/model_<variant>.onnx`.
 Add them to the app target (a folder reference keeps the `onnx/` folder; plain files land next to each other, which also
 works) and pass the folder:
 
@@ -51,7 +51,7 @@ let redactor = try await PIIRedactor(size: .medium, modelDirectory: Bundle.main.
 ```
 
 **Downloaded once.** Without `modelDirectory`, the files are downloaded from Hugging Face on first use into
-`Caches/newmean-pii/v1.0.0/pii-<size>/` and checked again on every load. The system may clear Caches; files are then
+`Caches/newmean-pii/v1.1.0/pii-<size>/` and checked again on every load. The system may clear Caches; files are then
 downloaded again. To prefetch, use another folder, or serve the files yourself:
 
 ```swift
@@ -80,11 +80,14 @@ try await PIIRedactor(
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                     // default false (model only): almost no extra coverage, double the over-masking
+  keepEmoji: Bool = false,          // true: the model also reads emoji (1.1 behaviour); default: never read or masked
   modelDirectory: URL? = nil)       // folder with the model files; nil: download once into Caches
 
 try await redactor.detect(text)                  // [PIISpan], sorted, non-overlapping
 try await redactor.redact(text, mode: .tag)      // (text, spans); .tag → [EMAIL], .mask → *****, .mask(with: "•"),
                                                  // .blank → removed, .custom { span, original in ... }
+try await redactor.detectTable(text)             // table mode (see Tables)
+try await redactor.redactTable(text, mode: .tag) // (text, spans)
 redactor.sensitivity = 0.3                       // changes the threshold without reloading
 PIIRedactor.applyRedaction(to: text, spans: spans, mode: .tag)
 PIIRegex.spans(in: text)                         // the pattern layer on its own
@@ -92,9 +95,11 @@ PIIRegex.spans(in: text)                         // the pattern layer on its own
 
 `PIISpan` has `range` (`Range<String.Index>` in the text it was detected in), `utf16Range` (NSString / NSRange offsets,
 the npm package's `start` and `end`), `scalarRange` (Unicode scalars, Python's offsets), `label` and `source`
-(`.model`, `.regex`, `.modelAndRegex`). Spans fall on Unicode scalar boundaries, which need not be Character boundaries
-(an emoji ZWJ sequence is one Character of several scalars): slice with `text.unicodeScalars[span.range]` or `utf16Range`, not `text[span.range]`, which Swift rounds
-to Character boundaries. `.mask` writes one mask character per Unicode scalar, like the npm package.
+(`.model`, `.regex`, `.modelAndRegex`, `.table`). Spans are widened to whole grapheme clusters (UAX #29, as the C core
+implements it), so an emoji, flag or combining sequence is masked whole or kept whole. Slice with
+`text.unicodeScalars[span.range]` or `utf16Range`, as `redact` does. `.mask` writes one mask character per Unicode scalar,
+like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets still refer
+to the input; an emoji inside a span splits it); `keepEmoji: true` gives the model the text as given (1.1 behaviour).
 
 **Threads.** `PIIRedactor` is `Sendable` and needs no locking: any number of tasks may call `detect` on one instance at
 once. The async methods run the model on a detached task, never on the caller's actor, so calling them from the main
@@ -106,6 +111,40 @@ slower).
 **Debug builds are slow.** Xcode compiles package C code without optimization in the Debug configuration, which makes
 the model about 18 times slower (about 350 ms instead of 19 ms for a short text with medium on Apple M5 Pro). Measure
 speed in a Release build; Release compiles the core at `-Os`, as fast as `-O3`.
+
+## Tables
+
+```swift
+try await redactor.detectTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true,
+                               vote: Bool = true, context: PIITableContext = .none) -> [PIISpan]
+try await redactor.redactTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true,
+                               vote: Bool = true, context: PIITableContext = .none,
+                               mode: PIIRedactionMode = .tag) -> (text: String, spans: [PIISpan])
+```
+
+Table mode reads a CSV, TSV, semicolon-separated or markdown pipe table as one text and clips every span to a cell value:
+delimiters, quotes and line breaks are never masked, so the output is still a valid table. `PIITableDelimiter` is `.auto`
+(detected), `.comma`, `.tab`, `.semicolon` or `.markdown`; quoted fields follow RFC 4180. With `vote`, a column of short
+values is masked whole when the model finds names, emails, phone numbers or usernames in at least 80% of its non-empty cells
+(and at least 4; columns with fewer than 5 non-empty cells do not vote); those spans have source `.table`. Free-text columns
+(median value over 40 characters or 4 words) do not vote, placeholders (`N/A`, `-`, `none`, `null`, `없음`) are skipped, an
+email column needs `@` and a phone column 6 or more digits. With `header`, the first row is masked where the model finds PII
+but never voted on. With `context: .header` (`PIITableContext`; default `.none`) and a header row, each non-empty data cell
+of a column whose non-empty values are at least 80% distinct is also read on its own as "<header>: <value>" and those spans
+are added: fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell.
+Text that is not a table gives exactly the spans of `detect`. A `.custom` replacement must not insert
+the delimiter, a quote or a line break. Synchronous overloads block the calling thread, as for `detect`.
+
+```swift
+let csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+let (masked, _) = try await redactor.redactTable(csv)
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+let (tsvMasked, _) = try await redactor.redactTable(tsv, delimiter: .tab, vote: false, mode: .mask)
+```
+
+On survey and form exports, table mode misses many names split into first and last name columns. `context: .header` cuts the
+misses to about a quarter, at 2.3 to 3.7 more points of PII-free cells masked; for recall first, use it. Measurements:
+[repository README](https://github.com/newmean-ai/pii#tables-csv-tsv).
 
 ## Development
 

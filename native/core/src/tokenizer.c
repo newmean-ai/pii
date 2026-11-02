@@ -77,8 +77,11 @@ static int incb_linker(uint32_t c) {
   return 0;
 }
 
+int pii_is_pictographic(uint32_t c) { return gcat(c) == GC_Extended_Pictographic; }
+
 // End of the extended grapheme cluster that starts at cps[i] (UAX #29, Unicode 17; as unicode-segmentation and ICU).
-static size_t grapheme_end(const uint32_t *cps, size_t i, size_t n) {
+// Also used by api.c (grapheme snapping of spans).
+size_t pii_grapheme_end(const uint32_t *cps, size_t i, size_t n) {
   int p = gcat(cps[i]);
   int emoji = p == GC_Extended_Pictographic;  // 1: ExtPict Extend*, 2: ExtPict Extend* ZWJ
   int incb = p == GC_InCB_Consonant;          // 1: Consonant [Extend Linker]*, 2: ... with a Linker
@@ -396,7 +399,7 @@ static int normalize(const pii_tok *t, const uint32_t *cps, size_t a, size_t b, 
   uint8_t key[64];
   out->n = 0;
   for (size_t i = a; i < b;) {
-    const size_t end = grapheme_end(cps, i, b);
+    const size_t end = pii_grapheme_end(cps, i, b);
     size_t bytes = 0;
     for (size_t k = i; k < end; k++) bytes += utf8_len(cps[k]);
     if (bytes < 6) {

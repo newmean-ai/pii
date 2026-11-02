@@ -7,11 +7,29 @@ LABELS: Tuple[str, ...]
 LABELS_ALL: int
 SOURCE_MODEL: int
 SOURCE_REGEX: int
+SOURCE_TABLE: int
 
 class Model:
     def __init__(self, onnx: bytes, tokenizer: bytes) -> None: ...
     def detect(
-        self, text: str, sensitivity: float, labels: int, extra: Optional[List[Tuple[int, int, int]]] = ...
+        self,
+        text: str,
+        sensitivity: float,
+        labels: int,
+        extra: Optional[List[Tuple[int, int, int]]] = ...,
+        keep_emoji: bool = ...,
+    ) -> List[Tuple[int, int, int, int]]: ...
+    def detect_table(
+        self,
+        text: str,
+        sensitivity: float,
+        labels: int,
+        extra: Optional[List[Tuple[int, int, int]]] = ...,
+        delimiter: int = ...,
+        header: bool = ...,
+        vote: bool = ...,
+        context: int = ...,
+        keep_emoji: bool = ...,
     ) -> List[Tuple[int, int, int, int]]: ...
     def tokenize(self, text: str) -> List[Tuple[int, int, int]]: ...
     def info(self) -> Dict[str, Union[int, str]]: ...

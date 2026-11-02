@@ -32,13 +32,16 @@ internal object TestEnv {
     fun requireNative() = assumeTrue("host JNI library not built (cmake missing or -Ppii.hostJni=false)", hasNative)
 
     fun redactor(size: PiiSize, variant: PiiVariant = size.defaultVariant, sensitivity: Double = 0.0, regex: Boolean = false,
-                 labels: Collection<String> = PiiLabels.ALL): PiiRedactor {
+                 labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false): PiiRedactor {
         requireNative()
         val dir = modelDir(size)
         val model = File(dir, PiiModels.modelPath(variant))
         assumeTrue("$model not found", model.isFile)
-        return PiiRedactor.createBlocking(model, File(dir, PiiModels.TOKENIZER_PATH), size, variant, sensitivity, labels, regex)
+        return PiiRedactor.createBlocking(model, File(dir, PiiModels.TOKENIZER_PATH), size, variant, sensitivity, labels, regex, keepEmoji)
     }
+
+    /** The native model handle of [r], for calls straight to the JNI bridge. */
+    fun handle(r: PiiRedactor): Long = PiiRedactor::class.java.getDeclaredField("handle").apply { isAccessible = true }.getLong(r)
 
     fun jsonl(f: File): List<JSONObject> = f.readLines(Charsets.UTF_8).filter { it.isNotBlank() }.map { JSONObject(it) }
 

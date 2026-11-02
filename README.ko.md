@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.0.0`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.0.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.2.0`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.2.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
@@ -64,6 +64,26 @@ final r = await (await NewmeanPii.create(size: 'medium')).redact('제 메일은 
 
 안내: [Python](python/README.ko.md) · [Swift](swift/README.ko.md) · [Android](android/README.ko.md) · [Flutter](flutter/README.ko.md)
 
+### 표(CSV, TSV)
+
+```ts
+const { text } = await redactor.redactTable(csv);  // 구분자 자동 감지: ",", "\t", ";", 마크다운 파이프 표
+const spans = await redactor.detectTable(tsv, { delimiter: "\t", header: true, vote: true });
+const named = await redactor.redactTable(csv, { context: "header" });  // 칸마다 열 제목을 붙여 한 번 더 읽음
+```
+
+```python
+create_redactor().redact_table(open("survey.csv", encoding="utf-8").read(), context="header").text
+```
+
+표 모드는 표 전체를 한 텍스트로 읽어 칸끼리 문맥이 되게 하고, 모든 구간을 칸 값 안으로 자릅니다. 구분자, 따옴표, 줄바꿈은
+가리지 않으므로 결과도 올바른 표입니다. 짧은 값으로 된 열에서 모델이 칸의 80% 이상을 이름, 이메일, 전화번호, 사용자 이름으로
+읽으면 그 열 전체를 가립니다(source `"table"`). 머리글 행과 긴 글 열은 이 투표에 들어가지 않습니다. `context: "header"`를 주면
+값이 대부분 서로 다른 열의 칸을 열 제목과 함께(`"<머리글>: <값>"`) 한 번 더 따로 읽어, 이름·성이 나뉜 열의 이름을 찾습니다.
+54개 언어의 설문·양식 내보내기 556개에서 large는 개인정보 글자를 6.2% 대신 1.4%만 놓치고, 개인정보가 없는 칸은 9.6% 대신
+12.3%를 가립니다(크기별 수치는 [결과](#결과)). 그런 칸마다 모델을 한 번 더 부릅니다(표 모드의 약 2배 시간). 모든 패키지에
+표 모드가 있습니다(Swift, Kotlin, Dart: `detectTable`, `redactTable`; C: `pii_detect_table`).
+
 ## 링크
 
 - Hugging Face 모델: [newmean-pii-nano](https://huggingface.co/newmean-ai/pii-nano) ·
@@ -82,14 +102,14 @@ newmean-pii-dataset (공개·비공개 테스트)의 주간 점수: [리더보�
 
 | 모델 | 다운로드 | 공개 테스트(54개 언어) | KDPII(한국어) | OpenPII(30개 언어) | Nemotron-PII(영어) | Gretel 금융 |
 |---|---|---|---|---|---|---|
-| **newmean-pii-large** | 15.5 MB | **1.6** | **7.6** | 4.6 | **7.4** | 20.3 |
-| **newmean-pii-medium** | 11.3 MB | 2.1 | 9.8 | 6.1 | 7.9 | 22.5 |
-| **newmean-pii-small** | 7.1 MB | 2.7 | 9.5 | 5.6 | 10.6 | 24.1 |
-| **newmean-pii-nano** | 2.6 MB | 3.3 | 9.5 | 4.9 | 10.6 | 22.8 |
+| **newmean-pii-large** | 15.5 MB | **1.6** | 9.6 | 4.9 | **6.1** | 21.4 |
+| **newmean-pii-medium** | 11.3 MB | 1.9 | 11.5 | 6.3 | 7.7 | 21.5 |
+| **newmean-pii-small** | 7.1 MB | 2.4 | 10.0 | 5.6 | 8.4 | 22.3 |
+| **newmean-pii-nano** | 2.6 MB | 2.9 | 9.5 | 5.0 | 9.9 | 21.4 |
 | gliner-pii-edge | 176 MB | 19.6 | 11.9 | 5.7 | 17.3 | **15.7** |
 | OpenAI privacy-filter | 2.8 GB | 34.6 | 34.8 | 14.3 | 25.7 | 32.2 |
 | Horizon pii-redactor-small | 563 MB | 41.0 | 25.7 | 11.1 | 7.8 | 31.6 |
-| KoELECTRA Korean PII NER | — | 43.1 | 8.8 | 24.1* | 45.9 | 37.6 |
+| KoELECTRA Korean PII NER | — | 43.1 | **8.8** | 24.1* | 45.9 | 37.6 |
 | GLiNER2-PII | 1.2 GB | 44.9 | 34.2 | 23.2 | 46.3 | 32.9 |
 | Rampart | 15 MB | 56.5 | 36.1 | **3.5*** | 51.6 | 40.5 |
 | Mozilla smart-pii-redactor | 15 MB | 56.9 | 46.0 | 25.9 | 48.8 | 32.9 |
@@ -100,6 +120,44 @@ newmean-pii-dataset (공개·비공개 테스트)의 주간 점수: [리더보�
 정책(예: 조직명은 가리지 않음)을 따릅니다. 그래서 그 열은 각 탐지기가 이 마스킹 정책에 얼마나 맞는지를 보여 주고, 더 공정한 비교는
 외부 데이터셋 네 열입니다. \* OpenPII 데이터로 학습했거나(Rampart) 그와 겹치는 데이터로 학습했습니다(KoELECTRA). GLiNER2-PII는
 Gretel에서 라이브러리의 긴 글 모드로 돌렸습니다. 휴대폰(네 대 평균)에서 11.3 MB 모델은 40토큰 메시지에 약 26 ms가 걸립니다.
+SDK 1.2(배포된 Python 패키지)를 거쳐도 이 표의 우리 모델 수치는 모두 0.04점 안에서 같습니다. SDK가 바꾸는 것은 이모지나 키캡이
+든 텍스트뿐입니다.
+
+1.2에서 달라진 점. 1.2는 v1.1 모델에 SDK 1.2.0을 더한 배포입니다. v1.1은 따로 공개하지 않았으므로 그 모델 변경이 여기에
+들어 있습니다. *모델:* 짧은 글, 표의 칸, 설문 내보내기에서 홀로 쓴 일상어를 이름으로 읽는 일이 크게 줄었습니다. 54개 언어의 짧은
+항목 20,691개(열 제목, 응답 보기, 낱말, 따로 쓴 이름과 값)에서 개인정보가 없는 항목을 가리는 비율은 30.6%에서 7.9%로 줄었고(large;
+medium 30.6%에서 7.8%, small 36.8%에서 9.4%, nano 39.3%에서 11.1%), 설문 CSV 228개를 칸마다 검사하면 large는 개인정보가 없는 칸의
+24.9% 대신 6.6%를 가립니다. 대가: KDPII에서 large는 9.6%(v1.0: 7.6%), medium은 11.5%(9.8%), small은 10.0%(9.5%)를 놓치고, nano는
+9.5%로 그대로입니다. *SDK:* 이모지를 모델이 읽는 텍스트에서 빼므로 모델이 이모지를 이름으로 읽지 않습니다(`keepEmoji: true`로 끌 수
+있고, 이모지나 키캡이 없는 텍스트는 1.1과 똑같은 구간을 냅니다). 3️⃣ 같은 키캡은 바탕 문자로 읽으므로 키캡으로 쓴 번호도 찾습니다.
+모든 구간을 문자소 클러스터 단위로 넓혀 이모지, 국기, 결합 문자열을 통째로 가리거나 통째로 남깁니다(npm 패키지는
+`Intl.Segmenter`가 있어야 합니다). 여기에 표 모드와 `context: "header"` 옵션(위)이 더해졌습니다. 짧은 글, 이모지, 표 세트는 모두
+비공개 합성 데이터입니다.
+
+이모지, 모델만 대 모델 + SDK 1.2: 이모지 1~3개를 개인정보 밖에 넣은 텍스트 4,501개 중 이모지가 가려진 텍스트의 비율입니다.
+이모지가 반으로 잘리는 일은 없습니다. 남은 것은 대부분 이름 옆의 키캡으로, 키캡을 숫자로 읽기 때문에 이름과 함께 가려집니다.
+이 텍스트에서 놓친 개인정보 글자도 줄었습니다(large 0.87%에서 0.31%, medium 1.03%에서 0.61%).
+
+| 모델 | 모델만 | 모델 + SDK 1.2 |
+|---|---|---|
+| newmean-pii-large | 23.95% | 0.87% |
+| newmean-pii-medium | 14.89% | 0.78% |
+| newmean-pii-small | 20.57% | 0.89% |
+| newmean-pii-nano | 26.33% | 1.00% |
+
+설문·양식 내보내기, 놓침 % / 개인정보가 없는 데이터 칸을 가린 비율 %: Claude Opus 5.5가 쓴 파일 556개(칸 121,272개, 54개
+언어)이며, 우리 학습 데이터는 이 모델로 만들지 않았습니다. SDK 옵션을 정한 뒤에 만들었고 한 번만 채점했습니다.
+
+| 모델 | 파일 전체, 모델만 | 표 모드(기본) | 표 모드 + `context: "header"` | 칸마다 `detect` |
+|---|---|---|---|---|
+| newmean-pii-large | 6.56 / 9.58 | 6.17 / 9.59 | **1.44** / 12.30 | 5.00 / 12.21 |
+| newmean-pii-medium | 8.29 / 9.30 | 7.93 / 9.32 | **1.93** / 11.66 | 5.75 / 12.03 |
+| newmean-pii-small | 7.00 / 15.87 | 6.65 / 15.90 | **1.72** / 19.03 | 6.21 / 14.21 |
+| newmean-pii-nano | 6.47 / 23.62 | 6.13 / 23.66 | **1.58** / 27.34 | 6.31 / 17.74 |
+
+`context: "header"`는 모든 크기에서 놓침을 약 4분의 1로 줄이고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 표 모드만으로는 파일
+전체를 읽을 때와 놓침이 거의 같지만, 표를 올바르게 지키고 연락처 열을 통째로 가립니다. small과 nano는 어느 방식이든 개인정보가
+없는 칸을 많이 가립니다(16~27%). 옵션을 정할 때 쓴 세트 두 개와 전체 수치: [기술 보고서 6.2절](docs/report/REPORT.ko.md).
 
 ## 저장소 구성
 

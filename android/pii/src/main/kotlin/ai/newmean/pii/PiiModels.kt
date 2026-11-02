@@ -62,8 +62,8 @@ public fun interface PiiProgress {
 
 /** Published model files of release [VERSION] and their pins (same values as js/src/models.ts and native/core). */
 public object PiiModels {
-    /** Model release (Hugging Face tag v1.0.0). */
-    public const val VERSION: String = "1.0.0"
+    /** Model release (Hugging Face tag v1.1.0). */
+    public const val VERSION: String = "1.1.0"
 
     /** Default size, as in the npm package. */
     @JvmField
@@ -75,7 +75,7 @@ public object PiiModels {
     @JvmStatic
     public fun modelPath(variant: PiiVariant): String = "onnx/model_${variant.id}.onnx"
 
-    /** https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/ */
+    /** https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/ */
     @JvmStatic
     public fun baseUrl(size: PiiSize): String = "https://huggingface.co/newmean-ai/pii-${size.id}/resolve/v$VERSION/"
 
@@ -113,17 +113,17 @@ public object PiiModels {
 
     // From js/src/models.ts (generated from the Hugging Face manifest); PinsTest checks them against it and the core.
     internal val PINS: Map<String, PiiFilePin> = mapOf(
-        pin("nano", "q4", 2602752, "df9b5cb908c3c71783c293bc539425e1f9a973627b2a47a124f458b6f7c6d0af"),
-        pin("nano", "q4e", 2072202, "3c8032f7bcaf52af893f694fc87af3b0b5d327541fbe574e8a0562aef484fbd0"),
+        pin("nano", "q4", 2602752, "24b87d9933a0cbdb42b201b44488ad297f3d7fda000731c6683913d8e9af1360"),
+        pin("nano", "q4e", 2072202, "6054bb535e245455ba321440b47c6e8394aa11949d9f8dbc121ea82bd62a5d84"),
         pin("nano", "tokenizer", 810589, "11838f41d00124e43170c8f4e6d025ac5ea301ffee40bc0508b1a412c4fbf11d"),
-        pin("small", "q4", 7112241, "cc6157ba8e80991690eec169b5d4bcb05fe5acc74ceef01dfafc89ba527a8225"),
-        pin("small", "q4e", 6159899, "89bf1225f471ce948dbe2c7b3eafe69e2e3612b16e44393435ea6eb5798efaed"),
+        pin("small", "q4", 7112241, "1cbd7e8e4d840db3d919838fc9dc4496a324af40016508faf71ba2d001ad9e4d"),
+        pin("small", "q4e", 6159899, "8a2c26a31858298e96bc34efea534d3e686ab6700c105c724be1db411209c18f"),
         pin("small", "tokenizer", 810589, "11838f41d00124e43170c8f4e6d025ac5ea301ffee40bc0508b1a412c4fbf11d"),
-        pin("medium", "q4", 13962065, "9677ef4dbee6911ad4e45bf2a23a26d88ebb4e381a913d5c625983fe14845715"),
-        pin("medium", "q4e", 11303433, "054ba8b06a2ea2ec6bae73ff380e36e5ff3cb3611d7a080074eb44d65669b58d"),
+        pin("medium", "q4", 13962065, "dec417ab148ab203b1cc9051dadf1117a6590ce6bc02585f434c5095c6a37ba5"),
+        pin("medium", "q4e", 11303433, "a84ba05d2e98e51c6d1a10cc898285862e98c02e1c5604f0a1be0e367e46c6ad"),
         pin("medium", "tokenizer", 810589, "11838f41d00124e43170c8f4e6d025ac5ea301ffee40bc0508b1a412c4fbf11d"),
-        pin("large", "q4", 20693010, "47a19f7031f439413bdb277f96f3f98e7006c1629a1f3f965b4be48f153753b5"),
-        pin("large", "q4e", 15492704, "c8d3d870313797d85aa1d57809d953eea3139bd859f198cfafe0f3b6c6f7735e"),
+        pin("large", "q4", 20693010, "1f5b371014423eb0c347d1eea68b5112483784b59f65ad91a9951648266e9ea1"),
+        pin("large", "q4e", 15492704, "576a030d803517d21423a2dc97d7a83fcb68563eec768ee7fbb0d95da91def40"),
         pin("large", "tokenizer", 810589, "11838f41d00124e43170c8f4e6d025ac5ea301ffee40bc0508b1a412c4fbf11d"),
     )
 }

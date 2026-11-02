@@ -4,16 +4,18 @@ import CNewmeanPII
 import Foundation
 
 /// A loaded model. Immutable after loading except `sensitivity`; any number of tasks or threads may call `detect`,
-/// `redact` and `tokenize` at once.
+/// `redact`, `detectTable`, `redactTable` and `tokenize` at once.
 public final class PIIRedactor: @unchecked Sendable {
   public let size: PIISize
   public let variant: PIIVariant
-  /// Model release ("1.0.0").
+  /// Model release ("1.1.0").
   public let version = PIIModelFile.version
   /// Labels to mask.
   public let labels: Set<PIILabel>
   /// Whether the pattern layer (PIIRegex) runs next to the model.
   public let regex: Bool
+  /// Whether the model reads emoji (see `init`).
+  public let keepEmoji: Bool
   /// Kernel build of the C core ("neon", "sse", ...).
   public static var buildInfo: String { String(cString: pii_build_info()) }
 
@@ -31,11 +33,13 @@ public final class PIIRedactor: @unchecked Sendable {
   ///   - labels: labels to mask. Default all; `PIILabel.level1` leaves level 2 identifiers visible.
   ///   - regex: also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default
   ///     false: on the public test of newmean-pii-dataset they add almost no coverage and double over-masking.
+  ///   - keepEmoji: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
+  ///     offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
   ///   - modelDirectory: folder with `tokenizer.web.json` and `onnx/model_<variant>.onnx` (or `model_<variant>.onnx`
   ///     next to it), for example a folder in the app bundle. Default nil: `PIIModelStore.default`, which downloads the
   ///     files from Hugging Face once into Caches. Files are checked against the published SHA-256 either way.
   public init(size: PIISize = .default, variant: PIIVariant? = nil, sensitivity: Double = 0, labels: Set<PIILabel> = PIILabel.all,
-              regex: Bool = false, modelDirectory: URL? = nil) async throws {
+              regex: Bool = false, keepEmoji: Bool = false, modelDirectory: URL? = nil) async throws {
     let variant = variant ?? size.defaultVariant
     let dir: URL
     if let modelDirectory {
@@ -49,6 +53,7 @@ public final class PIIRedactor: @unchecked Sendable {
     self.labels = labels
     self.labelBits = labels.reduce(0) { $0 | (1 << UInt32($1.id)) }
     self.regex = regex
+    self.keepEmoji = keepEmoji
     self._sensitivity = sensitivity
   }
 
@@ -78,19 +83,70 @@ public final class PIIRedactor: @unchecked Sendable {
   /// Spans to mask, sorted and non-overlapping; blocks the calling thread (about 15 ms per short text on a recent phone
   /// for medium). Async functions get the async overload; top-level code in main.swift gets this one.
   public func detect(_ text: String) throws -> [PIISpan] {
+    try spans(text, table: nil)
+  }
+
+  /// Table mode for CSV, TSV, semicolon-separated and markdown pipe tables (npm `detectTable`): the whole text is read at
+  /// once (cells give each other context), spans are clipped to cell values, and a column of short values that the model
+  /// reads as names, emails, phone numbers or usernames almost throughout is masked whole (source `.table`; placeholders
+  /// such as "N/A" are skipped). Text that is not a table gives the spans of `detect`. Runs off the caller's actor.
+  /// - Parameters:
+  ///   - delimiter: default `.auto`.
+  ///   - header: the first row is a header row, never voted on or propagated into. Default true.
+  ///   - vote: column vote and propagation; false: whole-text detection clipped to the cells only. Default true.
+  ///   - context: `.header` also reads the cells of distinct-valued columns as "<header>: <value>". Default `.none`.
+  public func detectTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true, vote: Bool = true,
+                          context: PIITableContext = .none) async throws -> [PIISpan] {
+    try await Self.offCaller { try self.detectTable(text, delimiter: delimiter, header: header, vote: vote, context: context) }
+  }
+
+  /// Table mode (see the async overload); blocks the calling thread.
+  public func detectTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true, vote: Bool = true,
+                          context: PIITableContext = .none) throws -> [PIISpan] {
+    var table = pii_table_options()
+    pii_table_options_init(&table)
+    table.delimiter = delimiter.code
+    table.header = header ? 1 : 0
+    table.vote = vote ? 1 : 0
+    table.context = context.code
+    return try spans(text, table: table)
+  }
+
+  /// `detectTable` and the masked text (npm `redactTable`). Spans never cross cells, so delimiters, quotes and line breaks
+  /// are kept and the output stays a valid table, as long as a `.custom` replacement does not insert the delimiter, a
+  /// quote or a line break. Runs off the caller's actor.
+  public func redactTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true, vote: Bool = true,
+                          context: PIITableContext = .none, mode: PIIRedactionMode = .tag) async throws -> (text: String, spans: [PIISpan]) {
+    let spans = try await detectTable(text, delimiter: delimiter, header: header, vote: vote, context: context)
+    return (Self.applyRedaction(to: text, spans: spans, mode: mode), spans)
+  }
+
+  /// `redactTable`; blocks the calling thread.
+  public func redactTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true, vote: Bool = true,
+                          context: PIITableContext = .none, mode: PIIRedactionMode = .tag) throws -> (text: String, spans: [PIISpan]) {
+    let spans = try detectTable(text, delimiter: delimiter, header: header, vote: vote, context: context)
+    return (Self.applyRedaction(to: text, spans: spans, mode: mode), spans)
+  }
+
+  /// pii_detect, or pii_detect_table with `table`.
+  private func spans(_ text: String, table: pii_table_options?) throws -> [PIISpan] {
     let extra = regex ? PIIRegex.utf16Matches(in: text).map { pii_extra_span(start: $0.range.lowerBound, end: $0.range.upperBound, label: $0.label.id) } : []
     var options = pii_options()
     pii_options_init(&options)
     options.sensitivity = sensitivity
     options.labels = labelBits
     options.extra_unit = Int32(PII_UNIT_UTF16)
+    options.keep_emoji = keepEmoji ? 1 : 0
     var out: UnsafeMutablePointer<pii_span>?
     var n = 0
     let rc = text.withContiguousUTF8 { utf8 in
       extra.withUnsafeBufferPointer { x in
         options.extra = x.baseAddress
         options.n_extra = x.count
-        return utf8.withMemoryRebound(to: CChar.self) { pii_detect(model, $0.baseAddress, $0.count, &options, &out, &n) }
+        return utf8.withMemoryRebound(to: CChar.self) { p in
+          guard var table else { return pii_detect(model, p.baseAddress, p.count, &options, &out, &n) }
+          return pii_detect_table(model, p.baseAddress, p.count, &options, &table, &out, &n)
+        }
       }
     }
     defer { pii_spans_free(out) }

@@ -11,7 +11,8 @@ import 'redaction.dart';
 import 'span.dart';
 
 /// Detects and masks personal information with a `newmean-pii-<size>` model, on the device. The model runs in the native
-/// core; [detect] and [redact] run it in a background isolate, so the calling (UI) isolate never blocks.
+/// core; [detect], [redact], [detectTable] and [redactTable] run it in a background isolate, so the calling (UI) isolate
+/// never blocks.
 final class NewmeanPii implements Finalizable {
   /// Model size: "nano", "small", "medium" or "large".
   final String size;
@@ -25,6 +26,9 @@ final class NewmeanPii implements Finalizable {
   /// Whether the pattern layer runs next to the model.
   final bool regex;
 
+  /// Whether the model reads emoji (see [create]).
+  final bool keepEmoji;
+
   final int _labels;
   Pointer<PiiModel>? _model;
   int _running = 0;
@@ -32,7 +36,7 @@ final class NewmeanPii implements Finalizable {
 
   static final _finalizer = NativeFinalizer(piiModelFreePointer);
 
-  NewmeanPii._(this.size, this.variant, this.sensitivity, this._labels, this.regex, int model)
+  NewmeanPii._(this.size, this.variant, this.sensitivity, this._labels, this.regex, this.keepEmoji, int model)
     : _model = Pointer<PiiModel>.fromAddress(model) {
     _finalizer.attach(this, _model!.cast(), detach: this);
   }
@@ -48,12 +52,15 @@ final class NewmeanPii implements Finalizable {
   /// - [labels]: labels to mask, default all ([piiLabels]); [level1Labels] leaves level 2 identifiers visible.
   /// - [regex]: also mask a few patterns (email, URL, card/account, phone, Korean resident number). Default false: they
   ///   add almost no coverage on the public test and double over-masking.
+  /// - [keepEmoji]: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
+  ///   offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.1 behaviour).
   static Future<NewmeanPii> create({
     String size = defaultSize,
     String? variant,
     double sensitivity = 0,
     Iterable<String>? labels,
     bool regex = false,
+    bool keepEmoji = false,
     String? modelDir,
     Future<Uint8List> Function(String path)? readFile,
     Uri? modelUrl,
@@ -80,6 +87,7 @@ final class NewmeanPii implements Finalizable {
         sensitivity: sensitivity,
         labels: labels,
         regex: regex,
+        keepEmoji: keepEmoji,
         verify: verify,
       );
     }
@@ -91,7 +99,7 @@ final class NewmeanPii implements Finalizable {
     }
     try {
       final model = await _loadInIsolate(tokPin, onnxPin, modelDir, modelUrl, cacheDir, cache, verify, port?.sendPort);
-      return NewmeanPii._(size, v, sensitivity, mask, regex, model);
+      return NewmeanPii._(size, v, sensitivity, mask, regex, keepEmoji, model);
     } finally {
       port?.close();
     }
@@ -132,6 +140,7 @@ final class NewmeanPii implements Finalizable {
     double sensitivity = 0,
     Iterable<String>? labels,
     bool regex = false,
+    bool keepEmoji = false,
     bool verify = true,
   }) async {
     final v = _checkVariant(size, variant);
@@ -148,7 +157,7 @@ final class NewmeanPii implements Finalizable {
       }
       return loadModel(onnx, tokenizer);
     });
-    return NewmeanPii._(size, v, sensitivity, labelMask(labels ?? piiLabels), regex, model);
+    return NewmeanPii._(size, v, sensitivity, labelMask(labels ?? piiLabels), regex, keepEmoji, model);
   }
 
   static String _checkVariant(String size, String? variant) {
@@ -174,8 +183,42 @@ final class NewmeanPii implements Finalizable {
 
   /// Spans to mask in [text], sorted and non-overlapping, with UTF-16 offsets (Dart string indices). Runs in a background
   /// isolate; calls may overlap.
-  Future<List<PiiSpan>> detect(String text) async {
-    final job = _job(text);
+  Future<List<PiiSpan>> detect(String text) async => _run(_job(text));
+
+  /// [detect] on the calling isolate (blocks it; for use inside your own background isolate).
+  List<PiiSpan> detectSync(String text) => _job(text)();
+
+  /// Table mode for CSV, TSV, semicolon-separated and markdown pipe tables (the npm package's `detectTable`): the whole
+  /// text is read at once (cells give each other context), spans are clipped to cell values, and a column of short values
+  /// that the model reads as names, emails, phone numbers or usernames almost throughout is masked whole (source
+  /// "table"; placeholders such as "N/A" are skipped). Text that is not a table gives the spans of [detect].
+  ///
+  /// - [delimiter]: "auto" (default; comma, tab, semicolon or markdown), ",", "\t", ";" or "markdown" (pipe table);
+  ///   anything else throws [ArgumentError].
+  /// - [header]: the first row is a header row, never voted on or propagated into. Default true.
+  /// - [vote]: column vote and propagation; false: whole-text detection clipped to the cells only. Default true.
+  /// - [context]: "header": with a header row, each non-empty data cell of a column whose non-empty values are at least
+  ///   80% distinct is also read on its own as `"<header>: <value>"`, and those spans are added (fewer misses on name,
+  ///   contact and ID columns, more PII-free cells masked, one more model call per such cell). Default "none"; anything
+  ///   else throws [ArgumentError].
+  Future<List<PiiSpan>> detectTable(
+    String text, {
+    String delimiter = 'auto',
+    bool header = true,
+    bool vote = true,
+    String context = 'none',
+  }) async => _run(_job(text, (tableDelimiter(delimiter), header, vote, tableContext(context))));
+
+  /// [detectTable] on the calling isolate.
+  List<PiiSpan> detectTableSync(
+    String text, {
+    String delimiter = 'auto',
+    bool header = true,
+    bool vote = true,
+    String context = 'none',
+  }) => _job(text, (tableDelimiter(delimiter), header, vote, tableContext(context)))();
+
+  Future<List<PiiSpan>> _run(List<PiiSpan> Function() job) async {
     _running++;
     try {
       return await Isolate.run(job);
@@ -184,13 +227,10 @@ final class NewmeanPii implements Finalizable {
     }
   }
 
-  /// [detect] on the calling isolate (blocks it; for use inside your own background isolate).
-  List<PiiSpan> detectSync(String text) => _job(text)();
-
   // Only plain values in the closure: it is sent to the background isolate.
-  List<PiiSpan> Function() _job(String text) {
-    final model = _address, sens = sensitivity, labels = _labels, rx = regex;
-    return () => detectSpans(model, text, sens, labels, rx);
+  List<PiiSpan> Function() _job(String text, [(int, bool, bool, int)? table]) {
+    final model = _address, sens = sensitivity, labels = _labels, rx = regex, keep = keepEmoji;
+    return () => detectSpans(model, text, sens, labels, rx, keep, table);
   }
 
   /// [text] with the spans of [detect] replaced: [RedactMode.tag] → "[EMAIL]", [RedactMode.mask] → "*****" (one
@@ -213,6 +253,38 @@ final class NewmeanPii implements Finalizable {
     String Function(PiiSpan span, String original)? replace,
   }) {
     final spans = detectSync(text);
+    return PiiRedaction(applyRedaction(text, spans, mode: mode, maskChar: maskChar, replace: replace), spans);
+  }
+
+  /// [text] with the spans of [detectTable] replaced, as [redact] does. Spans never cross cells, so delimiters, quotes and
+  /// line breaks are kept and the output stays a valid table, as long as [replace] does not insert the delimiter, a quote
+  /// or a line break.
+  Future<PiiRedaction> redactTable(
+    String text, {
+    String delimiter = 'auto',
+    bool header = true,
+    bool vote = true,
+    String context = 'none',
+    RedactMode mode = RedactMode.tag,
+    String maskChar = '*',
+    String Function(PiiSpan span, String original)? replace,
+  }) async {
+    final spans = await detectTable(text, delimiter: delimiter, header: header, vote: vote, context: context);
+    return PiiRedaction(applyRedaction(text, spans, mode: mode, maskChar: maskChar, replace: replace), spans);
+  }
+
+  /// [redactTable] on the calling isolate.
+  PiiRedaction redactTableSync(
+    String text, {
+    String delimiter = 'auto',
+    bool header = true,
+    bool vote = true,
+    String context = 'none',
+    RedactMode mode = RedactMode.tag,
+    String maskChar = '*',
+    String Function(PiiSpan span, String original)? replace,
+  }) {
+    final spans = detectTableSync(text, delimiter: delimiter, header: header, vote: vote, context: context);
     return PiiRedaction(applyRedaction(text, spans, mode: mode, maskChar: maskChar, replace: replace), spans);
   }
 

@@ -31,12 +31,12 @@ from the sdist with a C11 compiler.
 | `medium` (default) | 11.3 MB | 6 layers, rank-192 embeddings |
 | `large` | 15.5 MB | 6 layers, full (pruned-vocabulary) embeddings |
 
-Plus a 0.8 MB tokenizer. On first use the files are downloaded from Hugging Face (`newmean-ai/pii-<size>`, tag `v1.0.0`)
+Plus a 0.8 MB tokenizer. On first use the files are downloaded from Hugging Face (`newmean-ai/pii-<size>`, tag `v1.1.0`)
 into `~/.cache/newmean-pii` and checked against SHA-256 values pinned in this package; every later load checks them again.
 
 No model finds every piece of personal information. The technical report lists miss and over-masking rates per language
 and dataset; treat the output as a strong first pass, not a guarantee. On newmean-pii-dataset (public test, 54 languages)
-the models miss 1.6% (large) to 3.3% (nano) of PII characters; the full comparison is in the
+the models miss 1.6% (large) to 2.9% (nano) of PII characters; the full comparison is in the
 [repository README](https://github.com/newmean-ai/pii#results).
 
 ## Labels
@@ -56,6 +56,7 @@ create_redactor(               # or Redactor(...), same arguments
     labels=None,               # labels to mask; default all (LABELS); unknown names raise ValueError
     regex=False,               # also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                # off by default: almost no extra coverage, double the over-masking
+    keep_emoji=False,          # True: the model also reads emoji (1.1 behaviour); default: emoji are never read or masked
     model_dir=None,            # folder with tokenizer.web.json and onnx/model_<variant>.onnx; never downloads
     cache_dir=None,            # default: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii or ~/.cache/newmean-pii
     model_url=None,            # base URL of a mirror of newmean-ai/pii-<size> (https://, http:// or file://)
@@ -65,6 +66,8 @@ create_redactor(               # or Redactor(...), same arguments
 redactor.detect(text)                  # -> [Span(start, end, label, source)], sorted, non-overlapping
 redactor.redact(text, mode="tag")      # -> RedactResult(text, spans); "tag" -> [EMAIL], "mask" -> *****, "blank" -> removed
 redactor.redact(text, mask_char="#", replace=None)  # replace(span, original) -> str overrides mode
+redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none")  # table mode (see Tables)
+redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # no reload
 redactor.tokenize(text)                # -> [Token(id, start, end)]
 redactor.close()                       # also: with create_redactor() as r: ...
@@ -75,7 +78,10 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
 ```
 
 - **Offsets** are Python `str` indices (code points): `text[span.start:span.end]` is the masked text, emoji included. The
-  npm package uses UTF-16 indices for the same spans. `source` is `"model"`, `"regex"` or `"model+regex"`.
+  npm package uses UTF-16 indices for the same spans. Spans are widened to whole grapheme clusters, so an emoji, flag or
+  combining sequence is masked whole or kept whole. `source` is `"model"`, `"regex"`, `"model+regex"` or `"table"`.
+- **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
+  input, and an emoji inside a span splits it in two. `keep_emoji=True` gives the model the text as given (1.1 behaviour).
 - **`tag` mode** writes the label family: `PERSON_L2` becomes `[PERSON]`, `URL_L2` becomes `[URL]`. `mask` writes one
   `mask_char` per code point.
 - **Threads**: a redactor can be shared. The model is immutable and the GIL is released while it runs, so a thread
@@ -91,6 +97,37 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
   takes 0.4 s (nano) to 0.55 s (medium). Long texts are split into overlapping 256-token windows.
 - Errors: `ValueError` for bad options, `ModelFileError` when a file is missing, cannot be downloaded or does not match
   its pin.
+
+## Tables
+
+```python
+redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none") -> List[Span]
+redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None) -> RedactResult
+```
+
+Table mode reads a CSV, TSV, semicolon-separated or markdown pipe table as one text and clips every span to a cell value:
+delimiters, quotes and line breaks are never masked, so the output is still a valid table. `delimiter` is `"auto"`
+(detected), `","`, `"\t"`, `";"` or `"markdown"` (`TABLE_DELIMITERS`); quoted fields follow RFC 4180. With `vote`, a column
+of short values is masked whole when the model finds names, emails, phone numbers or usernames in at least 80% of its
+non-empty cells (and at least 4; columns with fewer than 5 non-empty cells do not vote); those spans have source `"table"`.
+Free-text columns (median value over 40 characters or 4 words) do not vote, placeholders (`N/A`, `-`, `none`, `null`,
+`없음`) are skipped, an email column needs `@` and a phone column 6 or more digits. With `header`, the first row is masked
+where the model finds PII but never voted on. With `context="header"` (`TABLE_CONTEXTS`; default `"none"`) and a header
+row, each non-empty data cell of a column whose non-empty values are at least 80% distinct is also read on its own as
+`"<header>: <value>"` and those spans are added: fewer misses on name, contact and ID columns, more PII-free cells masked,
+one more model call per such cell. Text that is not a table gives exactly `detect(text)`. A custom `replace` must not
+insert the delimiter, a quote or a line break.
+
+```python
+csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+redactor.redact_table(csv).text
+# 'name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free'
+redactor.redact_table(tsv, "mask", delimiter="\t", vote=False)
+```
+
+On survey and form exports, table mode misses many names split into first and last name columns. `context="header"` cuts the
+misses to about a quarter, at 2.3 to 3.7 more points of PII-free cells masked; for recall first, use it. Measurements:
+[repository README](https://github.com/newmean-ai/pii#tables-csv-tsv).
 
 ## Offline use
 

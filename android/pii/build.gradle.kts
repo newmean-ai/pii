@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.newmean"
-version = "1.0.0"
+version = "1.2.0"
 
 // The native core lives in the repository's native/core and is compiled from there (never copied).
 val coreDir = rootProject.layout.projectDirectory.dir("../native/core")

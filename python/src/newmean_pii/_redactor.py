@@ -1,4 +1,4 @@
-from typing import Callable, Iterable, List, Optional
+from typing import Callable, Iterable, List, Optional, Tuple
 
 from . import _core
 from ._models import DEFAULT_SIZE, DEFAULT_VARIANT, MODEL_VERSION, SIZES, VARIANTS, PathLike, Progress, load_file
@@ -13,7 +13,16 @@ LEVEL1_LABELS: List[str] = [l for l in LABELS if not l.endswith("_L2")]
 TAGS: List[str] = ["O"] + [f"{p}-{l}" for l in LABELS for p in ("B", "I")]
 
 _LABEL_ID = {l: i for i, l in enumerate(LABELS)}
-_SOURCES = {_core.SOURCE_MODEL: "model", _core.SOURCE_REGEX: "regex", _core.SOURCE_MODEL | _core.SOURCE_REGEX: "model+regex"}
+_SOURCES = {
+    _core.SOURCE_MODEL: "model",
+    _core.SOURCE_REGEX: "regex",
+    _core.SOURCE_MODEL | _core.SOURCE_REGEX: "model+regex",
+    _core.SOURCE_TABLE: "table",
+}
+#: Table mode delimiters (the npm package's TableDelimiter) -> pii_table_options.delimiter.
+TABLE_DELIMITERS = {"auto": 0, ",": ord(","), "\t": ord("\t"), ";": ord(";"), "markdown": ord("|")}
+#: Table mode contexts (the npm package's TableOptions.context) -> pii_table_options.context.
+TABLE_CONTEXTS = {"none": 0, "header": 1}
 _MODES = ("tag", "mask", "blank")
 
 
@@ -63,6 +72,7 @@ class Redactor:
         sensitivity: float = 0.0,
         labels: Optional[Iterable[str]] = None,
         regex: bool = False,
+        keep_emoji: bool = False,
         model_dir: Optional[PathLike] = None,
         cache_dir: Optional[PathLike] = None,
         model_url: Optional[str] = None,
@@ -92,6 +102,9 @@ class Redactor:
         self.version: str = MODEL_VERSION
         self.labels: List[str] = [l for l in LABELS if mask >> _LABEL_ID[l] & 1]
         self.regex: bool = bool(regex)
+        #: False (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of
+        #: the input (an emoji inside a span splits it). True: the model reads the text as given (1.1 behaviour).
+        self.keep_emoji: bool = bool(keep_emoji)
 
     @property
     def sensitivity(self) -> float:
@@ -108,13 +121,40 @@ class Redactor:
             raise RuntimeError("the redactor is closed")
         return m
 
-    def detect(self, text: str) -> List[Span]:
-        """Spans to mask, sorted and non-overlapping, with str indices (code points)."""
+    def _check(self, text: str) -> "_core.Model":
         if not isinstance(text, str):
             raise TypeError(f"text must be str, not {type(text).__name__}")
-        m = self._core_model()
-        extra = [(s.start, s.end, _LABEL_ID[s.label]) for s in regex_spans(text)] if self.regex else None
-        return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in m.detect(text, self._sensitivity, self._mask, extra)]
+        return self._core_model()
+
+    def _extra(self, text: str) -> Optional[List[Tuple[int, int, int]]]:
+        return [(s.start, s.end, _LABEL_ID[s.label]) for s in regex_spans(text)] if self.regex else None
+
+    def detect(self, text: str) -> List[Span]:
+        """Spans to mask, sorted and non-overlapping, with str indices (code points), widened to whole grapheme clusters."""
+        m = self._check(text)
+        return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in m.detect(text, self._sensitivity, self._mask, self._extra(text), self.keep_emoji)]
+
+    def detect_table(
+        self, text: str, delimiter: str = "auto", header: bool = True, vote: bool = True, context: str = "none"
+    ) -> List[Span]:
+        """Table mode for CSV, TSV, semicolon-separated and markdown pipe tables (the npm package's detectTable): the whole
+        text is read at once, spans are clipped to cell values (never crossing a delimiter, quote or line break), and with
+        vote a column of short values that the model finds to be names, emails, phone numbers or usernames almost
+        throughout is masked whole (source "table"). delimiter: "auto" (default), ",", "\\t", ";" or "markdown"; header:
+        the first row is a header row, never voted on or propagated into; context "header": with a header row, each
+        non-empty data cell of a column whose non-empty values are at least 80% distinct is also read on its own as
+        "<header>: <value>" and those spans are added (fewer misses on name, contact and ID columns, more PII-free cells
+        masked, one more model call per such cell; default "none"). Text that is not a table gives detect(text)."""
+        if delimiter not in TABLE_DELIMITERS:
+            raise ValueError(f"unknown delimiter {delimiter!r} ({', '.join(map(repr, TABLE_DELIMITERS))})")
+        if context not in TABLE_CONTEXTS:
+            raise ValueError(f"unknown context {context!r} ({', '.join(map(repr, TABLE_CONTEXTS))})")
+        m = self._check(text)
+        spans = m.detect_table(
+            text, self._sensitivity, self._mask, self._extra(text), TABLE_DELIMITERS[delimiter], bool(header), bool(vote),
+            TABLE_CONTEXTS[context], self.keep_emoji,
+        )
+        return [Span(s, e, LABELS[l], _SOURCES[src]) for s, e, l, src in spans]
 
     def redact(
         self,
@@ -130,11 +170,28 @@ class Redactor:
         spans = self.detect(text)
         return RedactResult(apply_redaction(text, spans, mode, mask_char, replace), spans)
 
+    def redact_table(
+        self,
+        text: str,
+        mode: str = "tag",
+        *,
+        delimiter: str = "auto",
+        header: bool = True,
+        vote: bool = True,
+        context: str = "none",
+        mask_char: str = "*",
+        replace: Optional[Callable[[Span, str], str]] = None,
+    ) -> RedactResult:
+        """detect_table + redaction (modes as redact). Spans never cross cells, so delimiters, quotes and line breaks are
+        kept and the output stays a valid table, as long as replace does not insert the delimiter, a quote or a line break."""
+        if mode not in _MODES:
+            raise ValueError(f"unknown mode {mode!r} (tag, mask, blank)")
+        spans = self.detect_table(text, delimiter, header, vote, context)
+        return RedactResult(apply_redaction(text, spans, mode, mask_char, replace), spans)
+
     def tokenize(self, text: str) -> List[Token]:
         """Token ids and offsets (code points) without <s> and </s>, as the npm package's tokenizer gives them."""
-        if not isinstance(text, str):
-            raise TypeError(f"text must be str, not {type(text).__name__}")
-        return [Token(*t) for t in self._core_model().tokenize(text)]
+        return [Token(*t) for t in self._check(text).tokenize(text)]
 
     def info(self) -> dict:
         """Model shape and the native kernel build."""
@@ -151,7 +208,7 @@ class Redactor:
         self.close()
 
     def __repr__(self) -> str:
-        return f"Redactor(size={self.size!r}, variant={self.variant!r}, sensitivity={self._sensitivity}, regex={self.regex})"
+        return f"Redactor(size={self.size!r}, variant={self.variant!r}, sensitivity={self._sensitivity}, regex={self.regex}, keep_emoji={self.keep_emoji})"
 
 
 def create_redactor(
@@ -161,6 +218,7 @@ def create_redactor(
     sensitivity: float = 0.0,
     labels: Optional[Iterable[str]] = None,
     regex: bool = False,
+    keep_emoji: bool = False,
     model_dir: Optional[PathLike] = None,
     cache_dir: Optional[PathLike] = None,
     model_url: Optional[str] = None,
@@ -168,6 +226,6 @@ def create_redactor(
 ) -> Redactor:
     """Same as Redactor(...), named like the npm package's createRedactor."""
     return Redactor(
-        size, variant, sensitivity=sensitivity, labels=labels, regex=regex, model_dir=model_dir, cache_dir=cache_dir,
+        size, variant, sensitivity=sensitivity, labels=labels, regex=regex, keep_emoji=keep_emoji, model_dir=model_dir, cache_dir=cache_dir,
         model_url=model_url, on_progress=on_progress,
     )

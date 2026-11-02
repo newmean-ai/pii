@@ -2,12 +2,21 @@
 //
 //   pii_cli tokenize MODEL.onnx TOKENIZER.json            {"ids": [...], "cp": [[s, e], ...], "u16": [...], "u8": [...]}
 //   pii_cli detect MODEL.onnx TOKENIZER.json [SENS]       {"spans": [[cp_s, cp_e, "LABEL", u16_s, u16_e, u8_s, u8_e], ...]}
+//   pii_cli table MODEL.onnx TOKENIZER.json [SENS]        pii_detect_table: the same with the source bits appended to each span
+//     Optional fields of an input line (detect and table): "extra": [[cp_s, cp_e, "LABEL"], ...] (pii_options.extra in
+//     code points), "labels": ["PERSON", ...]; table only: "delimiter": "auto" | "," | "\t" | ";" | "markdown",
+//     "header": bool, "vote": bool, "context": "none" | "header".
+//   pii_cli apply                                         pii_table_apply without a model (parity of the table steps): each
+//     line also has "spans": [[cp_s, cp_e, "LABEL", source], ...] (sorted, non-overlapping, as detect gives them before
+//     snapping); {"spans": [[cp_s, cp_e, "LABEL", source], ...]} out
 //   pii_cli threads MODEL.onnx TOKENIZER.json N [SENS]    every text in N threads at once; "ok" when all equal one thread
 //   pii_cli bench MODEL.onnx TOKENIZER.json               ms per text (all inputs, inputs of <= 64 tokens, a 1,000-token text)
 //   pii_cli verify FILE SIZE KIND                         checks FILE against the pinned size and SHA-256
 //   pii_cli info                                          {"version": ..., "build": "neon", "fma": false}
-//   pii_cli selftest [MODEL.onnx TOKENIZER.json]          API checks (combine as js/test/combine.test.ts, arguments,
-//                                                         malformed and truncated model files); "ok" or the failures
+//   pii_cli selftest [MODEL.onnx TOKENIZER.json]          API checks (combine as js/test/combine.test.ts, grapheme snapping,
+//                                                         table parsing, clipping, vote and merge, arguments, table mode
+//                                                         with a model, malformed and truncated model files); "ok" or the
+//                                                         failures
 //   pii_cli fuzz MODEL.onnx TOKENIZER.json N             N mutated model files, N / 2 tokenizer files, 2N random byte strings
 #include <pthread.h>
 #include <stdio.h>
@@ -37,7 +46,69 @@ static uint8_t *read_file(const char *path, size_t *n) {
 typedef struct {
   char *s;
   size_t n;
+  pii_extra_span *extra;  // code points
+  size_t n_extra;
+  uint32_t labels;
+  int delimiter, header, vote, context;
+  pii_cspan *spans;  // "spans" (pii_cli apply), code points
+  size_t n_spans;
 } input;
+
+// Optional fields of an input line (see the top of this file).
+static void read_line_options(const pii_json *j, input *in) {
+  in->extra = NULL;
+  in->n_extra = 0;
+  in->labels = PII_LABELS_ALL;
+  in->delimiter = 0;
+  in->header = in->vote = 1;
+  in->context = 0;
+  in->spans = NULL;
+  in->n_spans = 0;
+  const pii_json *v = pii_json_get(j, "spans");
+  if (v && v->type == PJ_ARR && v->n) {
+    in->spans = calloc(v->n, sizeof *in->spans);
+    for (size_t i = 0; i < v->n; i++) {
+      const pii_json *x = &v->items[i];
+      if (x->type != PJ_ARR || x->n != 4 || x->items[2].type != PJ_STR) continue;
+      in->spans[in->n_spans++] = (pii_cspan){(size_t)x->items[0].num, (size_t)x->items[1].num, pii_label_from_name(x->items[2].str),
+                                             (int)x->items[3].num};
+    }
+  }
+  v = pii_json_get(j, "extra");
+  if (v && v->type == PJ_ARR && v->n) {
+    in->extra = calloc(v->n, sizeof *in->extra);
+    for (size_t i = 0; i < v->n; i++) {
+      const pii_json *x = &v->items[i];
+      if (x->type != PJ_ARR || x->n != 3 || x->items[2].type != PJ_STR) continue;
+      in->extra[in->n_extra].start = (size_t)x->items[0].num;
+      in->extra[in->n_extra].end = (size_t)x->items[1].num;
+      in->extra[in->n_extra].label = pii_label_from_name(x->items[2].str);
+      in->n_extra++;
+    }
+  }
+  if ((v = pii_json_get(j, "labels")) && v->type == PJ_ARR) {
+    in->labels = 0;
+    for (size_t i = 0; i < v->n; i++) {
+      const int l = v->items[i].type == PJ_STR ? pii_label_from_name(v->items[i].str) : -1;
+      if (l >= 0) in->labels |= PII_LABEL_BIT(l);
+    }
+  }
+  if ((v = pii_json_get(j, "delimiter")) && v->type == PJ_STR)
+    in->delimiter = !strcmp(v->str, "markdown") ? '|' : !strcmp(v->str, "auto") ? 0 : v->len == 1 ? v->str[0] : -1;
+  if ((v = pii_json_get(j, "header")) && v->type == PJ_BOOL) in->header = v->num != 0;
+  if ((v = pii_json_get(j, "vote")) && v->type == PJ_BOOL) in->vote = v->num != 0;
+  if ((v = pii_json_get(j, "context")) && v->type == PJ_STR) in->context = !strcmp(v->str, "header") ? PII_TABLE_CONTEXT_HEADER : 0;
+}
+
+// pii_options of an input line (base: the command-line options).
+static pii_options line_options(const pii_options *base, const input *in) {
+  pii_options o = *base;
+  o.labels = in->labels;
+  o.extra = in->extra;
+  o.n_extra = in->n_extra;
+  o.extra_unit = PII_UNIT_CODEPOINT;
+  return o;
+}
 
 // All "text" fields of the JSON lines on stdin.
 static input *read_texts(size_t *count) {
@@ -62,6 +133,7 @@ static input *read_texts(size_t *count) {
           t[n].s = malloc(v->len + 1);
           memcpy(t[n].s, v->str, v->len + 1);
           t[n].n = v->len;
+          read_line_options(&j, &t[n]);
           n++;
         }
         pii_json_free(&j);
@@ -102,11 +174,14 @@ static double now_ms(void) {
   return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
 
-static void print_spans(const pii_span *s, size_t n) {
+static void print_spans(const pii_span *s, size_t n, int with_source) {
   printf("{\"spans\": [");
-  for (size_t i = 0; i < n; i++)
-    printf("%s[%zu, %zu, \"%s\", %zu, %zu, %zu, %zu]", i ? ", " : "", s[i].cp_start, s[i].cp_end, s[i].label_name, s[i].u16_start,
+  for (size_t i = 0; i < n; i++) {
+    printf("%s[%zu, %zu, \"%s\", %zu, %zu, %zu, %zu", i ? ", " : "", s[i].cp_start, s[i].cp_end, s[i].label_name, s[i].u16_start,
            s[i].u16_end, s[i].byte_start, s[i].byte_end);
+    if (with_source) printf(", %d", s[i].source);
+    printf("]");
+  }
   printf("]}\n");
 }
 
@@ -219,6 +294,370 @@ static void selftest_static(void) {
   pii_span *s;
   size_t n;
   EXPECT(pii_detect(NULL, "a", 1, NULL, &s, &n) == PII_ERR_ARG);
+  EXPECT(pii_detect_table(NULL, "a", 1, NULL, NULL, &s, &n) == PII_ERR_ARG);
+  pii_table_options t;
+  pii_table_options_init(&t);
+  pii_table_options_init(NULL);
+  EXPECT(t.struct_size == sizeof t && t.delimiter == 0 && t.header == 1 && t.vote == 1);
+}
+
+// ---------------------------------------------------------------- selftest: grapheme snapping and table mode (no model)
+// Code point index of byte offset b of s.
+static size_t cpi(const char *s, size_t b) {
+  size_t k = 0;
+  for (size_t i = 0; i < b; i++) k += ((unsigned char)s[i] & 0xc0) != 0x80;
+  return k;
+}
+// Code point range of the first occurrence of needle in s at or after code point `from` ([0, 0) when absent).
+static pii_cspan find(const char *s, const char *needle, size_t from, int label, int source) {
+  const char *p = s;
+  while (*p && cpi(s, (size_t)(p - s)) < from) p++;
+  p = strstr(p, needle);
+  if (!p) return cs(0, 0, label, source);
+  const size_t b = (size_t)(p - s);
+  return cs(cpi(s, b), cpi(s, b + strlen(needle)), label, source);
+}
+
+static size_t snap(const char *text, pii_cspan *s, size_t n) {
+  pii_text tx;
+  if (pii_text_init(&tx, text, strlen(text))) return 0;
+  n = pii_snap_graphemes(s, n, tx.cp, tx.n, NULL, 0);
+  pii_text_free(&tx);
+  return n;
+}
+
+static void selftest_snap(void) {
+  pii_cspan s[4];
+  // emoji ZWJ sequence: a span over "👩‍👩" (woman ZWJ woman) widens to the whole family "👩‍👩‍👧" (5 code points)
+  const char *fam = "\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7 Contact";
+  s[0] = cs(0, 3, PII_PERSON, PII_SOURCE_MODEL);
+  EXPECT(snap(fam, s, 1) == 1 && s[0].start == 0 && s[0].end == 5 && s[0].label == PII_PERSON && s[0].source == PII_SOURCE_MODEL);
+  // a span starting inside it moves back; one already on boundaries does not move
+  s[0] = cs(2, 7, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(8, 13, PII_ORG, PII_SOURCE_REGEX);
+  EXPECT(snap(fam, s, 2) == 2 && s[0].start == 0 && s[0].end == 7 && s[1].start == 8 && s[1].end == 13 && s[1].label == PII_ORG);
+  // two spans meeting inside one cluster merge; equal original lengths keep the earlier label and source
+  s[0] = cs(0, 1, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(2, 3, PII_ORG, PII_SOURCE_REGEX);
+  EXPECT(snap(fam, s, 2) == 1 && s[0].start == 0 && s[0].end == 5 && s[0].label == PII_PERSON && s[0].source == PII_SOURCE_MODEL);
+  // the longer original span wins; in a chain each next span competes with the current winner's original length
+  s[0] = cs(0, 1, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(2, 4, PII_ORG, PII_SOURCE_REGEX);
+  s[2] = cs(4, 6, PII_EMAIL, PII_SOURCE_MODEL);  // length 2 = the winner's: ORG stays
+  EXPECT(snap(fam, s, 3) == 1 && s[0].start == 0 && s[0].end == 6 && s[0].label == PII_ORG && s[0].source == PII_SOURCE_REGEX);
+  s[0] = cs(0, 1, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(2, 3, PII_ORG, PII_SOURCE_REGEX);
+  s[2] = cs(4, 9, PII_EMAIL, PII_SOURCE_MODEL);
+  EXPECT(snap(fam, s, 3) == 1 && s[0].start == 0 && s[0].end == 9 && s[0].label == PII_EMAIL && s[0].source == PII_SOURCE_MODEL);
+  // flags: regional indicator pairs (🇰🇷🇺🇸); the second indicator of a pair snaps back, the next pair is its own cluster
+  const char *flags = "\xf0\x9f\x87\xb0\xf0\x9f\x87\xb7\xf0\x9f\x87\xba\xf0\x9f\x87\xb8 Seoul";
+  s[0] = cs(1, 2, PII_ADDRESS, PII_SOURCE_MODEL);
+  s[1] = cs(2, 3, PII_ADDRESS, PII_SOURCE_MODEL);
+  EXPECT(snap(flags, s, 2) == 2 && s[0].start == 0 && s[0].end == 2 && s[1].start == 2 && s[1].end == 4);
+  // skin tone modifier (👍🏽), keycap (1 U+FE0F U+20E3), combining acute (e U+0301), Hangul jamo (ᄀ ᅡ ᆨ)
+  const char *tone = "\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd ok";
+  s[0] = cs(0, 1, PII_USERNAME, PII_SOURCE_MODEL);
+  EXPECT(snap(tone, s, 1) == 1 && s[0].start == 0 && s[0].end == 2);
+  const char *keycap = "1\xef\xb8\x8f\xe2\x83\xa3" "2 x";
+  s[0] = cs(0, 1, PII_PHONE, PII_SOURCE_MODEL);
+  EXPECT(snap(keycap, s, 1) == 1 && s[0].start == 0 && s[0].end == 3);
+  s[0] = cs(1, 4, PII_PHONE, PII_SOURCE_MODEL);  // "⃣" "2" " ": starts back at "1"
+  EXPECT(snap(keycap, s, 1) == 1 && s[0].start == 0 && s[0].end == 4);
+  const char *acute = "Jose\xcc\x81 Garci\xcc\x81" "a";
+  s[0] = cs(0, 4, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(6, 11, PII_PERSON, PII_SOURCE_MODEL);
+  EXPECT(snap(acute, s, 2) == 2 && s[0].start == 0 && s[0].end == 5 && s[1].start == 6 && s[1].end == 12);
+  const char *jamo = "\xe1\x84\x80\xe1\x85\xa1\xe1\x86\xa8 x";
+  s[0] = cs(1, 2, PII_PERSON, PII_SOURCE_MODEL);
+  EXPECT(snap(jamo, s, 1) == 1 && s[0].start == 0 && s[0].end == 3);
+  // spans touching at a boundary stay apart; CRLF is one cluster
+  s[0] = cs(0, 1, PII_PERSON, PII_SOURCE_MODEL);
+  s[1] = cs(1, 2, PII_ORG, PII_SOURCE_MODEL);
+  EXPECT(snap("ab", s, 2) == 2 && s[0].end == 1 && s[1].start == 1);
+  s[0] = cs(1, 2, PII_PERSON, PII_SOURCE_MODEL);
+  EXPECT(snap("a\r\nb", s, 1) == 1 && s[0].start == 1 && s[0].end == 3);
+  EXPECT(snap("", s, 0) == 0);
+  // empty spans stay as they are (pii_options.extra may hold one); in a cluster after another span they join it, and a
+  // span whose cluster starts before an empty span takes the group's start back
+  s[0] = cs(2, 2, PII_PERSON, PII_SOURCE_REGEX);
+  EXPECT(snap("abcdef", s, 1) == 1 && s[0].start == 2 && s[0].end == 2 && s[0].label == PII_PERSON);
+  s[0] = cs(2, 2, PII_PERSON, PII_SOURCE_REGEX);
+  s[1] = cs(3, 5, PII_EMAIL, PII_SOURCE_MODEL);
+  EXPECT(snap("ab\xcc\x81" "cdef", s, 2) == 2 && s[0].start == 2 && s[0].end == 2 && s[1].start == 3 && s[1].end == 5);
+  s[0] = cs(2, 2, PII_PERSON, PII_SOURCE_REGEX);
+  s[1] = cs(3, 5, PII_EMAIL, PII_SOURCE_MODEL);  // "b" U+0301 U+0301 is one cluster [1, 4)
+  EXPECT(snap("ab\xcc\x81\xcc\x81" "cd", s, 2) == 1 && s[0].start == 1 && s[0].end == 5 && s[0].label == PII_EMAIL &&
+         s[0].source == PII_SOURCE_MODEL);
+}
+
+typedef struct {
+  pii_cell *c;
+  size_t nc, rows;
+  int delim;
+} parsed;
+
+static int parse(const char *text, int delimiter, parsed *p) {
+  pii_text tx;
+  pii_vec cells;
+  pii_vec_init(&cells, sizeof(pii_cell));
+  memset(p, 0, sizeof *p);
+  if (pii_text_init(&tx, text, strlen(text))) return -1;
+  int rc = pii_table_parse(&tx, delimiter, &cells, &p->rows, &p->delim);
+  p->c = cells.p;
+  p->nc = cells.n;
+  pii_text_free(&tx);
+  return rc;
+}
+
+// The cell (row, col) has the code point range of needle (first occurrence at or after from).
+static int cell_is(const parsed *p, const char *text, uint32_t row, uint32_t col, const char *needle, size_t from) {
+  const pii_cspan r = find(text, needle, from, 0, 0);
+  for (size_t i = 0; i < p->nc; i++)
+    if (p->c[i].row == row && p->c[i].col == col) return p->c[i].start == r.start && p->c[i].end == r.end;
+  return 0;
+}
+
+static void selftest_table_parse(void) {
+  parsed p;
+  // auto-detection: comma, tab, semicolon, markdown; prose and single-column text are not tables
+  const char *comma = "name,email\nAnn,a@x.com\nBob,b@x.com\n";
+  EXPECT(!parse(comma, 0, &p) && p.delim == ',' && p.rows == 3 && p.nc == 6 && cell_is(&p, comma, 2, 1, "b@x.com", 0));
+  free(p.c);
+  const char *tab = "name\temail; note\nAnn\ta@x.com; x\nBob\tb@x.com; y\n";
+  EXPECT(!parse(tab, 0, &p) && p.delim == '\t' && p.rows == 3 && cell_is(&p, tab, 1, 1, "a@x.com; x", 0));
+  free(p.c);
+  const char *semi = "a;b;c\n1;2;3\n4;5;6";
+  EXPECT(!parse(semi, 0, &p) && p.delim == ';' && p.rows == 3 && p.nc == 9 && cell_is(&p, semi, 2, 2, "6", 0));
+  free(p.c);
+  const char *md = "\n  | Name | Email |\n|---|:--:|\n| Ann Lee |  |\n| Bob | b@x |\n";
+  EXPECT(!parse(md, 0, &p) && p.delim == '|' && p.rows == 3 && p.nc == 6 && cell_is(&p, md, 0, 0, "Name", 0) &&
+         cell_is(&p, md, 1, 0, "Ann Lee", 0) && cell_is(&p, md, 2, 1, "b@x", 0));
+  for (size_t i = 0; i < p.nc; i++)  // the all-space segment: an empty cell at the segment's start
+    if (p.c[i].row == 1 && p.c[i].col == 1) EXPECT(p.c[i].start == p.c[i].end && p.c[i].start == find(md, "|  |", 0, 0, 0).start + 1);
+  free(p.c);
+  const char *prose = "Hello, my name is Ann Lee.\nI live in Seoul; call me.\nThanks";
+  EXPECT(!parse(prose, 0, &p) && p.delim == 0 && p.rows == 0 && p.nc == 0);
+  free(p.c);
+  EXPECT(!parse("x\n| a |\n| b |", 0, &p) && p.delim == 0);  // the first non-empty line must start with '|'
+  free(p.c);
+  EXPECT(!parse("| only one |\nplain line", 0, &p) && p.delim == 0);  // markdown needs 2 of the first 5 lines
+  free(p.c);
+  EXPECT(!parse("a,b\n", 0, &p) && p.delim == 0);  // one record of 2 fields: score 1 < 2
+  free(p.c);
+  // ties go to the earlier delimiter: 2 rows of 2 fields with ',' and with ';'
+  EXPECT(!parse("a,b;c\nd,e;f\n", 0, &p) && p.delim == ',');
+  free(p.c);
+  // quoted fields: delimiters, escaped quotes and line breaks inside quotes; text after the closing quote is skipped
+  const char *q = "a,b\n\"Lee, Ann\",\"say \"\"hi\"\"\"\n\"multi\nline\"junk,x\n";
+  EXPECT(!parse(q, ',', &p) && p.rows == 3 && p.nc == 6 && cell_is(&p, q, 1, 0, "Lee, Ann", 0) &&
+         cell_is(&p, q, 1, 1, "say \"\"hi\"\"", 0) && cell_is(&p, q, 2, 0, "multi\nline", 0) && cell_is(&p, q, 2, 1, "x", 10));
+  free(p.c);
+  // blank lines (empty, whitespace, a lone "") are not rows; CRLF ends records, a lone CR is an ordinary character
+  const char *crlf = "a,b\r\n\r\n \t\r\n\"\"\r\n1,2\r\nx\ry,4\r\n";
+  EXPECT(!parse(crlf, 0, &p) && p.delim == ',' && p.rows == 3 && p.nc == 6 && cell_is(&p, crlf, 0, 1, "b", 0) &&
+         cell_is(&p, crlf, 1, 0, "1", 0) && cell_is(&p, crlf, 2, 0, "x\ry", 0));
+  free(p.c);
+  // an unclosed quote runs to the end of the text; a trailing delimiter gives an empty last field
+  const char *open = "a,b,\n\"open,1\n2,3";
+  EXPECT(!parse(open, ',', &p) && p.rows == 2 && p.nc == 4 && cell_is(&p, open, 1, 0, "open,1\n2,3", 0));
+  for (size_t i = 0; i < p.nc; i++)
+    if (p.c[i].row == 0 && p.c[i].col == 2) EXPECT(p.c[i].start == 4 && p.c[i].end == 4);
+  free(p.c);
+  // markdown: a line without a final '|' keeps its last segment; "|" alone and separator lines are not rows; prose ignored
+  const char *md2 = "| a | b\nintro text\n| 1 | 2 |\n|\n| :-: | --- |\n| 3 |\r\n";
+  EXPECT(!parse(md2, '|', &p) && p.rows == 3 && p.nc == 5 && cell_is(&p, md2, 0, 1, "b", 0) && cell_is(&p, md2, 1, 1, "2", 0) &&
+         cell_is(&p, md2, 2, 0, "3", 0));
+  free(p.c);
+  // explicit delimiter on text of one row: not a table (0 or 1 rows)
+  EXPECT(!parse("a,b,c", ',', &p) && p.delim == ',' && p.rows == 1);
+  free(p.c);
+}
+
+typedef struct {
+  pii_cspan *s;
+  size_t n;
+} result;
+
+static result apply(const char *text, pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels) {
+  result r = {NULL, 0};
+  pii_text tx;
+  if (pii_text_init(&tx, text, strlen(text))) return r;
+  EXPECT(pii_table_apply(&tx, spans, n, delimiter, header, vote, labels, &r.s, &r.n) == PII_OK);
+  pii_text_free(&tx);
+  return r;
+}
+
+// Spans of r with this label and source inside [a, b).
+static size_t count(const result *r, int label, int source, size_t a, size_t b) {
+  size_t k = 0;
+  for (size_t i = 0; i < r->n; i++) k += r->s[i].label == label && r->s[i].source == source && r->s[i].start >= a && r->s[i].end <= b;
+  return k;
+}
+
+static int has(const result *r, pii_cspan x) {
+  for (size_t i = 0; i < r->n; i++)
+    if (r->s[i].start == x.start && r->s[i].end == x.end && r->s[i].label == x.label && r->s[i].source == x.source) return 1;
+  return 0;
+}
+
+static void selftest_table_apply(void) {
+  // clipping: a span across a delimiter splits into cell pieces; pieces of only whitespace or delimiters are dropped
+  const char *small = "name, city\nAnn,Lee \n";
+  pii_cspan in[64];
+  in[0] = find(small, "name, c", 0, PII_ORG, PII_SOURCE_MODEL);
+  in[1] = find(small, "Ann,Lee", 0, PII_PERSON, PII_SOURCE_MODEL | PII_SOURCE_REGEX);
+  result r = apply(small, in, 2, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(r.n == 4 && has(&r, find(small, "name", 0, PII_ORG, PII_SOURCE_MODEL)) && has(&r, find(small, " c", 0, PII_ORG, PII_SOURCE_MODEL)) &&
+         has(&r, find(small, "Ann", 0, PII_PERSON, 3)) && has(&r, find(small, "Lee", 0, PII_PERSON, 3)));
+  free(r.s);
+  in[0] = find(small, ", ", 0, PII_ORG, PII_SOURCE_MODEL);
+  r = apply(small, in, 1, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(r.n == 0);
+  free(r.s);
+  // not a table: the spans unchanged (then snapped)
+  const char *prose = "Contact \xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7 Ann, please.";
+  in[0] = cs(8, 11, PII_PERSON, PII_SOURCE_MODEL);
+  in[1] = find(prose, "Ann, p", 0, PII_PERSON, PII_SOURCE_MODEL);
+  r = apply(prose, in, 2, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(r.n == 2 && r.s[0].start == 8 && r.s[0].end == 13 && has(&r, find(prose, "Ann, p", 0, PII_PERSON, PII_SOURCE_MODEL)));
+  free(r.s);
+  // snapping stays inside the cell: a value starting with U+0301 (one cluster with the ',', ';', '|' or opening '"' before
+  // it) or ending with U+0600 (Prepend: one cluster with the delimiter after it) keeps the delimiter and quote unmasked
+  static const struct {
+    const char *text;
+    size_t a0, b0, a1, b1;  // input spans (a1 == b1: one span); the output is the same spans
+  } edge[] = {
+      {"name,city\n\"\xcc\x81" "Ann, Lee\",Seoul\nBo,Busan", 11, 19, 0, 0},
+      {"h1,h2\nc,\xcc\x81" "d\ne,f", 6, 7, 8, 10},
+      {"a,b\nx\xd8\x80,y\nz,w", 4, 6, 0, 0},
+      {"a;b\nx\xd8\x80;\xcc\x81y\nz;w", 4, 6, 7, 9},
+      {"| a | b |\n|---|---|\n| x\xd8\x80|\xcc\x81y |\n| z | w |", 22, 24, 25, 27},
+      {"a,b\n\"x\xd8\x80\",\"\xcc\x81y\"\nz,w", 5, 7, 10, 12},
+  };
+  for (size_t k = 0; k < sizeof edge / sizeof edge[0]; k++) {
+    size_t n = 0;
+    in[n++] = cs(edge[k].a0, edge[k].b0, PII_PERSON, PII_SOURCE_MODEL);
+    if (edge[k].a1 < edge[k].b1) in[n++] = cs(edge[k].a1, edge[k].b1, PII_EMAIL, PII_SOURCE_MODEL);
+    r = apply(edge[k].text, in, n, 0, 1, 0, PII_LABELS_ALL);
+    EXPECT(r.n == n && has(&r, in[0]) && (n == 1 || has(&r, in[1])));
+    free(r.s);
+  }
+  // an empty span in a table is dropped by the clip (its piece holds no non-whitespace code point)
+  in[0] = cs(5, 5, PII_PERSON, PII_SOURCE_REGEX);
+  r = apply("a,b\nxy,z\nq,w", in, 1, 0, 1, 0, PII_LABELS_ALL);
+  EXPECT(r.n == 0);
+  free(r.s);
+}
+
+// A survey: id, name (8 of 10 names found, one missed, one placeholder), email, phone, a free-text comment (quoted, with
+// commas), a username; a blank CRLF line after row 5.
+static const char *const SURVEY[10][6] = {
+    {"1", "Ann Lee", "ann@x.com", "010-1234-5678", "The delivery was late and the box was badly damaged", "ann_lee"},
+    {"2", "Bo Kim", "bo@x.com", "010-2222-3333", "Great service, the courier was polite and on time", "bokim"},
+    {"3", "Cy Park", "cy@x.com", "010-4444-5555", "I would like a refund for the second order, please", "cypark9"},
+    {"4", "Di Choi", "di@x.com", "010-6666-7777", "Packaging could be better but the product works fine", "dichoi"},
+    {"5", "Ed Yun", "ed@x.com", "010-8888-9999", "Please call me back about the warranty extension", "ed_yun"},
+    {"6", "Fa Han", "fa@x.com", "010-1111-0000", "Nothing to add, everything was as described online", "fahan"},
+    {"7", "Gu Seo", "gu@x.com", "010-3333-1111", "The app crashed twice while I was paying for it", "guseo"},
+    {"8", "Ha Jung", "ha@x.com", "010-5555-2222", "Five stars, I will recommend this shop to friends", "hajung"},
+    {"9", "Io Lim", "unknown", "12345", "Support answered quickly and solved my problem", "N/A"},
+    {"10", "N/A", "io@x.org", "\xd9\xa0\xd9\xa1\xd9\xa0\xd9\xa1\xd9\xa2\xd9\xa3\xd9\xa4\xd9\xa5", "Delivery person left it at the wrong door again",
+     "iolim"},
+};
+
+static void survey_text(char *text, size_t cap, size_t *row_cp) {
+  size_t o = (size_t)snprintf(text, cap, "id,name,email,phone,comment,user\n");
+  for (int i = 0; i < 10; i++) {
+    row_cp[i] = cpi(text, o);
+    o += (size_t)snprintf(text + o, cap - o, "%s,%s,%s,%s,\"%s\",%s%s", SURVEY[i][0], SURVEY[i][1], SURVEY[i][2], SURVEY[i][3],
+                          SURVEY[i][4], SURVEY[i][5], i == 4 ? "\r\n\r\n" : "\n");
+  }
+}
+
+// Model and pattern spans of the survey in text order: "id" in the header as ORG; names, emails and phones of rows 1-8
+// (row 6's name as ORG over "Han" when han_org); every comment whole as PERSON (free text must not vote); usernames of
+// rows 1-3 only (3 < 4: no vote); with lim_org an ORG span over "Lim" inside row 9's name.
+static size_t survey_spans(const char *text, const size_t *row_cp, int han_org, int lim_org, pii_cspan *in) {
+  size_t n = 0;
+  in[n++] = find(text, "id", 0, PII_ORG, PII_SOURCE_MODEL);
+  for (int i = 0; i < 10; i++) {
+    const size_t r0 = row_cp[i];
+    if (i == 5 && han_org) in[n++] = find(text, "Han", r0, PII_ORG, PII_SOURCE_MODEL);
+    else if (i < 8) in[n++] = find(text, SURVEY[i][1], r0, PII_PERSON, PII_SOURCE_MODEL);
+    if (i == 8 && lim_org) in[n++] = find(text, "Lim", r0, PII_ORG, PII_SOURCE_MODEL);
+    if (i < 8) in[n++] = find(text, SURVEY[i][2], r0, PII_EMAIL, PII_SOURCE_REGEX);
+    if (i < 8) in[n++] = find(text, SURVEY[i][3], r0, PII_PHONE, PII_SOURCE_MODEL | PII_SOURCE_REGEX);
+    in[n++] = find(text, SURVEY[i][4], r0, PII_PERSON, PII_SOURCE_MODEL);
+    if (i < 3) in[n++] = find(text, SURVEY[i][5], r0, PII_USERNAME, PII_SOURCE_MODEL);
+  }
+  return n;
+}
+
+static void selftest_table_vote(void) {
+  char text[4096];
+  size_t row_cp[10];
+  pii_cspan in[64];
+  survey_text(text, sizeof text, row_cp);
+  const size_t ncp = cpi(text, strlen(text));
+  size_t n = survey_spans(text, row_cp, 0, 0, in);
+  // vote on: names, emails and phones propagate; "N/A", an email without "@" and a phone of 5 digits are skipped
+  result r = apply(text, in, n, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) == 9);   // row 10's name is "N/A"; row 9's missed name is added
+  EXPECT(count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, ncp) == 9);    // "unknown" skipped
+  EXPECT(count(&r, PII_PHONE, PII_SOURCE_TABLE, 0, ncp) == 9);    // "12345" skipped, Arabic-Indic digits kept
+  EXPECT(count(&r, PII_PERSON, PII_SOURCE_MODEL, 0, ncp) == 10);  // comments: clipped only
+  EXPECT(count(&r, PII_USERNAME, PII_SOURCE_MODEL, 0, ncp) == 3 && count(&r, PII_USERNAME, PII_SOURCE_TABLE, 0, ncp) == 0);
+  EXPECT(has(&r, find(text, "id", 0, PII_ORG, PII_SOURCE_MODEL)) && has(&r, find(text, "Io Lim", 0, PII_PERSON, PII_SOURCE_TABLE)) &&
+         has(&r, find(text, "io@x.org", 0, PII_EMAIL, PII_SOURCE_TABLE)) && has(&r, find(text, "Ann Lee", 0, PII_PERSON, PII_SOURCE_TABLE)));
+  EXPECT(!has(&r, find(text, "unknown", 0, PII_EMAIL, PII_SOURCE_TABLE)) && !has(&r, find(text, "12345", 0, PII_PHONE, PII_SOURCE_TABLE)));
+  int sorted = 1;
+  for (size_t i = 1; i < r.n; i++) sorted &= r.s[i - 1].end <= r.s[i].start;
+  EXPECT(sorted && r.n == 1 + 9 + 9 + 9 + 10 + 3);
+  free(r.s);
+  // 7 of 10 names found (row 6 read as ORG): 5 * 7 < 4 * 10, the name column does not vote; the others still do
+  n = survey_spans(text, row_cp, 1, 0, in);
+  r = apply(text, in, n, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) == 0 && has(&r, find(text, "Han", row_cp[5], PII_ORG, PII_SOURCE_MODEL)) &&
+         count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, ncp) == 9);
+  free(r.s);
+  // a short ORG span inside a voting cell ("Lim" of "Io Lim"): the TABLE span over the whole cell wins the merged group
+  n = survey_spans(text, row_cp, 0, 1, in);
+  r = apply(text, in, n, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(has(&r, find(text, "Io Lim", 0, PII_PERSON, PII_SOURCE_TABLE)) && count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) == 9 &&
+         count(&r, PII_ORG, PII_SOURCE_MODEL, 0, ncp) == 1);
+  free(r.s);
+  // header off: the header row is data (11 cells, 8 supported: 5 * 8 < 4 * 11), nothing votes
+  r = apply(text, in, n, 0, 0, 1, PII_LABELS_ALL);
+  EXPECT(count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) + count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, ncp) +
+         count(&r, PII_PHONE, PII_SOURCE_TABLE, 0, ncp) == 0 && r.n == n);
+  free(r.s);
+  // vote off: the clipped spans only
+  r = apply(text, in, n, 0, 1, 0, PII_LABELS_ALL);
+  EXPECT(r.n == n && count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) + count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, ncp) == 0 &&
+         has(&r, find(text, "Lim", row_cp[8], PII_ORG, PII_SOURCE_MODEL)));
+  free(r.s);
+  // label filter: PHONE disabled never propagates (the other columns still do)
+  r = apply(text, in, n, 0, 1, 1, PII_LABELS_ALL & ~PII_LABEL_BIT(PII_PHONE));
+  EXPECT(count(&r, PII_PHONE, PII_SOURCE_TABLE, 0, ncp) == 0 && count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, ncp) == 9 &&
+         count(&r, PII_PHONE, 3, 0, ncp) == 8);
+  free(r.s);
+  // tab-delimited reading of a comma file: one long field per row (median > 40 code points), nothing votes
+  r = apply(text, in, n, '\t', 1, 1, PII_LABELS_ALL);
+  EXPECT(r.n == n && count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, ncp) == 0);
+  free(r.s);
+  // the same table as markdown: same votes
+  char md[4096];
+  size_t o = (size_t)snprintf(md, sizeof md, "| id | name | email | phone | comment | user |\n|---|---|---|---|---|---|\n");
+  for (int i = 0; i < 10; i++) {
+    row_cp[i] = cpi(md, o);
+    o += (size_t)snprintf(md + o, sizeof md - o, "| %s | %s | %s | %s | %s | %s |\n", SURVEY[i][0], SURVEY[i][1], SURVEY[i][2],
+                          SURVEY[i][3], SURVEY[i][4], SURVEY[i][5]);
+  }
+  n = survey_spans(md, row_cp, 0, 0, in);
+  r = apply(md, in, n, 0, 1, 1, PII_LABELS_ALL);
+  EXPECT(count(&r, PII_PERSON, PII_SOURCE_TABLE, 0, o) == 9 && count(&r, PII_EMAIL, PII_SOURCE_TABLE, 0, o) == 9 &&
+         count(&r, PII_PHONE, PII_SOURCE_TABLE, 0, o) == 9 && count(&r, PII_PERSON, PII_SOURCE_MODEL, 0, o) == 10);
+  free(r.s);
 }
 
 static uint64_t rng = 0x9e3779b97f4a7c15ull;
@@ -227,6 +666,89 @@ static uint64_t next_rand(void) {
   rng ^= rng >> 7;
   rng ^= rng << 17;
   return rng;
+}
+
+// Every span of s starts and ends on an extended grapheme cluster boundary of text.
+static int on_graphemes(const char *text, const pii_span *s, size_t n) {
+  pii_text tx;
+  if (pii_text_init(&tx, text, strlen(text))) return 0;
+  char *bound = calloc(tx.n + 1, 1);
+  for (size_t i = 0; i < tx.n; i = pii_grapheme_end(tx.cp, i, tx.n)) bound[i] = 1;
+  bound[tx.n] = 1;
+  int ok = 1;
+  for (size_t i = 0; i < n; i++) ok &= bound[s[i].cp_start] && bound[s[i].cp_end];
+  free(bound);
+  pii_text_free(&tx);
+  return ok;
+}
+
+static int same_spans(const pii_span *a, size_t na, const pii_span *b, size_t nb) {
+  if (na != nb) return 0;
+  for (size_t i = 0; i < na; i++)
+    if (a[i].byte_start != b[i].byte_start || a[i].byte_end != b[i].byte_end || a[i].cp_start != b[i].cp_start ||
+        a[i].cp_end != b[i].cp_end || a[i].u16_start != b[i].u16_start || a[i].u16_end != b[i].u16_end || a[i].label != b[i].label ||
+        a[i].source != b[i].source)
+      return 0;
+  return 1;
+}
+
+// pii_detect_table and grapheme snapping of pii_detect with a model.
+static void selftest_model_table(const pii_model *m) {
+  pii_span *s, *s2;
+  size_t n, n2;
+  pii_table_options t;
+  pii_table_options_init(&t);
+  const char *csv = "name,email,note\nMaria Lopez,maria.lopez@example.com,called twice\nKim Minsu,minsu.kim@example.com,\"left, then came back\"\n";
+  t.delimiter = 'x';
+  EXPECT(pii_detect_table(m, csv, strlen(csv), NULL, &t, &s, &n) == PII_ERR_ARG);
+  t.delimiter = 0;
+  t.struct_size = 8;
+  EXPECT(pii_detect_table(m, csv, strlen(csv), NULL, &t, &s, &n) == PII_ERR_ARG);
+  EXPECT(pii_detect_table(m, NULL, 3, NULL, NULL, &s, &n) == PII_ERR_ARG);
+  EXPECT(pii_detect_table(m, "", 0, NULL, NULL, &s, &n) == PII_OK && n == 0 && !s);
+  // a table: spans never hold a delimiter, quote or line break (no field here has one inside its value)
+  EXPECT(pii_detect_table(m, csv, strlen(csv), NULL, NULL, &s, &n) == PII_OK && n > 0);
+  const size_t q0 = (size_t)(strstr(csv, "\"left") - csv), q1 = q0 + strlen("\"left, then came back\"");
+  int clean = 1;
+  for (size_t i = 0; i < n; i++)
+    for (size_t b = s[i].byte_start; b < s[i].byte_end; b++) clean &= csv[b] != '\n' && csv[b] != '"' && (csv[b] != ',' || (b > q0 && b < q1));
+  EXPECT(clean);
+  pii_spans_free(s);
+  // not a table (prose; one row): exactly the spans of pii_detect, also with snapping over emoji
+  const char *texts[] = {
+      "Please email Maria Lopez at maria.lopez@example.com or call +1 202 555 0143.",
+      "\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa9\xe2\x80\x8d\xf0\x9f\x91\xa7 Maria Lopez\xf0\x9f\x87\xb0\xf0\x9f\x87\xb7 called, "
+      "Jose\xcc\x81 Garci\xcc\x81" "a\xf0\x9f\x91\x8d\xf0\x9f\x8f\xbd at 1\xef\xb8\x8f\xe2\x83\xa3" "010-1234-5678",
+      "name,email\nMaria Lopez,maria.lopez@example.com",  // explicit tab: one field per row
+  };
+  for (size_t k = 0; k < sizeof texts / sizeof texts[0]; k++) {
+    pii_table_options_init(&t);
+    if (k == 2) t.delimiter = '\t';
+    EXPECT(pii_detect(m, texts[k], strlen(texts[k]), NULL, &s, &n) == PII_OK);
+    EXPECT(pii_detect_table(m, texts[k], strlen(texts[k]), NULL, &t, &s2, &n2) == PII_OK);
+    EXPECT(same_spans(s, n, s2, n2) && on_graphemes(texts[k], s, n));
+    pii_spans_free(s);
+    pii_spans_free(s2);
+  }
+  // a pattern span over part of an emoji ZWJ sequence covers the whole sequence
+  pii_options o;
+  pii_options_init(&o);
+  pii_extra_span x = {1, 3, PII_USERNAME};  // code points 1-2 of "👩‍👩‍👧"
+  o.extra = &x;
+  o.n_extra = 1;
+  o.extra_unit = PII_UNIT_CODEPOINT;
+  EXPECT(pii_detect(m, texts[1], strlen(texts[1]), &o, &s, &n) == PII_OK && n >= 1 && s[0].cp_start == 0 && s[0].cp_end >= 5 &&
+         s[0].u16_start == 0 && s[0].byte_end >= 18);
+  pii_spans_free(s);
+  // an empty extra span stays empty (not widened to the character after it)
+  const char *plain = "the weather is nice today";
+  pii_extra_span e = {4, 4, PII_PERSON};
+  o.extra = &e;
+  EXPECT(pii_detect(m, plain, strlen(plain), &o, &s, &n) == PII_OK);
+  int widened = 0;
+  for (size_t i = 0; i < n; i++) widened |= s[i].cp_start <= 4 && s[i].cp_end > 4;
+  EXPECT(!widened);
+  pii_spans_free(s);
 }
 
 static void selftest_model(const char *onnx, const char *tok) {
@@ -321,6 +843,7 @@ static void selftest_model(const char *onnx, const char *tok) {
   pii_tokens_free(tw2);
   free(wsx);
   free(big);
+  selftest_model_table(m);
   pii_model_free(m);
 
   // malformed files: truncated and mutated model files and tokenizer files must fail cleanly (or load) without crashing
@@ -463,12 +986,41 @@ int main(int argc, char **argv) {
     selftest_combine();
     selftest_combine_many();
     selftest_static();
+    selftest_snap();
+    selftest_table_parse();
+    selftest_table_apply();
+    selftest_table_vote();
     if (argc >= 4) selftest_model(argv[2], argv[3]);
     printf("%s\n", fails ? "failed" : "ok");
     return fails != 0;
   }
+  if (argc >= 2 && !strcmp(argv[1], "apply")) {
+    size_t nt;
+    input *texts = read_texts(&nt);
+    int rc = 0;
+    for (size_t i = 0; i < nt; i++) {
+      pii_text tx;
+      pii_cspan *out = NULL;
+      size_t n = 0;
+      if (pii_text_init(&tx, texts[i].s, texts[i].n) ||
+          pii_table_apply(&tx, texts[i].spans, texts[i].n_spans, texts[i].delimiter, texts[i].header, texts[i].vote, texts[i].labels,
+                          &out, &n)) {
+        rc = 1;
+        break;
+      }
+      printf("{\"spans\": [");
+      for (size_t k = 0; k < n; k++)
+        printf("%s[%zu, %zu, \"%s\", %d]", k ? ", " : "", out[k].start, out[k].end, pii_label_name(out[k].label), out[k].source);
+      printf("]}\n");
+      free(out);
+      pii_text_free(&tx);
+    }
+    for (size_t i = 0; i < nt; i++) free(texts[i].s), free(texts[i].extra), free(texts[i].spans);
+    free(texts);
+    return rc;
+  }
   if (argc < 4) {
-    fprintf(stderr, "usage: pii_cli tokenize|detect|threads|bench|verify|selftest|fuzz|info ... (see source)\n");
+    fprintf(stderr, "usage: pii_cli tokenize|detect|table|apply|threads|bench|verify|selftest|fuzz|info ... (see source)\n");
     return 2;
   }
   const char *cmd = argv[1];
@@ -503,11 +1055,31 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < nt; i++) {
       pii_span *s;
       size_t n;
-      if (pii_detect(m, texts[i].s, texts[i].n, &opt, &s, &n)) {
+      const pii_options o = line_options(&opt, &texts[i]);
+      if (pii_detect(m, texts[i].s, texts[i].n, &o, &s, &n)) {
         rc = 1;
         break;
       }
-      print_spans(s, n);
+      print_spans(s, n, 0);
+      pii_spans_free(s);
+    }
+  } else if (!strcmp(cmd, "table")) {
+    if (argc > 4) opt.sensitivity = atof(argv[4]);
+    for (size_t i = 0; i < nt; i++) {
+      pii_span *s;
+      size_t n;
+      const pii_options o = line_options(&opt, &texts[i]);
+      pii_table_options t;
+      pii_table_options_init(&t);
+      t.delimiter = texts[i].delimiter;
+      t.header = texts[i].header;
+      t.vote = texts[i].vote;
+      t.context = texts[i].context;
+      if (pii_detect_table(m, texts[i].s, texts[i].n, &o, &t, &s, &n)) {
+        rc = 1;
+        break;
+      }
+      print_spans(s, n, 1);
       pii_spans_free(s);
     }
   } else if (!strcmp(cmd, "threads") && argc > 4) {
@@ -598,7 +1170,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "unknown command %s\n", cmd);
     rc = 2;
   }
-  for (size_t i = 0; i < nt; i++) free(texts[i].s);
+  for (size_t i = 0; i < nt; i++) free(texts[i].s), free(texts[i].extra), free(texts[i].spans);
   free(texts);
   pii_model_free(m);
   return rc;

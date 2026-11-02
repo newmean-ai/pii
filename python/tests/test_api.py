@@ -18,7 +18,11 @@ from newmean_pii import (
 )
 from newmean_pii import _core
 
-from conftest import REPO
+from conftest import REPO, model_dir
+
+
+def nano_dir():
+    return model_dir("nano")
 
 
 def test_constants_match_the_npm_package():
@@ -27,8 +31,8 @@ def test_constants_match_the_npm_package():
     assert LABELS == ["PERSON", "PERSON_L2", "EMAIL", "PHONE", "ADDRESS", "ID_NUMBER", "FINANCIAL", "ORG", "USERNAME", "URL", "URL_L2", "DATE_OF_BIRTH", "SECRET"]
     assert LEVEL1_LABELS == [l for l in LABELS if l not in ("PERSON_L2", "URL_L2")]
     assert len(TAGS) == 27 and TAGS[:3] == ["O", "B-PERSON", "I-PERSON"]
-    assert MODEL_VERSION == "1.0.0"
-    assert _core.version() == "1.0.0"
+    assert MODEL_VERSION == "1.1.0"
+    assert _core.version() == "1.2.0"
     assert re.fullmatch(r"(neon|sse|vector|scalar)(\+fma)?", _core.build_info())
 
 
@@ -103,3 +107,15 @@ def test_cache_dir_resolution(monkeypatch, tmp_path):
 def test_public_api():
     for name in newmean_pii.__all__:
         assert hasattr(newmean_pii, name), name
+
+
+def test_keep_emoji(nano):
+    text = "Call Anna Kim 😀 at 010-1234-5678"
+    e = text.index("😀")
+    assert nano.keep_emoji is False
+    spans = nano.detect(text)
+    assert spans and all(s.end <= e or s.start >= e + 1 for s in spans)
+    assert all(s.end <= e or s.start >= e + 1 for s in nano.detect_table(text))
+    with Redactor("nano", "q4", model_dir=nano_dir(), keep_emoji=True) as r:
+        assert r.keep_emoji is True and "keep_emoji=True" in repr(r)
+        assert isinstance(r.detect(text), list)

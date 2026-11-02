@@ -62,50 +62,58 @@ static void Model_dealloc(PyObject *obj) {
   Py_DECREF(type);
 }
 
-/* detect(text, sensitivity, labels, extra=None) -> [(start, end, label_id, source_bits)], code point offsets.
- * extra: list of (start, end, label_id) in code points, merged as the npm package merges its regex layer. */
-static PyObject *Model_detect(PyObject *obj, PyObject *args) {
-  ModelObject *self = (ModelObject *)obj;
-  PyObject *text, *extra = Py_None;
-  double sensitivity;
-  unsigned int labels;
-  if (!PyArg_ParseTuple(args, "UdI|O:detect", &text, &sensitivity, &labels, &extra)) return NULL;
+/* extra: None or a list of (start, end, label_id) in code points -> *ex (malloc'd, NULL when empty) and *n. 0 or -1 (raised). */
+static int read_extra(PyObject *extra, pii_extra_span **ex, size_t *n_ex) {
+  *ex = NULL;
+  *n_ex = 0;
+  if (extra == Py_None) return 0;
+  if (!PyList_Check(extra)) {
+    PyErr_SetString(PyExc_TypeError, "extra must be a list of (start, end, label_id) tuples");
+    return -1;
+  }
+  Py_ssize_t n = PyList_Size(extra);
+  if (n <= 0) return n < 0 ? -1 : 0;
+  pii_extra_span *e = (pii_extra_span *)malloc((size_t)n * sizeof *e);
+  if (!e) {
+    PyErr_NoMemory();
+    return -1;
+  }
+  for (Py_ssize_t i = 0; i < n; i++) {
+    Py_ssize_t s, end;
+    int label;
+    PyObject *t = PyList_GetItem(extra, i);
+    if (!t || !PyArg_ParseTuple(t, "nni", &s, &end, &label)) {
+      free(e);
+      return -1;
+    }
+    if (s < 0 || end < 0) {
+      free(e);
+      PyErr_SetString(PyExc_ValueError, "negative offset in extra");
+      return -1;
+    }
+    e[i].start = (size_t)s;
+    e[i].end = (size_t)end;
+    e[i].label = label;
+  }
+  *ex = e;
+  *n_ex = (size_t)n;
+  return 0;
+}
+
+/* Runs pii_detect (table == NULL) or pii_detect_table on text with the GIL released -> [(start, end, label_id, source_bits)]. */
+static PyObject *run_detect(ModelObject *self, PyObject *text, double sensitivity, unsigned int labels, PyObject *extra,
+                            int keep_emoji, const pii_table_options *table) {
   pii_options o;
   pii_options_init(&o);
   o.sensitivity = sensitivity;
   o.labels = labels;
+  o.keep_emoji = keep_emoji;
   o.extra_unit = PII_UNIT_CODEPOINT;
-  pii_extra_span *ex = NULL;
-  if (extra != Py_None) {
-    if (!PyList_Check(extra)) {
-      PyErr_SetString(PyExc_TypeError, "extra must be a list of (start, end, label_id) tuples");
-      return NULL;
-    }
-    Py_ssize_t n = PyList_Size(extra);
-    if (n > 0) {
-      ex = (pii_extra_span *)malloc((size_t)n * sizeof *ex);
-      if (!ex) return PyErr_NoMemory();
-      for (Py_ssize_t i = 0; i < n; i++) {
-        Py_ssize_t s, e;
-        int label;
-        PyObject *t = PyList_GetItem(extra, i);
-        if (!t || !PyArg_ParseTuple(t, "nni", &s, &e, &label)) {
-          free(ex);
-          return NULL;
-        }
-        if (s < 0 || e < 0) {
-          free(ex);
-          PyErr_SetString(PyExc_ValueError, "negative offset in extra");
-          return NULL;
-        }
-        ex[i].start = (size_t)s;
-        ex[i].end = (size_t)e;
-        ex[i].label = label;
-      }
-      o.extra = ex;
-      o.n_extra = (size_t)n;
-    }
-  }
+  pii_extra_span *ex;
+  size_t n_ex;
+  if (read_extra(extra, &ex, &n_ex) < 0) return NULL;
+  o.extra = ex;
+  o.n_extra = n_ex;
   PyObject *bytes = encode(text);
   if (!bytes) {
     free(ex);
@@ -122,7 +130,8 @@ static PyObject *Model_detect(PyObject *obj, PyObject *args) {
   size_t n_spans = 0;
   int rc;
   Py_BEGIN_ALLOW_THREADS
-  rc = pii_detect(self->model, p, (size_t)len, &o, &spans, &n_spans);
+  rc = table ? pii_detect_table(self->model, p, (size_t)len, &o, table, &spans, &n_spans)
+             : pii_detect(self->model, p, (size_t)len, &o, &spans, &n_spans);
   Py_END_ALLOW_THREADS
   Py_DECREF(bytes);
   free(ex);
@@ -135,6 +144,37 @@ static PyObject *Model_detect(PyObject *obj, PyObject *args) {
   }
   pii_spans_free(spans);
   return out;
+}
+
+/* detect(text, sensitivity, labels, extra=None, keep_emoji=False) -> [(start, end, label_id, source_bits)], code point
+ * offsets. extra: list of (start, end, label_id) in code points, merged as the npm package merges its regex layer. */
+static PyObject *Model_detect(PyObject *obj, PyObject *args) {
+  PyObject *text, *extra = Py_None;
+  double sensitivity;
+  unsigned int labels;
+  int keep_emoji = 0;
+  if (!PyArg_ParseTuple(args, "UdI|Op:detect", &text, &sensitivity, &labels, &extra, &keep_emoji)) return NULL;
+  return run_detect((ModelObject *)obj, text, sensitivity, labels, extra, keep_emoji, NULL);
+}
+
+/* detect_table(text, sensitivity, labels, extra=None, delimiter=0, header=True, vote=True, context=0, keep_emoji=False) ->
+ * as detect, with pii_detect_table (delimiter: 0 = auto, ord(",") / ord("\t") / ord(";") / ord("|") = markdown; context:
+ * PII_TABLE_CONTEXT_NONE / PII_TABLE_CONTEXT_HEADER; source bit SOURCE_TABLE). */
+static PyObject *Model_detect_table(PyObject *obj, PyObject *args) {
+  PyObject *text, *extra = Py_None;
+  double sensitivity;
+  unsigned int labels;
+  int delimiter = 0, header = 1, vote = 1, context = PII_TABLE_CONTEXT_NONE, keep_emoji = 0;
+  if (!PyArg_ParseTuple(args, "UdI|Oippip:detect_table", &text, &sensitivity, &labels, &extra, &delimiter, &header, &vote,
+                        &context, &keep_emoji))
+    return NULL;
+  pii_table_options t;
+  pii_table_options_init(&t);
+  t.delimiter = delimiter;
+  t.header = header;
+  t.vote = vote;
+  t.context = context;
+  return run_detect((ModelObject *)obj, text, sensitivity, labels, extra, keep_emoji, &t);
 }
 
 /* tokenize(text) -> [(id, start, end)], code point offsets, without <s> and </s>. */
@@ -178,7 +218,11 @@ static PyObject *Model_info(PyObject *obj, PyObject *unused) {
 }
 
 static PyMethodDef Model_methods[] = {
-    {"detect", Model_detect, METH_VARARGS, "detect(text, sensitivity, labels, extra=None) -> [(start, end, label_id, source)]"},
+    {"detect", Model_detect, METH_VARARGS,
+     "detect(text, sensitivity, labels, extra=None, keep_emoji=False) -> [(start, end, label_id, source)]"},
+    {"detect_table", Model_detect_table, METH_VARARGS,
+     "detect_table(text, sensitivity, labels, extra=None, delimiter=0, header=True, vote=True, context=0, keep_emoji=False) -> "
+     "[(start, end, label_id, source)]"},
     {"tokenize", Model_tokenize, METH_VARARGS, "tokenize(text) -> [(id, start, end)]"},
     {"info", Model_info, METH_NOARGS, "Model shape."},
     {NULL, NULL, 0, NULL},
@@ -256,7 +300,8 @@ static int module_exec(PyObject *mod) {
       PyModule_AddStringConstant(mod, "DEFAULT_SIZE", PII_DEFAULT_SIZE) < 0 ||
       PyModule_AddIntConstant(mod, "LABELS_ALL", PII_LABELS_ALL) < 0 ||
       PyModule_AddIntConstant(mod, "SOURCE_MODEL", PII_SOURCE_MODEL) < 0 ||
-      PyModule_AddIntConstant(mod, "SOURCE_REGEX", PII_SOURCE_REGEX) < 0)
+      PyModule_AddIntConstant(mod, "SOURCE_REGEX", PII_SOURCE_REGEX) < 0 ||
+      PyModule_AddIntConstant(mod, "SOURCE_TABLE", PII_SOURCE_TABLE) < 0)
     return -1;
   return 0;
 }

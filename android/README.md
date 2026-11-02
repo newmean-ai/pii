@@ -12,7 +12,7 @@ device; nothing is sent anywhere.
 ```kotlin
 // build.gradle.kts of the app module
 dependencies {
-    implementation("ai.newmean:pii:1.0.0")
+    implementation("ai.newmean:pii:1.2.0")
 }
 ```
 
@@ -50,7 +50,7 @@ Plus a 0.8 MB tokenizer (shared by all sizes). Default weight file: `q4e` for la
 as in the npm package. Every file is checked against the size and SHA-256 pinned in the library before it is used.
 
 **Bundled in the app (recommended).** Download the two files of one size from Hugging Face
-(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/`) into the app's assets, in the layout of the repository:
+(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/`) into the app's assets, in the layout of the repository:
 
 ```
 app/src/main/assets/newmean-pii/pii-medium/tokenizer.web.json
@@ -59,14 +59,14 @@ app/src/main/assets/newmean-pii/pii-medium/onnx/model_q4e.onnx
 
 ```bash
 cd app/src/main/assets && mkdir -p newmean-pii/pii-medium/onnx && cd newmean-pii/pii-medium
-curl -LO https://huggingface.co/newmean-ai/pii-medium/resolve/v1.0.0/tokenizer.web.json
-curl -L -o onnx/model_q4e.onnx https://huggingface.co/newmean-ai/pii-medium/resolve/v1.0.0/onnx/model_q4e.onnx
+curl -LO https://huggingface.co/newmean-ai/pii-medium/resolve/v1.1.0/tokenizer.web.json
+curl -L -o onnx/model_q4e.onnx https://huggingface.co/newmean-ai/pii-medium/resolve/v1.1.0/onnx/model_q4e.onnx
 ```
 
 `PiiRedactor.create(context)` reads them from there (`source = PiiModelSource.Assets(dir = "models")` for another folder, `""` for the assets root).
 
 **Downloaded once.** With `source = PiiModelSource.Download()`, the files are downloaded from Hugging Face on first use
-into `cacheDir/newmean-pii/1.0.0/pii-<size>/` and checked again on every load. The system may clear the cache; files are
+into `cacheDir/newmean-pii/1.1.0/pii-<size>/` and checked again on every load. The system may clear the cache; files are
 then downloaded again. Pass `dir` to keep them elsewhere, or `baseUrl` to serve the files yourself:
 
 ```kotlin
@@ -99,12 +99,15 @@ PiiRedactor.create(                       // suspend, loads on Dispatchers.IO; c
     regex = false,                        // also mask a few patterns (email, URL, card/account, phone, Korean resident
                                           // number); default false (model only): almost no extra coverage, double the over-masking
     source = PiiModelSource.Assets(),     // or PiiModelSource.Download(...)
+    keepEmoji = false,                    // true: the model also reads emoji (1.1 behaviour); default: never read or masked
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // files on disk; fromBytes(model, tokenizer, size, ...) for bytes
 
 redactor.detect(text)                     // List<PiiSpan>, sorted, non-overlapping
 redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → [EMAIL], MASK → ***** (maskChar = "•"),
                                           // BLANK → removed; redact(text) { span, original -> "..." } for your own
+redactor.detectTable(text)                // table mode (see Tables)
+redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // changes the threshold without reloading
 redactor.close()                          // frees the model (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
@@ -112,8 +115,11 @@ PiiRegex.spans(text)                      // the pattern layer on its own
 ```
 
 `PiiSpan` has `start` and `end` (UTF-16 indices into the text, as `String.substring` takes them and as the npm package
-returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`). Spans fall on code point boundaries, which need not be
-grapheme boundaries (an emoji ZWJ sequence is one grapheme of several code points). `MASK` writes one mask character per code point, like the npm package.
+returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`). Spans are widened to whole grapheme
+clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `MASK` writes one mask character per code
+point, like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets
+still refer to the input; an emoji inside a span splits it); `keepEmoji = true` gives the model the text as given (1.1
+behaviour).
 
 **Threads.** `PiiRedactor` is thread-safe: any number of threads or coroutines may call `detect` and `redact` on one
 instance at once (each call has its own scratch memory). They are blocking CPU work: call them from
@@ -123,6 +129,40 @@ one core: about 10 ms (nano) to 15 ms (medium) for a short text and 40 to 60 ms 
 
 **R8 / ProGuard.** Nothing to add: the AAR ships its consumer rule, which keeps the JNI class
 `ai.newmean.pii.internal.NativeBridge`.
+
+## Tables
+
+```kotlin
+redactor.detectTable(text: String, options: TableOptions = TableOptions()): List<PiiSpan>
+redactor.redactTable(text: String, options: TableOptions = TableOptions(), mode: RedactMode = RedactMode.TAG,
+                     maskChar: String = "*"): PiiRedaction
+redactor.redactTable(text: String, options: TableOptions, replace: (span: PiiSpan, original: String) -> String): PiiRedaction
+TableOptions(delimiter = TableDelimiter.AUTO, header = true, vote = true,   // AUTO, COMMA, TAB, SEMICOLON, MARKDOWN
+             context = TableContext.NONE)                                  // NONE or HEADER
+```
+
+Table mode reads a CSV, TSV, semicolon-separated or markdown pipe table as one text and clips every span to a cell value:
+delimiters, quotes and line breaks are never masked, so the output is still a valid table. `AUTO` detects the delimiter;
+quoted fields follow RFC 4180. With `vote`, a column of short values is masked whole when the model finds names, emails,
+phone numbers or usernames in at least 80% of its non-empty cells (and at least 4; columns with fewer than 5 non-empty cells
+do not vote); those spans have source `TABLE`. Free-text columns (median value over 40 characters or 4 words) do not vote,
+placeholders (`N/A`, `-`, `none`, `null`, `없음`) are skipped, an email column needs `@` and a phone column 6 or more digits.
+With `header`, the first row is masked where the model finds PII but never voted on. With `context = TableContext.HEADER`
+and a header row, each non-empty data cell of a column whose non-empty values are at least 80% distinct is also read on its
+own as "<header>: <value>" and those spans are added: fewer misses on name, contact and ID columns, more PII-free cells
+masked, one more model call per such cell. Text that is not a table gives exactly the spans of `detect`. A custom `replace`
+must not insert the delimiter, a quote or a line break. Blocking, like `detect`.
+
+```kotlin
+val csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+redactor.redactTable(csv).text
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+redactor.redactTable(tsv, TableOptions(delimiter = TableDelimiter.TAB, vote = false), RedactMode.MASK)
+```
+
+On survey and form exports, table mode misses many names split into first and last name columns.
+`context = TableContext.HEADER` cuts the misses to about a quarter, at 2.3 to 3.7 more points of PII-free cells masked; for
+recall first, use it. Measurements: [repository README](https://github.com/newmean-ai/pii#tables-csv-tsv).
 
 ## Development
 

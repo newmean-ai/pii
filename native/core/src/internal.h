@@ -102,6 +102,10 @@ int pii_tok_eos(const pii_tok *t);
 int pii_tok_pad(const pii_tok *t);
 // Tokens of cps[0..n) without <s> and </s>: ids and [start, end) in code points. Appends to the vectors (int32_t each).
 int pii_tok_encode(const pii_tok *t, const uint32_t *cps, size_t n, pii_vec *ids, pii_vec *starts, pii_vec *ends);
+// End of the extended grapheme cluster (UAX #29) that starts at cps[i], i < n.
+size_t pii_grapheme_end(const uint32_t *cps, size_t i, size_t n);
+// Extended_Pictographic (UAX #29 table of the tokenizer).
+int pii_is_pictographic(uint32_t c);
 
 // ---------------------------------------------------------------- text
 typedef struct {
@@ -122,6 +126,29 @@ typedef struct {
 // Model and extra spans (sorted in place) -> masking regions in out (capacity n); returns the count. Overlapping model
 // spans rank by length in UTF-16 units (u16: the text's n + 1 UTF-16 offsets; NULL counts code points). Exposed for tests.
 size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, const size_t *u16, pii_cspan *out);
+
+// ---------------------------------------------------------------- table mode
+typedef struct {
+  size_t start, end;  // value range in code points (CSV: inside the quotes, untrimmed; markdown: trimmed)
+  uint32_t row, col;  // row 0 is the header row when there is one
+} pii_cell;
+// Cells of the rows of tx in text order (pii_cell each, appended to cells), with delimiter ',', '\t', ';', '|' (markdown)
+// or 0 (auto-detect). *delim_used: the delimiter used, 0 when auto-detection found none (no cells). *rows: row count.
+int pii_table_parse(const pii_text *tx, int delimiter, pii_vec *cells, size_t *rows, int *delim_used);
+// Grapheme snapping (sorted, non-overlapping spans): starts move back and ends forward to extended grapheme cluster
+// boundaries of cp[0, ncp) (empty spans stay as they are); spans that then meet inside one cluster merge, keeping the label
+// and source of the longer original span in code points (equal: the earlier). cells (table mode, in text order; NULL for
+// none): a span inside a cell's value range is clamped to that range, so snapping never crosses a delimiter, quote or line
+// break. In place; returns the new count.
+size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells);
+// Table-mode steps after whole-text detection: spans (detect's sorted, non-overlapping spans before snapping) -> clipped to
+// cells, column vote and propagation (labels: enabled labels), merge, snapping. Not a table: the snapped spans. *out is
+// malloc'ed (NULL when *n_out is 0). Exposed for tests.
+// As pii_table_apply, with extra spans (inside cells) merged after the vote, before the overlap merge (header context).
+int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra, int delimiter,
+                        int header, int vote, uint32_t labels, pii_cspan **out, size_t *n_out);
+int pii_table_apply(const pii_text *tx, const pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels,
+                    pii_cspan **out, size_t *n_out);
 #define PII_WINDOW 256
 #define PII_STRIDE 64
 

@@ -63,8 +63,8 @@ final class RedactionTests: XCTestCase {
   func testDefaultsMatchNpm() {
     XCTAssertEqual(PIISize.default, .medium)
     XCTAssertEqual(PIISize.allCases.map(\.defaultVariant), [.q4, .q4, .q4e, .q4e])
-    XCTAssertEqual(PIIModelFile.version, "1.0.0")
-    XCTAssertEqual(PIIModelFile.defaultBaseURL(.nano).absoluteString, "https://huggingface.co/newmean-ai/pii-nano/resolve/v1.0.0/")
+    XCTAssertEqual(PIIModelFile.version, "1.1.0")
+    XCTAssertEqual(PIIModelFile.defaultBaseURL(.nano).absoluteString, "https://huggingface.co/newmean-ai/pii-nano/resolve/v1.1.0/")
   }
 
   func testPins() throws {
@@ -72,7 +72,7 @@ final class RedactionTests: XCTestCase {
     let f = PIIModelFile.model(.medium, .q4e)
     XCTAssertEqual(f.path, "onnx/model_q4e.onnx")
     XCTAssertEqual(f.bytes, 11_303_433)
-    XCTAssertEqual(f.sha256, "054ba8b06a2ea2ec6bae73ff380e36e5ff3cb3611d7a080074eb44d65669b58d")
+    XCTAssertEqual(f.sha256, "a84ba05d2e98e51c6d1a10cc898285862e98c02e1c5604f0a1be0e367e46c6ad")
     XCTAssertEqual(PIIModelFile.tokenizer(.nano).sha256, "11838f41d00124e43170c8f4e6d025ac5ea301ffee40bc0508b1a412c4fbf11d")
     XCTAssertThrowsError(try f.verify(Data(count: 10)))
   }

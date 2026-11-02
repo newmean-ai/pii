@@ -6,8 +6,8 @@ import 'package:ffi/ffi.dart';
 
 import 'ffi.dart';
 
-/// Model release (Hugging Face tag v1.0.0 of `newmean-ai/pii-<size>`).
-const String modelVersion = '1.0.0';
+/// Model release (Hugging Face tag v1.1.0 of `newmean-ai/pii-<size>`).
+const String modelVersion = '1.1.0';
 
 /// Default model size, as in the npm package.
 const String defaultSize = 'medium';

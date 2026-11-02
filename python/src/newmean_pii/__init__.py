@@ -19,11 +19,11 @@ from ._models import (
     fetch_model,
     model_file,
 )
-from ._redactor import LABELS, LEVEL1_LABELS, TAGS, Redactor, apply_redaction, create_redactor
+from ._redactor import LABELS, LEVEL1_LABELS, TABLE_CONTEXTS, TABLE_DELIMITERS, TAGS, Redactor, apply_redaction, create_redactor
 from ._regex import REGEX_RULES, regex_spans
 from ._types import RedactResult, Span, Token
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 __all__ = [
     "DEFAULT_SIZE",
@@ -33,6 +33,8 @@ __all__ = [
     "MODEL_VERSION",
     "REGEX_RULES",
     "SIZES",
+    "TABLE_CONTEXTS",
+    "TABLE_DELIMITERS",
     "TAGS",
     "VARIANTS",
     "FilePin",

@@ -5,7 +5,8 @@ final class PiiSpan {
   /// "PERSON", "EMAIL", ... (see [piiLabels]).
   final String label;
 
-  /// "model", "regex", or "model+regex" when both found it.
+  /// "model", "regex", "model+regex" when both found it, or "table" when `NewmeanPii.detectTable` propagated it down a
+  /// column.
   final String source;
 
   const PiiSpan(this.start, this.end, this.label, this.source);

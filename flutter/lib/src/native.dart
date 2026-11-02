@@ -39,18 +39,49 @@ int labelMask(Iterable<String> labels) {
   return mask;
 }
 
-const _sources = ['', 'model', 'regex', 'model+regex'];
+String _source(int bits) => switch (bits) {
+  piiSourceModel => 'model',
+  piiSourceRegex => 'regex',
+  piiSourceTable => 'table',
+  _ => 'model+regex',
+};
+
+/// pii_table_options.delimiter of a `NewmeanPii.detectTable` delimiter ("auto", ",", "\t", ";" or "markdown").
+int tableDelimiter(String delimiter) => switch (delimiter) {
+  'auto' => 0,
+  ',' || '\t' || ';' => delimiter.codeUnitAt(0),
+  'markdown' => 0x7C,
+  _ => throw ArgumentError.value(delimiter, 'delimiter', 'auto, ",", "\\t", ";" or markdown'),
+};
+
+/// pii_table_options.context of a `NewmeanPii.detectTable` context ("none" or "header").
+int tableContext(String context) => switch (context) {
+  'none' => piiTableContextNone,
+  'header' => piiTableContextHeader,
+  _ => throw ArgumentError.value(context, 'context', 'none or header'),
+};
 
 /// Spans to mask in [text] (UTF-16 offsets): the model's spans, merged with the pattern layer's when [regex] is true,
-/// filtered by [labels] (a [labelMask]). Same steps as detect() of the npm package.
-List<PiiSpan> detectSpans(int model, String text, double sensitivity, int labels, bool regex) => using((arena) {
+/// filtered by [labels] (a [labelMask]); [keepEmoji]: pii_options.keep_emoji. Same steps as detect() of the npm package.
+/// With [table] (a [tableDelimiter] code, header, vote, a [tableContext] code): table mode (pii_detect_table, detectTable()
+/// of the npm package).
+List<PiiSpan> detectSpans(
+  int model,
+  String text,
+  double sensitivity,
+  int labels,
+  bool regex,
+  bool keepEmoji, [
+  (int, bool, bool, int)? table,
+]) => using((arena) {
   // Lone surrogates become U+FFFD (one UTF-16 unit either way), so offsets stay Dart string indices.
   final bytes = utf8.encode(text);
   final opts = arena<PiiOptionsC>();
   piiOptionsInit(opts);
   opts.ref
     ..sensitivity = sensitivity
-    ..labels = labels;
+    ..labels = labels
+    ..keepEmoji = keepEmoji ? 1 : 0;
   if (regex) {
     final extra = regexSpans(text);
     if (extra.isNotEmpty) {
@@ -69,12 +100,25 @@ List<PiiSpan> detectSpans(int model, String text, double sensitivity, int labels
   }
   final out = arena<Pointer<PiiSpanC>>();
   final n = arena<Size>();
-  final rc = piiDetect(Pointer<PiiModel>.fromAddress(model), _copy(bytes, arena), bytes.length, opts, out, n);
+  final m = Pointer<PiiModel>.fromAddress(model), text8 = _copy(bytes, arena);
+  final int rc;
+  if (table == null) {
+    rc = piiDetect(m, text8, bytes.length, opts, out, n);
+  } else {
+    final t = arena<PiiTableOptionsC>();
+    piiTableOptionsInit(t);
+    t.ref
+      ..delimiter = table.$1
+      ..header = table.$2 ? 1 : 0
+      ..vote = table.$3 ? 1 : 0
+      ..context = table.$4;
+    rc = piiDetectTable(m, text8, bytes.length, opts, t, out, n);
+  }
   if (rc != piiOk) throw StateError('newmean_pii: detect failed: ${_error(rc)}');
   final spans = <PiiSpan>[];
   for (var i = 0; i < n.value; i++) {
     final s = out.value[i];
-    spans.add(PiiSpan(s.u16Start, s.u16End, piiLabels[s.label], _sources[s.source & 3]));
+    spans.add(PiiSpan(s.u16Start, s.u16End, piiLabels[s.label], _source(s.source)));
   }
   if (out.value.address != 0) piiSpansFree(out.value);
   return spans;

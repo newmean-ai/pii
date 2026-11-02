@@ -26,7 +26,7 @@
 ```c
 #include "pii.h"
 
-// 파일: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/{onnx/model_<variant>.onnx, tokenizer.web.json}
+// 파일: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/{onnx/model_<variant>.onnx, tokenizer.web.json}
 if (pii_verify_file(onnx, onnx_len, "medium", "q4e") || pii_verify_file(tok, tok_len, "medium", "tokenizer")) { /* 거부 */ }
 char err[256];
 pii_model *m = pii_model_load(onnx, onnx_len, tok, tok_len, err, sizeof err);  // 이후 입력 버퍼는 해제해도 됨
@@ -35,6 +35,7 @@ pii_options o;
 pii_options_init(&o);         // 민감도 0, 모든 라벨
 o.sensitivity = 0.3;          // > 0 더 많이 가림, < 0 덜 가림 (npm `sensitivity`)
 o.labels = PII_LABELS_LEVEL1; // npm LEVEL1_LABELS, 또는 PII_LABEL_BIT(PII_EMAIL) | ...
+o.keep_emoji = 0;             // 기본: 이모지는 읽지도 가리지도 않음(npm `keepEmoji`)
 
 pii_span *spans;
 size_t n;
@@ -43,14 +44,20 @@ if (pii_detect(m, text, strlen(text), &o, &spans, &n) == PII_OK) {
     printf("%s [%zu, %zu)\n", spans[i].label_name, spans[i].byte_start, spans[i].byte_end);
   pii_spans_free(spans);
 }
+
+pii_table_options t;
+pii_table_options_init(&t);   // 구분자 자동 감지, 머리글 행, 열 투표 켬
+t.delimiter = ',';            // 0(자동), ',', '\t', ';', '|'(마크다운 파이프 표)
+t.context = PII_TABLE_CONTEXT_HEADER;  // 값이 서로 다른 열의 칸을 "<머리글>: <값>"으로도 읽음
+if (pii_detect_table(m, csv, strlen(csv), &o, &t, &spans, &n) == PII_OK) pii_spans_free(spans);
 pii_model_free(m);
 ```
 
 - **구간**은 `[start, end)`를 UTF-8 바이트, 코드 포인트(Python `str`), UTF-16 단위(JavaScript, Java/Kotlin, Dart,
   `NSString`) 세 가지로 모두 담으므로 래퍼가 변환할 필요가 없습니다. 잘못된 UTF-8 바이트는 하나당 코드 포인트 하나로 셉니다.
-  오프셋은 항상 코드 포인트 경계에 놓입니다. 토크나이저의 정규화가 바꾸는 문자소(예: `e` + U+0301)는 쪼개지지 않지만,
-  모델이 ZWJ 연쇄 같은 다른 문자소 안에서 구간을 끝낼 수는 있습니다. 그래서 자를 때는 코드 포인트나 UTF-16 단위를 쓰고
-  Swift `Character` 인덱스는 쓰지 않습니다. 입력은 표준 UTF-8로 넘깁니다. JVM에서는
+  구간 오프셋은 입력 전체의 확장 문자소 클러스터 경계(UAX #29)로 넓혀지므로, 구간이 이모지 ZWJ 연쇄, 국기, 피부색,
+  키캡, 결합 문자열을 쪼개지 않습니다. 토큰 오프셋은 코드 포인트 경계에만 놓입니다. 자를 때는 코드 포인트나 UTF-16 단위를
+  쓰고 Swift `Character` 인덱스는 쓰지 않습니다. 입력은 표준 UTF-8로 넘깁니다. JVM에서는
   `String.getBytes(UTF_8)`을 쓰고 JNI `GetStringUTFChars`는 쓰지 않습니다(수정 UTF-8은 이모지를 서로게이트로, NUL을 두 바이트로
   나눠 토큰과 오프셋이 달라짐). Python에서는 `str.encode("utf-8", "surrogatepass")`를 씁니다.
 - **오류**: 함수는 `PII_OK`나 `PII_ERR_*` 코드를 돌려줍니다(`pii_strerror`가 메시지를 줌). `pii_model_load`는 이유를 `err`에
@@ -60,10 +67,23 @@ pii_model_free(m);
 - **옵션**은 npm 패키지와 같습니다. `sensitivity`(O 로짓에 `-sensitivity`를 더함), `labels`(비트 집합, 기본은 13개 전부).
   `extra`는 래퍼의 패턴 계층이 찾은 구간을 받아 npm `combine`과 똑같이 병합합니다(모델 라벨 우선, 같은 계열의 모델
   라벨이 덮지 않는 곳에서만 패턴 라벨 사용). 그래서 패턴 계층은 각 언어에 둘 수 있습니다.
+  `keep_emoji`(기본 0)는 이모지를 모델이 읽는 텍스트에서 빼므로 모델이 이모지를 개인정보로 읽지 않습니다. 구간은 입력 기준 오프셋을 그대로
+  쓰고, 구간 안의 이모지는 구간을 나누며, 키캡은 바탕 문자로 읽습니다(그 문자를 덮는 구간은 키캡 전체를 덮음). 1이면 모델이
+  텍스트를 그대로 읽습니다(1.1 동작).
 - **고정값과 기본값**: `pii_model_file(size, file)`은 공개 파일별 경로, 크기, SHA-256을, `pii_default_variant(size)`는 npm
   기본값(large·medium은 `q4e`, small·nano는 `q4`)을 돌려줍니다. 기본 크기는 `PII_DEFAULT_SIZE`(`medium`)입니다.
-- **스레드**: `pii_model`은 로드 뒤 바뀌지 않습니다. 여러 스레드가 한 모델로 동시에 `pii_detect` / `pii_tokenize`를
-  불러도 됩니다. 호출마다 작업 메모리를 따로 잡습니다(256토큰 윈도 하나에 약 4.5 MB, 짧은 글은 더 적음).
+- **표 모드**: `pii_detect_table(model, utf8, len, options, table, &out, &n)`은 CSV, TSV, 세미콜론 구분, 마크다운 파이프
+  표(RFC 4180 필드)를 `pii_detect`로 읽고, 모든 구간을 칸 값 안으로 자릅니다(구분자, 따옴표, 줄바꿈, 구분선은 가리지 않으므로
+  이것들을 넣지 않는 마스킹은 표를 올바르게 유지). `table->vote`가 켜져 있으면 짧은 값으로 된 열(비어 있지 않은 데이터 칸 5개
+  이상, 중앙값 40 코드 포인트 이하·4단어 이하)에서 4칸 이상이면서 80% 이상의 칸이 PERSON, EMAIL, PHONE, USERNAME이면 그 열을
+  가립니다(source `PII_SOURCE_TABLE`; `N/A` 같은 자리 표시 값, `@`가 없는 EMAIL 값, 숫자가 6개 미만인 PHONE 값은 건너뜀).
+  머리글 행(`table->header`, 기본 1)은 투표에 넣지 않습니다. 문자소 넓히기는 칸 값의 경계에서 멈춥니다. 표가 아닌 텍스트는
+  `pii_detect`와 똑같은 구간을 내고, `table`은 NULL(기본값)이어도 되며, 모르는 구분자는 `PII_ERR_ARG`입니다.
+  `table->context = PII_TABLE_CONTEXT_HEADER`(기본 `PII_TABLE_CONTEXT_NONE`)이고 머리글 행이 있으면, 비어 있지 않은 값의 80%
+  이상이 서로 다른 열의 비어 있지 않은 데이터 칸을 "<머리글>: <값>"으로 한 번 더 따로 읽어 그 구간을 더합니다. 이름·연락처·ID
+  열을 덜 놓치는 대신 개인정보가 없는 칸을 더 가리고, 그런 칸마다 모델을 한 번 더 부릅니다.
+- **스레드**: `pii_model`은 로드 뒤 바뀌지 않습니다. 여러 스레드가 한 모델로 동시에 `pii_detect` / `pii_detect_table` /
+  `pii_tokenize`를 불러도 됩니다. 호출마다 작업 메모리를 따로 잡습니다(256토큰 윈도 하나에 약 4.5 MB, 짧은 글은 더 적음).
 - `pii_tokenize`는 토큰 id와 오프셋(`<s>`, `</s>` 제외)을, `pii_model_get_info`는 모델 형태를, `pii_build_info`는 커널
   빌드 종류를 돌려줍니다.
 

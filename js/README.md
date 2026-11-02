@@ -46,7 +46,7 @@ and dataset; treat the output as a strong first pass, not a guarantee.
 
 ## Results
 
-On newmean-pii-dataset (public test, 54 languages) the models miss 1.6% (large) to 3.3% (nano) of PII characters; the closest of the eight
+On newmean-pii-dataset (public test, 54 languages) the models miss 1.6% (large) to 2.9% (nano) of PII characters; the closest of the eight
 public detectors we compared misses 19.6%. Scores on four external datasets, the full comparison and phone speed are in the
 [repository README](https://github.com/newmean-ai/pii#results) and the technical report; weekly scores are on the
 [leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard).
@@ -69,6 +69,7 @@ createRedactor(options?: {
   labels?: string[];           // labels to mask; default all
   regex?: boolean;             // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
+  keepEmoji?: boolean;         // true: the model also reads emoji (1.1 behaviour); default false: never read or masked
   cache?: boolean;             // keep model files in the Cache API; default true
   verify?: boolean;            // check SHA-256 of model files; default true
   onProgress?: (p) => void;    // download progress
@@ -79,13 +80,53 @@ createRedactor(options?: {
 
 redactor.detect(text)            // → Span[] {start, end, label, source}, sorted, non-overlapping
 redactor.redact(text, { mode })  // mode "tag" → [EMAIL], "mask" → *****, "blank" → removed; or replace: (span, original) => string
+redactor.detectTable(text, table?)           // table mode (see Tables)
+redactor.redactTable(text, table?, options?) // → { text, spans }; options as redact
 redactor.setSensitivity(value)
 redactor.engine                  // "onnxruntime" | "builtin"
 redactor.dispose()
 ```
 
-Offsets are UTF-16 indices, as used by `String.prototype.slice`. Inference runs on the calling thread; for long texts, create
-the redactor inside a Web Worker.
+Offsets are UTF-16 indices, as used by `String.prototype.slice`. Spans are widened to whole grapheme clusters, so an emoji,
+flag or combining sequence is masked whole or kept whole (this needs `Intl.Segmenter`; where it is missing, spans stay on code
+point boundaries). By default emoji are taken out of the text the model reads, so the model does not read them as PII: offsets still refer to the
+input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.1 behaviour).
+Inference runs on the calling thread; for long texts, create the redactor inside a Web Worker.
+
+## Tables
+
+```ts
+redactor.detectTable(text: string, table?: {
+  delimiter?: "auto" | "," | "\t" | ";" | "markdown";  // default "auto"
+  header?: boolean;            // the first row is a header row; default true
+  vote?: boolean;              // column vote; default true
+  context?: "none" | "header"; // "header": also read cells of distinct-valued columns as "<header>: <value>"; default "none"
+}): Promise<Span[]>
+redactor.redactTable(text: string, table?: TableOptions, options?: RedactOptions): Promise<{ text: string; spans: Span[] }>
+```
+
+Table mode reads a CSV, TSV, semicolon-separated or markdown pipe table as one text (delimiter detected unless given; quoted
+fields as in RFC 4180) and clips every span to a cell value: delimiters, quotes and line breaks are never masked, so the
+output is still a valid table. With `vote`, a column of short values is masked whole when the model finds names, emails,
+phone numbers or usernames in at least 80% of its non-empty cells (and at least 4; columns with fewer than 5 non-empty cells
+do not vote); those spans have source `"table"`. Free-text columns (median value over 40 characters or 4 words) do not vote,
+placeholders (`N/A`, `-`, `none`, `null`, `없음`) are skipped, an email column needs `@` and a phone column 6 or more digits.
+The header row is masked where the model finds PII but never voted on. With `context: "header"` and a header row, each
+non-empty data cell of a column whose non-empty values are at least 80% distinct is also read on its own as
+`"<header>: <value>"` and those spans are added: fewer misses on name, contact and ID columns, more PII-free cells masked,
+one more model call per such cell. Text that is not a table gives exactly the spans of `detect`. A custom `replace` must
+not insert the delimiter, a quote or a line break.
+
+```ts
+const csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free";
+const { text } = await redactor.redactTable(csv);
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+await redactor.redactTable(tsv, { delimiter: "\t", vote: false }, { mode: "mask" });
+```
+
+On survey and form exports, table mode misses many names split into first and last name columns. `context: "header"` cuts
+the misses to about a quarter, at 2.3 to 3.7 more points of PII-free cells masked; for recall first, use it. Measurements:
+[repository README](https://github.com/newmean-ai/pii#tables-csv-tsv).
 
 ## Development
 

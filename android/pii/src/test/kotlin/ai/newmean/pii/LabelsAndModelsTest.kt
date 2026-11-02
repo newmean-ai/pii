@@ -31,7 +31,7 @@ class LabelsAndModelsTest {
         assertEquals(PiiVariant.Q4E, PiiSize.MEDIUM.defaultVariant)
         assertEquals(PiiVariant.Q4, PiiSize.SMALL.defaultVariant)
         assertEquals(PiiVariant.Q4, PiiSize.NANO.defaultVariant)
-        assertEquals("https://huggingface.co/newmean-ai/pii-nano/resolve/v1.0.0/", PiiModels.baseUrl(PiiSize.NANO))
+        assertEquals("https://huggingface.co/newmean-ai/pii-nano/resolve/v1.1.0/", PiiModels.baseUrl(PiiSize.NANO))
         assertEquals("onnx/model_q4e.onnx", PiiModels.modelPath(PiiVariant.Q4E))
     }
 

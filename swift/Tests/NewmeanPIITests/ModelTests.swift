@@ -89,7 +89,8 @@ final class ModelTests: XCTestCase {
     let bridgedSpans = try await r.detect(bridged)
     XCTAssertEqual(bridgedSpans.map(\.utf16Range), spans.map(\.utf16Range))
     let (masked, _) = try await r.redact(text)
-    XCTAssertTrue(masked.hasPrefix("👩‍👩‍👧🇰🇷😀 "))
+    // medium reads the start of the family emoji as PERSON: grapheme snapping masks the whole emoji, never a part of it
+    XCTAssertTrue(masked.hasPrefix("[PERSON]🇰🇷😀 ") || masked.hasPrefix("👩‍👩‍👧🇰🇷😀 "), masked)
     XCTAssertTrue(masked.contains("[EMAIL]"))
     XCTAssertTrue(masked.hasSuffix(" ✅"))
   }
@@ -200,7 +201,7 @@ final class ModelTests: XCTestCase {
     XCTAssertNoThrow(try PIIModelFile.model(.nano, .q4).verify(Data(contentsOf: onnx)))
     XCTAssertNoThrow(try PIIModelFile.tokenizer(.nano).verify(Data(contentsOf: tok)))
     let leftovers = try FileManager.default.subpathsOfDirectory(atPath: store.directory.path).filter { !$0.hasSuffix(".onnx") && !$0.hasSuffix(".json") }
-    XCTAssertEqual(Set(leftovers), ["v1.0.0", "v1.0.0/pii-nano", "v1.0.0/pii-nano/onnx"])
+    XCTAssertEqual(Set(leftovers), ["v1.1.0", "v1.1.0/pii-nano", "v1.1.0/pii-nano/onnx"])
   }
 
   /// PII_DOWNLOAD=1: downloads nano from Hugging Face into a temporary store (3.4 MB) and loads it.

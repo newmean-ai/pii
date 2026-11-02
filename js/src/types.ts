@@ -18,6 +18,6 @@ export interface Span {
   start: number;
   end: number;
   label: Label | string;
-  /** "model", "regex", or "model+regex" when both found it */
-  source: "model" | "regex" | "model+regex";
+  /** "model", "regex", "model+regex" when both found it, or "table" when table mode propagated it down a column */
+  source: "model" | "regex" | "model+regex" | "table";
 }

@@ -530,3 +530,106 @@ on the three Android phones it is 1.9–2.1× faster on short texts and 25–31%
 also runs 108 public test texts (two per language) and compares the spans with a desktop reference (Chrome, onnxruntime-web):
 identical on all 48 runs, and a second pass over 20 of them gave the same spans every time. Per-phone numbers will be published
 once more phones have been measured; the page stays open after the release.
+
+## Q. v1.1: short texts, table cells and survey files
+
+**Problem.** A user reported that the large model masked lone Korean survey words (「성별」, 「촉진1」, 「이해도」; 「매우 그렇다」 →
+「[PERSON] 그렇다」) at every sensitivity down to −1. On the `short_v1` set of Section 6.1 every v1.0 tier masked 31–39% of
+PII-free short items.
+
+**Rounds** (students only, v1.0 teachers, new rows learn from gold labels only; large, sensitivity 0):
+
+| round | added rows | what changed | PII-free items masked | given name alone found |
+|---|---|---|---|---|
+| v1.0 | — | — | 30.6% | 99.6% |
+| r1 | 139,639 | short items, lone names and values, survey rows | 2.4% | 75.2% |
+| r2 | 163,702 | + 22,983 lone names from the name pools | 6.5% | 91.1% |
+| r3 | 175,582 | + more header and CSV rows | 6.7% | |
+| r4 | 197,868 | r2 + hard negatives (name-like words, 남/여, item codes) | 5.4% | |
+| r5 | 240,498 | three times the hard negatives | 4.2% | |
+| r6 | 240,498 | r5, 3 epochs | 4.6% | 89.7% |
+| r7 | 225,680 | r5 without lone given names, 3 epochs | 1.6% | 64% |
+| **v1.1** | 240,498 | r5 rows, new teachers trained on them, students distilled on every row, 3 epochs | 7.9% | 96.1% |
+
+Keeping a running average of the weights (EMA, decay 0.999) matched the plain weights within 0.3 points for large, medium and
+small; it helped only nano in two rounds.
+
+**New teachers** (whole validation set, then external sets; miss / over-masking %):
+
+| teacher | short items masked | validation | KDPII | openpii | Nemotron | Gretel | public test 1.1 |
+|---|---|---|---|---|---|---|---|
+| XLM-R-large v1.0 (2 ep) | 15.7% | 0.3 / 0.1 | 5.8 / 0.8 | 4.0 / 1.8 | 5.5 / 0.1 | 20.7 / 3.1 | 0.91 / 0.06 |
+| XLM-R-large v1.1 (3 ep, EMA) | 1.1% | 0.32 / 0.04 | 6.61 / 0.67 | 4.29 / 2.13 | 6.45 / 0.08 | 21.59 / 3.07 | 0.98 / 0.06 |
+| mDeBERTa-v3 v1.0 (5 ep) | 9.5% | 0.2 / 0.1 | 6.5 / 0.8 | 4.5 / 2.3 | 6.5 / 0.1 | 22.0 / 2.1 | 0.94 / 0.09 |
+| mDeBERTa-v3 v1.1 (5 ep) | 0.8% | 0.19 / 0.07 | 6.96 / 0.75 | 4.29 / 2.79 | 6.32 / 0.12 | 21.56 / 3.45 | 0.98 / 0.09 |
+
+**Choice.** The r6/r8 students had fewer false positives (large 4.6%) but missed more given names written alone (89.7%) and more
+on openpii and Gretel (large 6.5 / 23.2% in PyTorch); the v1.1 students find 96.1% of those names and miss 0.77% of the PII
+characters of whole survey files (r6: 2.60%). We chose the v1.1 students (not released on their own; they ship with SDK 1.2.0,
+Appendix R) and recommend large or `sensitivity: -0.5` for files checked cell by cell.
+
+**v1.0 rows of the results table** (Section 6; miss / over-masking %):
+
+| tier | public test 1.1 | KDPII | openpii | Nemotron | Gretel finance |
+|---|---|---|---|---|---|
+| large | 1.6 / 0.6 | 7.6 / 2.4 | 4.6 / 4.2 | 7.4 / 0.9 | 20.3 / 5.2 |
+| medium | 2.1 / 0.6 | 9.8 / 2.0 | 6.1 / 4.1 | 7.9 / 0.7 | 22.5 / 4.2 |
+| small | 2.7 / 1.2 | 9.5 / 3.2 | 5.6 / 5.5 | 10.6 / 1.0 | 24.1 / 5.7 |
+| nano | 3.3 / 2.1 | 9.5 / 4.2 | 4.9 / 7.0 | 10.6 / 2.1 | 22.8 / 7.5 |
+
+**Cost.** Generation $9.3 at API prices (Sonnet 5.5 evaluation set $5.20, Haiku 5.5 training rows and hard negatives $3.90, format
+tests $0.17); Colab about 129 compute units ($12.90).
+
+## R. Release 1.2: SDK 1.2.0 on the v1.1 models
+
+**Decision.** Release 1.2 is SDK 1.2.0 in all six packages (npm, PyPI, Swift, Maven, pub.dev and the C core), pinned to the
+v1.1 models (`newmean-ai/pii-<size>`, tag v1.1.0). v1.1 was never published on its own, so 1.2.0 is the first public update
+after 1.0. Sizes, tokenizer and architecture are those of v1.0: large q4e 15.5 MB, medium q4e 11.3 MB, small q4 7.1 MB,
+nano q4 2.6 MB.
+
+**Dataset v1.2 candidates, not released.** We trained students (v1.1 teachers kept) on a dataset v1.2 with more names
+written alone, copies of training rows with emoji, extra hard negatives and, in one candidate, generated tables. On
+independent sets they did not find names in running text or table cells better than v1.1: the share of PERSON characters
+that large misses on KDPII was 17.7% for v1.0, 20.8% for v1.1 and 23.2–26.8% for the candidates. Their one clear gain,
+emoji, is now handled in the SDK without retraining (Section 6.2), so none of them was released.
+
+**Text sets, model only → model + SDK 1.2** (miss % of PII characters; model only is the ONNX model run by the reference
+evaluator, model + SDK 1.2 the Python package 1.2.0 as shipped):
+
+| tier | public test 1.1 | KDPII | openpii | Nemotron | Gretel finance |
+|---|---|---|---|---|---|
+| large | 1.64 → 1.63 | 9.61 → 9.61 | 4.85 → 4.85 | 6.11 → 6.11 | 21.36 → 21.36 |
+| medium | 1.89 → 1.90 | 11.46 → 11.46 | 6.35 → 6.36 | 7.67 → 7.67 | 21.48 → 21.49 |
+| small | 2.37 → 2.33 | 10.00 → 10.00 | 5.64 → 5.63 | 8.44 → 8.44 | 22.29 → 22.29 |
+| nano | 2.94 → 2.92 | 9.47 → 9.47 | 4.98 → 4.99 | 9.93 → 9.93 | 21.41 → 21.41 |
+
+The SDK changes these sets by at most 0.04 points, because it only touches texts with emoji or keycaps; over-masking is also
+unchanged (medium, public test: 0.58%). On short_v1 (Section 6.1) the PII-free items masked are the same with and without the
+SDK: large 7.9%, medium 7.8%, small 9.4%, nano 11.1%.
+
+**Table sets the options were chosen on** (miss % / PII-free data cells masked %; whole file is model only, the other columns
+go through the SDK). 600 exports built in code to mimic Google Forms, SurveyMonkey, Qualtrics, Microsoft Forms, Typeform,
+Naver Form, Eventbrite, Mailchimp, HubSpot and sign-up sheets:
+
+| tier | whole file | table mode | table mode + context "header" | each cell alone |
+|---|---|---|---|---|
+| large | 4.97 / 8.91 | 4.54 / 8.92 | 0.71 / 9.65 | 2.16 / 10.03 |
+| medium | 8.08 / 9.25 | 7.64 / 9.26 | 1.11 / 9.95 | 2.87 / 9.98 |
+| small | 7.46 / 10.38 | 7.02 / 10.38 | 1.41 / 11.64 | 2.87 / 11.74 |
+| nano | 8.27 / 16.16 | 7.84 / 16.17 | 1.45 / 18.93 | 2.96 / 16.23 |
+
+The 228 survey CSV files of Section 6.1 (assembled from short items):
+
+| tier | whole file | table mode | table mode + context "header" | each cell alone |
+|---|---|---|---|---|
+| large | 0.67 / 2.96 | 0.65 / 2.96 | 0.52 / 4.20 | 0.27 / 6.75 |
+| medium | 1.03 / 3.40 | 0.95 / 3.40 | 0.60 / 4.47 | 0.42 / 6.11 |
+| small | 1.00 / 7.12 | 0.93 / 7.12 | 0.62 / 8.65 | 0.34 / 7.82 |
+| nano | 1.47 / 12.08 | 1.32 / 12.10 | 0.95 / 13.96 | 0.91 / 10.03 |
+
+On the code-built exports context "header" misses least, as on the independent set of Section 6.2; on the 228 files, whose
+cells are short items written alone, reading each cell alone misses least and context "header" comes second. These two sets
+were used to design the options, so the independent set of Section 6.2 is the one to quote.
+
+**Cost.** The independent table set: Claude Opus 5.5 through Message Batches, 600 requests, 2,651,361 input and 3,276,860
+output tokens, $38.07 (list price $76.14); a 6-request real-time pilot, $0.78.

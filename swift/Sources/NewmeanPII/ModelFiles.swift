@@ -7,7 +7,7 @@ import Foundation
 
 /// A published model file of release `PIIModelFile.version`.
 public struct PIIModelFile: Sendable, Hashable {
-  /// Model release (Hugging Face tag v1.0.0).
+  /// Model release (Hugging Face tag v1.1.0).
   public static let version = PII_MODEL_VERSION
 
   public let size: PIISize
@@ -27,7 +27,7 @@ public struct PIIModelFile: Sendable, Hashable {
     return PIIModelFile(size: size, path: String(cString: p.path), bytes: Int(p.bytes), sha256: String(cString: p.sha256))
   }
 
-  /// Hugging Face folder of a size at the pinned release: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/
+  /// Hugging Face folder of a size at the pinned release: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/
   public static func defaultBaseURL(_ size: PIISize) -> URL {
     URL(string: "https://huggingface.co/newmean-ai/pii-\(size.rawValue)/resolve/v\(version)/")!
   }

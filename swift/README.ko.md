@@ -12,7 +12,7 @@ Swift Package Manager: Xcode에서 File › Add Package Dependencies… › `htt
 `NewmeanPII`. 또는 `Package.swift`에:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.0.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.2.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -40,7 +40,7 @@ let (text, spans) = try await redactor.redact("제 메일은 kim@example.com, �
 여기에 토크나이저 0.8 MB(모든 크기 공용)가 더해집니다. 기본 가중치 파일은 npm 패키지와 같이 large·medium은 `q4e`,
 small·nano는 `q4`입니다. 모든 파일은 쓰기 전에 패키지에 고정된 크기와 SHA-256으로 확인합니다.
 
-**앱에 포함(권장).** Hugging Face(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/`)에서 한 크기의 파일 두 개,
+**앱에 포함(권장).** Hugging Face(`https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/`)에서 한 크기의 파일 두 개,
 `tokenizer.web.json`과 `onnx/model_<variant>.onnx`를 받아 앱 타깃에 넣고(폴더 참조로 넣으면 `onnx/` 폴더가 유지되고, 파일만
 넣어 나란히 놓여도 됩니다) 그 폴더를 넘깁니다.
 
@@ -49,7 +49,7 @@ let redactor = try await PIIRedactor(size: .medium, modelDirectory: Bundle.main.
 ```
 
 **한 번 내려받기.** `modelDirectory`를 주지 않으면 처음 쓸 때 Hugging Face에서
-`Caches/newmean-pii/v1.0.0/pii-<size>/`로 내려받고, 불러올 때마다 다시 확인합니다. 시스템이 Caches를 비우면 다시
+`Caches/newmean-pii/v1.1.0/pii-<size>/`로 내려받고, 불러올 때마다 다시 확인합니다. 시스템이 Caches를 비우면 다시
 내려받습니다. 미리 받거나 다른 폴더를 쓰거나 파일을 직접 제공하려면:
 
 ```swift
@@ -77,21 +77,25 @@ try await PIIRedactor(
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림;
                                     // 기본 false(모델만): 추가로 찾는 것은 거의 없고 과잉 가림이 두 배
+  keepEmoji: Bool = false,          // true: 모델이 이모지도 읽음(1.1 동작); 기본: 이모지는 읽지도 가리지도 않음
   modelDirectory: URL? = nil)       // 모델 파일 폴더; nil이면 Caches로 한 번 내려받음
 
 try await redactor.detect(text)                  // [PIISpan], 정렬, 겹침 없음
 try await redactor.redact(text, mode: .tag)      // (text, spans); .tag → [EMAIL], .mask → *****, .mask(with: "•"),
                                                  // .blank → 삭제, .custom { span, original in ... }
+try await redactor.detectTable(text)             // 표 모드(아래 '표' 참고)
+try await redactor.redactTable(text, mode: .tag) // (text, spans)
 redactor.sensitivity = 0.3                       // 모델을 다시 불러오지 않고 임계값 변경
 PIIRedactor.applyRedaction(to: text, spans: spans, mode: .tag)
 PIIRegex.spans(in: text)                         // 패턴 층만 따로
 ```
 
 `PIISpan`에는 `range`(찾은 텍스트의 `Range<String.Index>`), `utf16Range`(NSString·NSRange 오프셋, npm 패키지의 `start`·`end`),
-`scalarRange`(유니코드 스칼라, Python 오프셋), `label`, `source`(`.model`, `.regex`, `.modelAndRegex`)가 있습니다. 구간은
-유니코드 스칼라 경계에 놓이며, 이 경계가 Character 경계와 늘 같지는 않습니다(이모지 ZWJ 연쇄는 스칼라 여러 개로 된 Character 하나). 자를 때는 `text[span.range]`(Swift가
-Character 경계로 맞춤)가 아니라 `text.unicodeScalars[span.range]`나 `utf16Range`를 쓰세요. `.mask`는 npm 패키지처럼 유니코드
-스칼라마다 가림 문자 하나를 씁니다.
+`scalarRange`(유니코드 스칼라, Python 오프셋), `label`, `source`(`.model`, `.regex`, `.modelAndRegex`, `.table`)가 있습니다.
+구간은 문자소 클러스터 단위(UAX #29, C 코어 구현 기준)로 넓혀지므로 이모지, 국기, 결합 문자열은 통째로 가려지거나 통째로 남습니다.
+자를 때는 `redact`처럼 `text.unicodeScalars[span.range]`나 `utf16Range`를 쓰세요. `.mask`는 npm 패키지처럼 유니코드 스칼라마다
+가림 문자 하나를 씁니다. 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의
+이모지는 구간을 나눔). `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.1 동작).
 
 **스레드.** `PIIRedactor`는 `Sendable`이고 잠글 필요가 없습니다. 여러 작업이 한 인스턴스의 `detect`를 동시에 불러도 됩니다.
 async 메서드는 모델을 분리된 작업(detached task)에서 실행하고 호출한 액터에서 돌리지 않으므로, 메인 액터에서 불러도 UI가
@@ -102,6 +106,39 @@ async 메서드는 모델을 분리된 작업(detached task)에서 실행하고 
 **Debug 빌드는 느립니다.** Xcode는 Debug 구성에서 패키지의 C 코드를 최적화 없이 컴파일하므로 모델이 약 18배 느려집니다(Apple
 M5 Pro, medium, 짧은 텍스트 약 19 ms → 350 ms). 속도는 Release 빌드에서 재세요. Release는 코어를 `-Os`로 컴파일하며
 `-O3`과 속도가 같습니다.
+
+## 표
+
+```swift
+try await redactor.detectTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true,
+                               vote: Bool = true, context: PIITableContext = .none) -> [PIISpan]
+try await redactor.redactTable(_ text: String, delimiter: PIITableDelimiter = .auto, header: Bool = true,
+                               vote: Bool = true, context: PIITableContext = .none,
+                               mode: PIIRedactionMode = .tag) -> (text: String, spans: [PIISpan])
+```
+
+표 모드는 CSV, TSV, 세미콜론 구분, 마크다운 파이프 표를 한 텍스트로 읽고 모든 구간을 칸 값 안으로 자릅니다. 구분자, 따옴표,
+줄바꿈은 가리지 않으므로 결과도 올바른 표입니다. `PIITableDelimiter`는 `.auto`(자동 감지), `.comma`, `.tab`, `.semicolon`,
+`.markdown`이고, 따옴표 필드는 RFC 4180을 따릅니다. `vote`가 켜져 있으면, 짧은 값으로 된 열에서 모델이 비어 있지 않은 칸의 80%
+이상(4칸 이상; 비어 있지 않은 칸이 5개 미만인 열은 투표하지 않음)을 이름, 이메일, 전화번호, 사용자 이름으로 찾을 때 그 열 전체를
+가립니다. 이 구간의 source는 `.table`입니다. 긴 글 열(값의 중앙값이 40자 또는 4단어 초과)은 투표하지 않고, 자리 표시 값(`N/A`,
+`-`, `none`, `null`, `없음`)은 건너뛰며, 이메일 열은 `@`, 전화 열은 숫자 6개 이상이 있는 값만 가립니다. `header`가 켜져 있으면
+첫 행은 모델이 찾은 개인정보만 가리고 투표에는 넣지 않습니다. `context: .header`(`PIITableContext`; 기본 `.none`)이고 머리 행이
+있으면, 비어 있지 않은 값의 80% 이상이 서로 다른 열의 비어 있지 않은 데이터 칸을 "<머리글>: <값>"으로 한 번 더 따로 읽어 그
+구간을 더합니다. 이름·연락처·ID 열을 덜 놓치는 대신 개인정보가 없는 칸을 더 가리고, 그런 칸마다 모델을 한 번 더 부릅니다. 표가
+아닌 텍스트는 `detect`와 똑같은 구간을 냅니다. `.custom`
+치환은 구분자, 따옴표, 줄바꿈을 넣으면 안 됩니다. 동기 오버로드는 `detect`처럼 호출한 스레드를 막습니다.
+
+```swift
+let csv = "name,email,plan\nKim Minsu,kim@example.com,Pro\nLee Jiwon,lee@example.com,Free"
+let (masked, _) = try await redactor.redactTable(csv)
+// "name,email,plan\n[PERSON],[EMAIL],Pro\n[PERSON],[EMAIL],Free"
+let (tsvMasked, _) = try await redactor.redactTable(tsv, delimiter: .tab, vote: false, mode: .mask)
+```
+
+설문·양식 내보내기에서 표 모드는 이름·성이 나뉜 열의 이름을 많이 놓칩니다. `context: .header`를 쓰면 놓침이 약 4분의 1로
+줄고, 개인정보가 없는 칸은 2.3~3.7점 더 가립니다. 재현율이 먼저라면 이 옵션을 쓰세요. 측정값:
+[저장소 README](https://github.com/newmean-ai/pii/blob/main/README.ko.md#표csv-tsv).
 
 ## 개발
 

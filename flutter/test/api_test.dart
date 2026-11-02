@@ -45,7 +45,7 @@ void main() {
     tearDownAll(() => pii.dispose());
 
     test('defaults follow the npm package', () {
-      expect((pii.size, pii.variant, pii.version, pii.sensitivity, pii.regex), ('nano', 'q4', '1.0.0', 0.0, false));
+      expect((pii.size, pii.variant, pii.version, pii.sensitivity, pii.regex), ('nano', 'q4', '1.1.0', 0.0, false));
       expect(defaultSize, 'medium');
       expect(defaultVariant, {'large': 'q4e', 'medium': 'q4e', 'small': 'q4', 'nano': 'q4'});
     });
@@ -210,7 +210,7 @@ void main() {
     expect(modelFile('nano', 'tokenizer').bytes, 810589);
     expect(
       modelFile('large', 'q4').url.toString(),
-      'https://huggingface.co/newmean-ai/pii-large/resolve/v1.0.0/onnx/model_q4.onnx',
+      'https://huggingface.co/newmean-ai/pii-large/resolve/v1.1.0/onnx/model_q4.onnx',
     );
     expect(nativeBuildInfo, isNot(contains('fma')));
   });

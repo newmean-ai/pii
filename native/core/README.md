@@ -26,7 +26,7 @@ Plain C11, no dependencies, no network, no global state.
 ```c
 #include "pii.h"
 
-// files: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.0.0/{onnx/model_<variant>.onnx, tokenizer.web.json}
+// files: https://huggingface.co/newmean-ai/pii-<size>/resolve/v1.1.0/{onnx/model_<variant>.onnx, tokenizer.web.json}
 if (pii_verify_file(onnx, onnx_len, "medium", "q4e") || pii_verify_file(tok, tok_len, "medium", "tokenizer")) { /* refuse */ }
 char err[256];
 pii_model *m = pii_model_load(onnx, onnx_len, tok, tok_len, err, sizeof err);  // the input buffers may be freed now
@@ -35,6 +35,7 @@ pii_options o;
 pii_options_init(&o);         // sensitivity 0, all labels
 o.sensitivity = 0.3;          // > 0 masks more, < 0 masks less (npm `sensitivity`)
 o.labels = PII_LABELS_LEVEL1; // npm LEVEL1_LABELS; or PII_LABEL_BIT(PII_EMAIL) | ...
+o.keep_emoji = 0;             // default: emoji are never read or masked (npm `keepEmoji`)
 
 pii_span *spans;
 size_t n;
@@ -43,14 +44,20 @@ if (pii_detect(m, text, strlen(text), &o, &spans, &n) == PII_OK) {
     printf("%s [%zu, %zu)\n", spans[i].label_name, spans[i].byte_start, spans[i].byte_end);
   pii_spans_free(spans);
 }
+
+pii_table_options t;
+pii_table_options_init(&t);   // delimiter auto, header row, column vote on
+t.delimiter = ',';            // 0 (auto), ',', '\t', ';' or '|' (markdown pipe table)
+t.context = PII_TABLE_CONTEXT_HEADER;  // also read cells of distinct-valued columns as "<header>: <value>"
+if (pii_detect_table(m, csv, strlen(csv), &o, &t, &spans, &n) == PII_OK) pii_spans_free(spans);
 pii_model_free(m);
 ```
 
 - **Spans** carry `[start, end)` in UTF-8 bytes, code points (Python `str`) and UTF-16 units (JavaScript, Java/Kotlin,
-  Dart, `NSString`), so wrappers convert nothing. Invalid UTF-8 bytes count as one code point each. Offsets fall on code
-  point boundaries; a grapheme the tokenizer's normalizer rewrites (for example `e` + U+0301) stays whole, but a span
-  can still end inside another grapheme, such as a ZWJ sequence the model splits: slice by code points or UTF-16 units,
-  not by Swift `Character` indices. Pass standard UTF-8: `String.getBytes(UTF_8)` on the JVM, not
+  Dart, `NSString`), so wrappers convert nothing. Invalid UTF-8 bytes count as one code point each. Span offsets are
+  widened to extended grapheme cluster boundaries (UAX #29) of the whole input, so a span never splits an emoji ZWJ
+  sequence, flag, skin tone, keycap or combining sequence; token offsets fall on code point boundaries only. Slice by code
+  points or UTF-16 units, not by Swift `Character` indices. Pass standard UTF-8: `String.getBytes(UTF_8)` on the JVM, not
   JNI `GetStringUTFChars` (modified UTF-8 splits emoji into surrogates and NUL into two bytes, which changes tokens and
   offsets); `str.encode("utf-8", "surrogatepass")` in Python.
 - **Errors**: functions return `PII_OK` or a `PII_ERR_*` code (`pii_strerror` gives the message); `pii_model_load` writes
@@ -60,12 +67,25 @@ pii_model_free(m);
 - **Options** follow the npm package: `sensitivity` (the O logit gets `-sensitivity`), `labels` (bit set; default all 13).
   `extra` takes spans from a wrapper's pattern layer and merges them exactly like the npm `combine` (the model's label
   wins; a pattern label counts only where no model label of the same family covers the text), so the pattern layer can
-  stay in each language.
+  stay in each language. `keep_emoji` (default 0) takes emoji out of the text the model reads, so the model does not read them as PII;
+  spans keep the input's offsets, an emoji inside a span splits it, and a keycap is read as its bare character (a span over
+  it covers the whole keycap). 1 gives the model the text as given (1.1 behaviour).
 - **Pins and defaults**: `pii_model_file(size, file)` gives the path, size and SHA-256 of each published file;
   `pii_default_variant(size)` the npm default (`q4e` for large and medium, `q4` for small and nano). Default size:
   `PII_DEFAULT_SIZE` (`medium`).
-- **Threads**: a `pii_model` is immutable after loading. Any number of threads may call `pii_detect` / `pii_tokenize` on
-  one model at once; each call allocates its own scratch memory (about 4.5 MB for a full 256-token window, less for short texts).
+- **Table mode**: `pii_detect_table(model, utf8, len, options, table, &out, &n)` reads a CSV, TSV, semicolon-separated or
+  markdown pipe table (RFC 4180 fields) with `pii_detect`, clips every span to a cell value (delimiters, quotes, line breaks
+  and separator lines stay unmasked, so a redaction that inserts none of them keeps the table valid) and, with
+  `table->vote`, masks a column of short values (at least 5 non-empty data cells, median at most 40 code points and 4
+  words) whose cells are PERSON, EMAIL, PHONE or USERNAME in at least 4 cells and 80% of them (source `PII_SOURCE_TABLE`;
+  placeholders such as `N/A`, EMAIL values without `@` and PHONE values with fewer than 6 digits are skipped). The header
+  row (`table->header`, default 1) is never voted on. Grapheme widening stops at the edges of the cell value. Text that is
+  not a table gives exactly the spans of `pii_detect`; `table` may be NULL (defaults); an unknown delimiter is `PII_ERR_ARG`.
+  `table->context = PII_TABLE_CONTEXT_HEADER` (default `PII_TABLE_CONTEXT_NONE`), with a header row, also reads each
+  non-empty data cell of a column whose non-empty values are at least 80% distinct on its own as "<header>: <value>" and adds
+  those spans: fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell.
+- **Threads**: a `pii_model` is immutable after loading. Any number of threads may call `pii_detect` /
+  `pii_detect_table` / `pii_tokenize` on one model at once; each call allocates its own scratch memory (about 4.5 MB for a full 256-token window, less for short texts).
 - `pii_tokenize` returns token ids and offsets (without `<s>` and `</s>`); `pii_model_get_info` the model shape;
   `pii_build_info` the kernel build.
 
