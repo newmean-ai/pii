@@ -41,7 +41,9 @@ final class ModelTests: XCTestCase {
       let name = "predict-\(size.rawValue)-\(variant.rawValue)\(bias != 0 ? "-b" + String(format: "%g", bias) : "").jsonl"
       // skip a run without its fixture or model copy, but fail when a model that is there does not load
       guard let rows = try? Fixtures.rows(name), (try? Fixtures.requireModel(size.rawValue, variant.rawValue)) != nil else { continue }
-      let r = try await redactor(size, variant, sensitivity: -bias)
+      // the evaluator's spans end where the model ends them
+      let dir = try Fixtures.requireModel(size.rawValue, variant.rawValue)
+      let r = try await PIIRedactor(size: size, variant: variant, sensitivity: -bias, wholeWords: false, modelDirectory: dir)
       let t0 = Date()
       var same = 0
       var diffs: [String] = []

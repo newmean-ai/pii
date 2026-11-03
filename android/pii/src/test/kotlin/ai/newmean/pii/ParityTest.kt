@@ -32,8 +32,8 @@ class ParityTest(private val size: PiiSize, private val variant: PiiVariant, pri
         val rows = TestEnv.jsonl(TestEnv.fixture("predict-${size.id}-${variant.id}$b.jsonl"))
         assumeTrue(rows.isNotEmpty())
         val t0 = System.nanoTime()
-        // Python O bias b is added to the O logit; sensitivity = -b
-        TestEnv.redactor(size, variant, sensitivity = -bias).use { r ->
+        // Python O bias b is added to the O logit; sensitivity = -b; the evaluator's spans end where the model ends them
+        TestEnv.redactor(size, variant, sensitivity = -bias, wholeWords = false).use { r ->
             var same = 0
             val diffs = ArrayList<String>()
             for (row in rows) {

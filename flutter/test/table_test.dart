@@ -168,9 +168,11 @@ void main() {
     });
 
     test('wholeWords: no span starts or ends inside a word', () async {
-      final words = await NewmeanPii.create(size: 'nano', modelDir: modelDir('nano'), wholeWords: true);
+      final words = pii; // the default since 1.3.0
       expect(words.wholeWords, isTrue);
-      expect(pii.wholeWords, isFalse);
+      final off = await NewmeanPii.create(size: 'nano', modelDir: modelDir('nano'), wholeWords: false);
+      expect(off.wholeWords, isFalse);
+      await off.dispose();
       final alnum = RegExp(r'[\p{L}\p{N}]', unicode: true);
       bool word(String t, int i) => alnum.hasMatch(t[i]);
       for (final text in [
@@ -187,7 +189,6 @@ void main() {
           }
         }
       }
-      await words.dispose();
     });
 
     test('strictShortNames: longer texts unchanged, never more PERSON', () async {

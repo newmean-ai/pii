@@ -32,9 +32,12 @@ public class PiiRedactor private constructor(
      */
     public val keepEmoji: Boolean,
     /**
-     * true: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도"; "R23", not
+     * true: a span that starts or ends inside a word is widened to the whole word ("R23", not
      * "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of scripts
-     * written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Default false.
+     * written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span, and a word ends where Hangul meets
+     * digits or Latin letters ("010-1234-5678입니다"); Korean particles after a
+     * Hangul span stay ("홍길동님께"). Default true (since 1.3.0); false:
+     * spans end where the model ends them (1.2 behaviour).
      */
     public val wholeWords: Boolean,
     /**
@@ -173,7 +176,7 @@ public class PiiRedactor private constructor(
          * @param labels labels to mask; default all ([PiiLabels.ALL]). [PiiLabels.LEVEL1] leaves level 2 visible.
          * @param regex also mask a few patterns (email, URL, card/account, phone, Korean resident number); default false.
          * @param keepEmoji true: the model reads emoji too (1.0 behaviour); default false: emoji are never read or masked.
-         * @param wholeWords true: spans are widened to whole words ("경기도", not "[PERSON]기도"); default false.
+         * @param wholeWords true: spans are widened to whole words ("R23", not "[ID_NUMBER]23"); default true.
          * @param strictShortNames true: texts of at most 8 tokens need stronger evidence to be read as names ("경기", "남성" are
          *   left alone; a lone name is missed a little more often); default false.
          */
@@ -186,7 +189,7 @@ public class PiiRedactor private constructor(
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
             keepEmoji: Boolean = false,
-            wholeWords: Boolean = false,
+            wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
             createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji, wholeWords, strictShortNames)
@@ -202,7 +205,7 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
-            wholeWords: Boolean = false,
+            wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
         ): PiiRedactor = withContext(Dispatchers.IO) {
             createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames)
@@ -221,7 +224,7 @@ public class PiiRedactor private constructor(
             regex: Boolean = false,
             source: PiiModelSource = PiiModelSource.Assets(),
             keepEmoji: Boolean = false,
-            wholeWords: Boolean = false,
+            wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
         ): PiiRedactor {
             val modelPin = PiiModels.modelPin(size, variant)
@@ -266,7 +269,7 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
-            wholeWords: Boolean = false,
+            wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
         ): PiiRedactor = load(
             ModelStore.readVerified(model, PiiModels.modelPin(size, variant)),
@@ -287,7 +290,7 @@ public class PiiRedactor private constructor(
             labels: Collection<String> = PiiLabels.ALL,
             regex: Boolean = false,
             keepEmoji: Boolean = false,
-            wholeWords: Boolean = false,
+            wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
         ): PiiRedactor {
             if (!ModelStore.matches(model, PiiModels.modelPin(size, variant))) throw ModelStore.mismatch("model_${variant.id}.onnx")

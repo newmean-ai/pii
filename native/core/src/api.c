@@ -47,6 +47,7 @@ void pii_options_init(pii_options *o) {
   o->struct_size = sizeof *o;
   o->labels = PII_LABELS_ALL;
   o->extra_unit = PII_UNIT_UTF8;
+  o->whole_words = 1;
 }
 
 pii_model *pii_model_load(const uint8_t *onnx, size_t onnx_len, const uint8_t *tok_json, size_t tok_len, char *err, size_t errlen) {
@@ -281,25 +282,51 @@ static int word_cp(uint32_t c) {
   return 0;
 }
 static int joiner(uint32_t c) { return c == 0x27 || c == 0x2019 || c == 0x2d || c == 0x2010; }  // apostrophes, hyphens
+// Hangul syllables and jamo (isHangul): a word ends where Hangul meets another word character ("010-1234-5678입니다"),
+// and a Hangul end is not widened over particles only ("홍길동님께").
+static int hangul(uint32_t c) {
+  return (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xa960 && c <= 0xa97f) ||
+         (c >= 0xac00 && c <= 0xd7ff) || (c >= 0xffa0 && c <= 0xffdc);
+}
+static int same_word(uint32_t c, int h) { return word_cp(c) && hangul(c) == h; }
 
 // Start of the word that cp[a] belongs to (a when cp[a] is not a word character); end of the word of cp[b - 1].
 static size_t word_start(const uint32_t *cp, size_t n, size_t a) {
   if (a >= n || !word_cp(cp[a])) return a;
+  const int h = hangul(cp[a]);
   while (a > 0) {
-    if (word_cp(cp[a - 1])) a--;
-    else if (joiner(cp[a - 1]) && a >= 2 && word_cp(cp[a - 2])) a--;
+    if (same_word(cp[a - 1], h)) a--;
+    else if (joiner(cp[a - 1]) && a >= 2 && same_word(cp[a - 2], h)) a--;
     else break;
   }
   return a;
 }
+// Whether cp[0, n) is a run of PII_KO_PARTICLES (particlesOnly).
+static int particles_only(const uint32_t *cp, size_t n) {
+  if (n == 0 || n > PII_MAX_PARTICLE_RUN) return 0;
+  int ok[PII_MAX_PARTICLE_RUN + 1] = {1};
+  for (size_t i = 1; i <= n; i++)
+    for (size_t k = 1; k <= 3 && k <= i && !ok[i]; k++) {
+      if (!ok[i - k]) continue;
+      for (size_t p = 0; p < sizeof PII_KO_PARTICLES / sizeof PII_KO_PARTICLES[0] && !ok[i]; p++) {
+        const uint32_t *w = PII_KO_PARTICLES[p];
+        size_t len = 0;
+        while (len < 3 && w[len]) len++;
+        ok[i] = len == k && !memcmp(w, cp + i - k, k * sizeof *cp);
+      }
+    }
+  return ok[n];
+}
 static size_t word_end(const uint32_t *cp, size_t n, size_t b) {
   if (b == 0 || !word_cp(cp[b - 1])) return b;
-  while (b < n) {
-    if (word_cp(cp[b])) b++;
-    else if (joiner(cp[b]) && b + 1 < n && word_cp(cp[b + 1])) b++;
+  const int h = hangul(cp[b - 1]);
+  size_t e = b;
+  while (e < n) {
+    if (same_word(cp[e], h)) e++;
+    else if (joiner(cp[e]) && e + 1 < n && same_word(cp[e + 1], h)) e++;
     else break;
   }
-  return b;
+  return h && e > b && particles_only(cp + b, e - b) ? b : e;
 }
 
 typedef struct {

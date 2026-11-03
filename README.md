@@ -167,14 +167,16 @@ small and nano mask many PII-free cells in every mode (16% to 27%). Release 1.0 
 files whole and misses more: large 7.52 / 11.30, medium 9.50 / 9.37, small 9.80 / 13.43, nano 8.04 / 24.36. Two more sets,
 on which the options were chosen, and the full numbers: [technical report, Section 6.2](docs/report/REPORT.md).
 
-What 1.3 adds. SDK 1.3.0, same v1.1 models; two options, both off by default, so 1.2 code gets the same spans.
+What 1.3 adds. SDK 1.3.0, same v1.1 models; two options: `wholeWords` on by default (`false` gives the 1.2 spans; the
+numbers above are without it), `strictShortNames` off.
 `strictShortNames`: a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be
 read as a name, so 「경기」, 「남성」 or 「네이버」 alone are left unmasked. Short PII-free items masked fall from 7.9% to 4.3%
 (large; medium 7.8% to 4.5%, small 9.4% to 4.7%, nano 11.1% to 5.9%), and lone names found fall from 98.9% to 96.5% (medium
 97.5% to 95.4%, small 97.0% to 93.5%, nano 96.7% to 94.4%); longer texts are unchanged (public test and KDPII within 0.07
-points). `wholeWords`: a span that ends inside a word covers the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`),
-which lowers misses on every set by 0.1 to 1.3 points and masks more around names (on KDPII, Korean particles written onto
-a name). Every package also gains `info` with the package and model versions and the checked model files.
+points). `wholeWords`: a span that ends inside a word covers the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`; a word ends
+where Hangul meets digits or Latin letters, so 「010-1234-5678입니다」 → `[PHONE]입니다`; Korean particles after a Hangul span stay, 「홍길동님께」 → `[PERSON]님께`),
+which lowers misses on every set by 0.1 to 1.4 points (large: public test 1.63% to 1.54%, KDPII 9.61% to 9.08%) and masks
+a little more (large over-masking: public test 0.47% to 0.53%, KDPII 1.70% to 2.09%). Every package also gains `info` with the package and model versions and the checked model files.
 
 ## Repository layout
 

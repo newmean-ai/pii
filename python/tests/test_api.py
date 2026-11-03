@@ -147,9 +147,10 @@ def test_strict_short_names(nano):
 
 
 def test_whole_words(nano):
-    assert nano.whole_words is False
-    with Redactor("nano", "q4", model_dir=nano_dir(), whole_words=True) as r:
-        assert r.whole_words is True and "whole_words=True" in repr(r)
+    assert nano.whole_words is True and "whole_words=True" in repr(nano)
+    with Redactor("nano", "q4", model_dir=nano_dir(), whole_words=False) as off:
+        assert off.whole_words is False and "whole_words=False" in repr(off)
+    with Redactor("nano", "q4", model_dir=nano_dir()) as r:
         for text in ("남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n"):
             for spans in (r.detect(text), r.detect_table(text)):
                 for s in spans:  # no span starts or ends inside a word

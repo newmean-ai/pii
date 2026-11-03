@@ -100,7 +100,7 @@ PiiRedactor.create(                       // suspend, loads on Dispatchers.IO; c
                                           // number); default false (model only): almost no extra coverage, double the over-masking
     source = PiiModelSource.Assets(),     // or PiiModelSource.Download(...)
     keepEmoji = false,                    // true: the model also reads emoji (1.0 behaviour); default: never read or masked
-    wholeWords = false,                   // true: a span that ends inside a word covers the whole word
+    wholeWords = true,                    // true: a span that ends inside a word covers the whole word
     strictShortNames = false,             // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // files on disk; fromBytes(model, tokenizer, size, ...) for bytes
@@ -122,7 +122,7 @@ returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE
 clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `MASK` writes one mask character per code
 point, like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets
 still refer to the input; an emoji inside a span splits it); `keepEmoji = true` gives the model the text as given (1.0
-behaviour). With `wholeWords = true`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span. With `strictShortNames = true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged. `redactor.version` is the model release (1.1.0); `info().packageVersion`
+behaviour). By default (`wholeWords`, since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strictShortNames` leaves such values alone. `wholeWords = false` gives the 1.2 spans. With `strictShortNames = true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged. `redactor.version` is the model release (1.1.0); `info().packageVersion`
 is the package version.
 
 **Threads.** `PiiRedactor` is thread-safe: any number of threads or coroutines may call `detect` and `redact` on one

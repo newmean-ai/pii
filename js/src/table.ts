@@ -420,6 +420,37 @@ export function isWordChar(c: number): boolean {
 /** Apostrophes and hyphens join two words into one: O'Brien, Jean-Luc. */
 const isJoiner = (c: number) => c === 0x27 || c === 0x2019 || c === 0x2d || c === 0x2010;
 
+/** Hangul syllables and jamo. A word ends where Hangul meets another word character, so a Korean particle or ending written
+ *  onto a number, address or Latin name ("010-1234-5678입니다", "kim@example.com으로") is not masked with it. */
+export const isHangul = (c: number) =>
+  (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xa960 && c <= 0xa97f) || (c >= 0xac00 && c <= 0xd7ff) ||
+  (c >= 0xffa0 && c <= 0xffdc);
+
+/** Korean particles, copula endings and the honorifics 님 / 씨 / 들. A span that ends inside a Hangul word is not widened
+ *  when the rest of the word is a run of these (「홍길동님께」 keeps 「님께」 = 님 + 께), since that rest is grammar, not part of
+ *  the name; any other rest is widened (「남성」). At most 3 code points each; written to native/core/src/word_tables.h by
+ *  native/core/scripts/gen_words.mjs. */
+export const KO_PARTICLES: readonly string[] = [
+  "님", "씨", "들", "께", "께서", "이", "가", "은", "는", "을", "를", "의", "에", "에서", "에게", "한테", "로", "으로", "와", "과",
+  "랑", "하고", "도", "만", "까지", "부터", "처럼", "보다", "나", "든", "며", "야", "아", "이여", "이다", "입니다", "이고", "라고",
+  "라", "인데", "니까", "이에요", "예요", "이요", "이죠", "였", "이었", "이었다", "였다", "이지", "지만", "면",
+];
+const PARTICLES = new Set(KO_PARTICLES);
+/** Longer rests are always widened. */
+export const MAX_PARTICLE_RUN = 12;
+
+/** Whether `rest` is a run of KO_PARTICLES (at most MAX_PARTICLE_RUN code points). */
+export function particlesOnly(rest: string): boolean {
+  const cps = Array.from(rest);
+  if (!cps.length || cps.length > MAX_PARTICLE_RUN) return false;
+  const ok = [true];
+  for (let i = 1; i <= cps.length; i++) {
+    ok[i] = false;
+    for (let k = 1; k <= 3 && k <= i && !ok[i]; k++) ok[i] = ok[i - k] && PARTICLES.has(cps.slice(i - k, i).join(""));
+  }
+  return ok[cps.length];
+}
+
 const before = (t: string, i: number): [number, number] => {
   const lo = t.charCodeAt(i - 1);
   if (i >= 2 && lo >= 0xdc00 && lo <= 0xdfff) {
@@ -437,25 +468,31 @@ const at = (t: string, i: number): [number, number] => {
  *  character. */
 export function wordStart(text: string, i: number): number {
   if (i >= text.length || !isWordChar(at(text, i)[0])) return i;
+  const h = isHangul(at(text, i)[0]);
+  const same = (c: number) => isWordChar(c) && isHangul(c) === h;
   while (i > 0) {
     const [c, n] = before(text, i);
-    if (isWordChar(c)) i -= n;
-    else if (isJoiner(c) && i - n > 0 && isWordChar(before(text, i - n)[0])) i -= n;
+    if (same(c)) i -= n;
+    else if (isJoiner(c) && i - n > 0 && same(before(text, i - n)[0])) i -= n;
     else break;
   }
   return i;
 }
 
-/** End of the word that the code point before `i` belongs to; `i` itself when that code point is not a word character. */
+/** End of the word that the code point before `i` belongs to; `i` itself when that code point is not a word character, or
+ *  when it is Hangul and the rest of the word is particles only (particlesOnly). */
 export function wordEnd(text: string, i: number): number {
   if (i <= 0 || !isWordChar(before(text, i)[0])) return i;
-  while (i < text.length) {
-    const [c, n] = at(text, i);
-    if (isWordChar(c)) i += n;
-    else if (isJoiner(c) && i + n < text.length && isWordChar(at(text, i + n)[0])) i += n;
+  const h = isHangul(before(text, i)[0]);
+  const same = (c: number) => isWordChar(c) && isHangul(c) === h;
+  let e = i;
+  while (e < text.length) {
+    const [c, n] = at(text, e);
+    if (same(c)) e += n;
+    else if (isJoiner(c) && e + n < text.length && same(at(text, e + n)[0])) e += n;
     else break;
   }
-  return i;
+  return h && e > i && particlesOnly(text.slice(i, e)) ? i : e;
 }
 
 type Segments = { containing(i: number): { segment: string; index: number } | undefined };
@@ -470,7 +507,8 @@ const segmenter: { segment(s: string): Segments } | null =
  *  Without Intl.Segmenter (e.g. Hermes builds without it, older browsers) the bounds are not moved to cluster edges: they
  *  are still on code points, but a span may cover part of an emoji sequence or combining sequence.
  *  `words` (option wholeWords): before that, a span that starts or ends inside a word is widened to the whole word
- *  (isWordChar: letters, digits and marks, joined by apostrophes and hyphens; not in scripts written without spaces). */
+ *  (isWordChar: letters, digits and marks, joined by apostrophes and hyphens; not in scripts written without spaces; a word
+ *  ends where Hangul meets another word character; a Hangul end is kept when the rest of the word is particles only). */
 export function snapGraphemes(text: string, spans: Span[], cells?: readonly { start: number; end: number }[], words = false): Span[] {
   if (!spans.length || (!segmenter && !words)) return spans;
   const segs = segmenter ? segmenter.segment(text) : null;

@@ -46,9 +46,12 @@ public final class PIIRedactor: @unchecked Sendable {
   ///     false: on the public test of newmean-pii-dataset they add almost no coverage and double over-masking.
   ///   - keepEmoji: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
   ///     offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour).
-  ///   - wholeWords: true: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도";
+  ///   - wholeWords: true: a span that starts or ends inside a word is widened to the whole word (
   ///     "R23", not "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of
-  ///     scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Default false.
+  ///     scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span, and a word ends where
+  ///     Hangul meets digits or Latin letters ("010-1234-5678입니다"); Korean particles after a
+  ///     Hangul span stay ("홍길동님께"). Default true (since 1.3.0);
+  ///     false: spans end where the model ends them (1.2 behaviour).
   ///   - strictShortNames: true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model
   ///     needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
   ///     alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
@@ -57,7 +60,7 @@ public final class PIIRedactor: @unchecked Sendable {
   ///     next to it), for example a folder in the app bundle. Default nil: `PIIModelStore.default`, which downloads the
   ///     files from Hugging Face once into Caches. Files are checked against the published SHA-256 either way.
   public init(size: PIISize = .default, variant: PIIVariant? = nil, sensitivity: Double = 0, labels: Set<PIILabel> = PIILabel.all,
-              regex: Bool = false, keepEmoji: Bool = false, wholeWords: Bool = false, strictShortNames: Bool = false,
+              regex: Bool = false, keepEmoji: Bool = false, wholeWords: Bool = true, strictShortNames: Bool = false,
               modelDirectory: URL? = nil) async throws {
     let variant = variant ?? size.defaultVariant
     let dir: URL

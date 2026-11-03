@@ -73,7 +73,7 @@ class Redactor:
         labels: Optional[Iterable[str]] = None,
         regex: bool = False,
         keep_emoji: bool = False,
-        whole_words: bool = False,
+        whole_words: bool = True,
         strict_short_names: bool = False,
         model_dir: Optional[PathLike] = None,
         cache_dir: Optional[PathLike] = None,
@@ -108,9 +108,12 @@ class Redactor:
         #: False (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of
         #: the input (an emoji inside a span splits it). True: the model reads the text as given (1.0 behaviour).
         self.keep_emoji: bool = bool(keep_emoji)
-        #: True: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도"; "R23", not
+        #: True: a span that starts or ends inside a word is widened to the whole word ("R23", not
         #: "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and hyphens; letters of scripts
-        #: written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. Masks more characters; default False.
+        #: written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span, and a word ends where Hangul meets
+        #: digits or Latin letters ("010-1234-5678입니다"); Korean particles after a
+        #: Hangul span stay ("홍길동님께"). Masks more characters. Default True
+        #: (since 1.3.0); False: spans end where the model ends them (1.2 behaviour).
         self.whole_words: bool = bool(whole_words)
         #: True: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger
         #: evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left alone; a lone name
@@ -247,7 +250,7 @@ def create_redactor(
     labels: Optional[Iterable[str]] = None,
     regex: bool = False,
     keep_emoji: bool = False,
-    whole_words: bool = False,
+    whole_words: bool = True,
     strict_short_names: bool = False,
     model_dir: Optional[PathLike] = None,
     cache_dir: Optional[PathLike] = None,

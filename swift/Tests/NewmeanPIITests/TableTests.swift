@@ -152,8 +152,10 @@ final class TableTests: XCTestCase {
   }
 
   func testWholeWords() async throws {
-    let r = try await PIIRedactor(size: .nano, wholeWords: true, modelDirectory: Fixtures.requireModel("nano", "q4"))
-    XCTAssertTrue(r.wholeWords)
+    let r = try await PIIRedactor(size: .nano, modelDirectory: Fixtures.requireModel("nano", "q4"))
+    XCTAssertTrue(r.wholeWords)  // the default since 1.3.0
+    let off = try await PIIRedactor(size: .nano, wholeWords: false, modelDirectory: Fixtures.requireModel("nano", "q4"))
+    XCTAssertFalse(off.wholeWords)
     for text in ["남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n"] {
       let units = Array(text.utf16)
       let alnum = { (i: Int) -> Bool in

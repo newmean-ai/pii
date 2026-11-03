@@ -346,7 +346,16 @@ static int words1(const char *text, const char *part, const char *want) {
 
 static void selftest_words(void) {
   EXPECT(words1("남성", "남", "남성"));
-  EXPECT(words1("경기도", "경기", "경기도"));
+  EXPECT(words1("경기도청", "경기", "경기도청"));
+  EXPECT(words1("경기도", "경기", "경기"));  // particles after a Hangul span stay
+  EXPECT(words1("홍길동님께", "홍길동", "홍길동"));
+  EXPECT(words1("김민지씨는", "김민지", "김민지"));
+  EXPECT(words1("이서연", "이서", "이서연"));
+  EXPECT(words1("홍길동-님", "홍길동", "홍길동-님"));
+  EXPECT(words1("전화는 010-1234-5678입니다", "010-1234-5678", "010-1234-5678"));  // Hangul ends a word
+  EXPECT(words1("kim@example.com으로", "kim@example.com", "kim@example.com"));
+  EXPECT(words1("R23호", "R", "R23"));
+  EXPECT(words1("홍길동님", "홍길동", "홍길동"));
   EXPECT(words1("R23", "R", "R23"));
   EXPECT(words1("카카오 블로그", "카", "카카오"));
   EXPECT(words1("Jean-Luc Picard", "Luc", "Jean-Luc"));

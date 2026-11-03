@@ -57,7 +57,7 @@ create_redactor(               # or Redactor(...), same arguments
     regex=False,               # also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                # off by default: almost no extra coverage, double the over-masking
     keep_emoji=False,          # True: the model also reads emoji (1.0 behaviour); default: emoji are never read or masked
-    whole_words=False,         # True: a span that ends inside a word covers the whole word
+    whole_words=True,          # default True: a span that ends inside a word covers the whole word
     strict_short_names=False,  # True: short texts (<= 8 tokens) need stronger evidence to be read as names
     model_dir=None,            # folder with tokenizer.web.json and onnx/model_<variant>.onnx; never downloads
     cache_dir=None,            # default: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii or ~/.cache/newmean-pii
@@ -85,7 +85,7 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
   combining sequence is masked whole or kept whole. `source` is `"model"`, `"regex"`, `"model+regex"` or `"table"`.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
   input, and an emoji inside a span splits it in two. `keep_emoji=True` gives the model the text as given (1.0 behaviour).
-- **Whole words**: with `whole_words=True`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span.
+- **Whole words**: by default (since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strict_short_names=True` leaves such values alone. `whole_words=False` gives the 1.2 spans.
 - **Short values**: with `strict_short_names=True`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
 - **Versions**: `redactor.version` is the model release (1.1.0); `newmean_pii.__version__` and `info()["package_version"]` give the
   package version, for audit records.

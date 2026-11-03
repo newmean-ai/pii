@@ -32,7 +32,7 @@ internal object TestEnv {
     fun requireNative() = assumeTrue("host JNI library not built (cmake missing or -Ppii.hostJni=false)", hasNative)
 
     fun redactor(size: PiiSize, variant: PiiVariant = size.defaultVariant, sensitivity: Double = 0.0, regex: Boolean = false,
-                 labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false, wholeWords: Boolean = false,
+                 labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false, wholeWords: Boolean = true,
                  strictShortNames: Boolean = false): PiiRedactor {
         requireNative()
         val dir = modelDir(size)

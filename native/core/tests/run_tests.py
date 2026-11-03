@@ -640,6 +640,8 @@ WORD_TEXTS = [
     "region,id,name\n경기도,R23,김민지\n서울,P10,O'Brien\n부산,S2024001,Jean-Luc Picard\n",
     "田中太郎さんとคุณสมชาย met Ana-María (ana_maria@example.com) at 𝐀𝐁c-12 — l'été d'Émile",
     "José Garci\u0301a, Zoë's e\u0301te\u0301, 👩‍💻dev-ops 1️⃣2️⃣, ‐hyphen‐ ’quote’ 'x'",
+    "전화는 010-1234-5678입니다, kim@example.com으로, R23호 3층 Kim민지-님 ㄱ1ㄴ \uffa1A-\u1100\ua960x \ud7b0'7",
+    "홍길동님께서는 김민지씨에게 이서연이라고 했고 박박이었다 경기도청 경기도 남성이었다 님님님님님님님님님님님님님 홍길동-님 길동이여",
 ]
 
 

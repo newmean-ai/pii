@@ -32,7 +32,7 @@ for (const [size, variant, bias] of RUNS.filter(([s]) => !SIZES || SIZES.include
     it("match the Python evaluator", async () => {
       const rows = readFileSync(file, "utf8").trim().split("\n").map((l) => JSON.parse(l));
       // Python O bias b is added to the O logit; sensitivity = −b
-      const r = await createRedactor({ engine, size, variant, modelUrl: `file://${MODELS}/pii-${size}/`, fetch: localFetch, cache: false, regex: false, sensitivity: -bias });
+      const r = await createRedactor({ engine, size, variant, modelUrl: `file://${MODELS}/pii-${size}/`, fetch: localFetch, cache: false, regex: false, wholeWords: false, sensitivity: -bias });
       let same = 0;
       const diffs: string[] = [];
       for (const row of rows) {

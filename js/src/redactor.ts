@@ -52,10 +52,11 @@ export interface RedactorOptions {
   /** false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the offsets of the input
    *  (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour). */
   keepEmoji?: boolean;
-  /** true: a span that starts or ends inside a word is widened to the whole word, so 「경기도」 is masked whole instead of
-   *  「[PERSON]기도」 and "R23" instead of "[ID_NUMBER]23". A word is a run of letters, digits and marks, joined by apostrophes
-   *  and hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span. Masks
-   *  more characters; default false. */
+  /** true: a span that starts or ends inside a word is widened to the whole word, so "R23" is masked whole instead of
+   *  "[ID_NUMBER]23". A word is a run of letters, digits and marks, joined by apostrophes and hyphens; letters of scripts
+   *  written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets
+   *  digits or Latin letters ("010-1234-5678입니다" keeps 「입니다」), and Korean particles after a Hangul
+   *  span stay ("홍길동님께" keeps 「님께」). Masks more characters. Default true (since 1.3.0); false: spans end where the model ends them (1.2 behaviour). */
   wholeWords?: boolean;
   /** true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger
    *  evidence to read it as a person's name, so short values such as 「경기」, 「남성」 or 「네이버」 are left alone; a lone
@@ -225,7 +226,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   const enabled = new Set<string>(options.labels ?? LABELS);
   const useRegex = options.regex ?? false;
   const keepEmoji = options.keepEmoji ?? false;
-  const wholeWords = options.wholeWords ?? false;
+  const wholeWords = options.wholeWords ?? true;
   const strictShortNames = options.strictShortNames ?? false;
   let queue: Promise<unknown> = Promise.resolve(); // one model call at a time
   let lastRun: RunStats | null = null;

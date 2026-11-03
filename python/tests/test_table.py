@@ -206,9 +206,9 @@ def test_parity_with_npm():
             {"text": "name,emoji\nMaria Lopez 👩‍👩‍👧,🇰🇷\nJosé García,👍🏽 1️⃣\n"}]
     rows += [gen_table(rng, k) for k in range(24)]
     sources = {1: "model", 2: "regex", 3: "model+regex", 4: "table"}
-    r = Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True)
+    r = Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True, whole_words=False)  # js_table.mjs: wholeWords off
     for labels in (None, ["EMAIL", "PHONE"]):
-        rr = r if labels is None else Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True, labels=labels)
+        rr = r if labels is None else Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True, labels=labels, whole_words=False)
         want_all = js_spans(rows, labels)
         same = 0
         for row, want in zip(rows, want_all):

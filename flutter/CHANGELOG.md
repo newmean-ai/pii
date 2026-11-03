@@ -1,8 +1,9 @@
 ## 1.3.0
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.2.0.
-- `wholeWords` (default false) in `create` / `fromBytes`: a span that starts or ends inside a word is widened to the
-  whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`). Words are runs of letters, digits and
+- `wholeWords` (default true; `false` gives the 1.2 spans) in `create` / `fromBytes`: a span that starts or ends inside a word is widened to the
+  whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); a word ends where Hangul meets digits or Latin letters
+  (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). Words are runs of letters, digits and
   marks joined by apostrophes and hyphens; scripts written without spaces never extend a span. Same rule in every package.
 - `info` (`PiiRedactorInfo`): package and model versions, size, variant and the two model files with their size and
   SHA-256. `version` stays the model release.

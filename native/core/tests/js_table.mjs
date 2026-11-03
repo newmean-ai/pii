@@ -59,7 +59,7 @@ async function redactor(labels, words, strict) {
       regex: true,
       sensitivity: Number(sens),
       ...(labels ? { labels } : {}),
-      ...(words ? { wholeWords: true } : {}),
+      wholeWords: !!words,
       ...(strict ? { strictShortNames: true } : {}),
     });
     if (typeof r.detectTable !== "function") throw new Error("this js/dist has no detectTable (rebuild: npm run build)");

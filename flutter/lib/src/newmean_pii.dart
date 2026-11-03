@@ -81,10 +81,11 @@ final class NewmeanPii implements Finalizable {
   ///   add almost no coverage on the public test and double over-masking.
   /// - [keepEmoji]: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
   ///   offsets of the input (an emoji inside a span splits it). true: the model reads the text as given (1.0 behaviour).
-  /// - [wholeWords]: true: a span that starts or ends inside a word is widened to the whole word ("경기도", not
-  ///   "[PERSON]기도"; "R23", not "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and
-  ///   hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span.
-  ///   Default false.
+  /// - [wholeWords]: true: a span that starts or ends inside a word is widened to the whole word
+  ///   ("R23", not "[ID_NUMBER]23"). A word is a run of letters, digits and marks joined by apostrophes and
+  ///   hyphens; letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span, and a
+  ///   word ends where Hangul meets digits or Latin letters ("010-1234-5678입니다");
+  ///   Korean particles after a Hangul span stay ("홍길동님께"). Default true (since 1.3.0); false: spans end where the model ends them (1.2 behaviour).
   /// - [strictShortNames]: true: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model
   ///   needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
   ///   alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
@@ -96,7 +97,7 @@ final class NewmeanPii implements Finalizable {
     Iterable<String>? labels,
     bool regex = false,
     bool keepEmoji = false,
-    bool wholeWords = false,
+    bool wholeWords = true,
     bool strictShortNames = false,
     String? modelDir,
     Future<Uint8List> Function(String path)? readFile,
@@ -180,7 +181,7 @@ final class NewmeanPii implements Finalizable {
     Iterable<String>? labels,
     bool regex = false,
     bool keepEmoji = false,
-    bool wholeWords = false,
+    bool wholeWords = true,
     bool strictShortNames = false,
     bool verify = true,
   }) async {

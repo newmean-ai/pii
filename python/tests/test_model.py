@@ -73,13 +73,15 @@ def test_labels_and_sensitivity(nano):
 
 def test_regex_layer_merges_like_npm(nano):
     """regex=True: the C core merges the pattern spans exactly like the npm combine(); checked against a Python port."""
-    r = Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True)
+    # whole_words off: widening runs after the merge, so the port compares the spans before it
+    r = Redactor("nano", "q4", model_dir=model_dir("nano"), regex=True, whole_words=False)
+    plain = Redactor("nano", "q4", model_dir=model_dir("nano"), whole_words=False)
     texts = [TEXT, "IBAN 1234-5678-9012-3456, order 2024-10-31-001, see https://example.com/a?b=c"]
     if (FIXTURES / "predict-nano-q4.jsonl").is_file():
         texts += [row["text"] for row in read_jsonl(FIXTURES / "predict-nano-q4.jsonl")[:150]]
     regex_only = 0
     for t in texts:
-        want = combine(nano.detect(t), regex_spans(t))
+        want = combine(plain.detect(t), regex_spans(t))
         assert r.detect(t) == want, t[:80]
         regex_only += any(s.source != "model" for s in want)
     assert regex_only > 0

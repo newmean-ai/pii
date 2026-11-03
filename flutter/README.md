@@ -80,7 +80,7 @@ NewmeanPii.create({
   bool regex = false,          // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
   bool keepEmoji = false,      // true: the model also reads emoji (1.0 behaviour); default: never read or masked
-  bool wholeWords = false,     // true: a span that ends inside a word covers the whole word
+  bool wholeWords = true,      // true: a span that ends inside a word covers the whole word
   bool strictShortNames = false, // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
   String? modelDir,            // local folder: tokenizer.web.json, onnx/model_<variant>.onnx
   Future<Uint8List> Function(String path)? readFile,  // e.g. Flutter assets
@@ -110,7 +110,7 @@ modelFile(size, file)          // published path, size and SHA-256 of 'q4', 'q4e
   `"model"`, `"regex"`, `"model+regex"` or `"table"`. `mask` writes one mask character per code point.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
   input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.0 behaviour).
-- **Whole words**: with `wholeWords: true`, a span that starts or ends inside a word is widened to the whole word (「경기도」 → `[PERSON]`, not `[PERSON]기도`; "R23" → `[ID_NUMBER]`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span.
+- **Whole words**: by default (since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strictShortNames` leaves such values alone. `wholeWords: false` gives the 1.2 spans.
 - **Short values**: with `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
 - **Versions**: `pii.version` is the model release (1.1.0); `pii.info.packageVersion` (= `nativeVersion`) is the package
   version.

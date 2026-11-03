@@ -148,27 +148,27 @@ static PyObject *run_detect(ModelObject *self, PyObject *text, double sensitivit
   return out;
 }
 
-/* detect(text, sensitivity, labels, extra=None, keep_emoji=False, whole_words=False, strict_short_names=False) ->
+/* detect(text, sensitivity, labels, extra=None, keep_emoji=False, whole_words=True, strict_short_names=False) ->
  * [(start, end, label_id, source_bits)], code point offsets. extra: list of (start, end, label_id) in code points, merged as the npm package merges its regex layer. */
 static PyObject *Model_detect(PyObject *obj, PyObject *args) {
   PyObject *text, *extra = Py_None;
   double sensitivity;
   unsigned int labels;
-  int keep_emoji = 0, whole_words = 0, strict_short_names = 0;
+  int keep_emoji = 0, whole_words = 1, strict_short_names = 0;
   if (!PyArg_ParseTuple(args, "UdI|Oppp:detect", &text, &sensitivity, &labels, &extra, &keep_emoji, &whole_words, &strict_short_names))
     return NULL;
   return run_detect((ModelObject *)obj, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, NULL);
 }
 
 /* detect_table(text, sensitivity, labels, extra=None, delimiter=0, header=True, vote=True, context=0, keep_emoji=False,
- * whole_words=False, strict_short_names=False) ->
+ * whole_words=True, strict_short_names=False) ->
  * as detect, with pii_detect_table (delimiter: 0 = auto, ord(",") / ord("\t") / ord(";") / ord("|") = markdown; context:
  * PII_TABLE_CONTEXT_NONE / PII_TABLE_CONTEXT_HEADER; source bit SOURCE_TABLE). */
 static PyObject *Model_detect_table(PyObject *obj, PyObject *args) {
   PyObject *text, *extra = Py_None;
   double sensitivity;
   unsigned int labels;
-  int delimiter = 0, header = 1, vote = 1, context = PII_TABLE_CONTEXT_NONE, keep_emoji = 0, whole_words = 0, strict_short_names = 0;
+  int delimiter = 0, header = 1, vote = 1, context = PII_TABLE_CONTEXT_NONE, keep_emoji = 0, whole_words = 1, strict_short_names = 0;
   if (!PyArg_ParseTuple(args, "UdI|Oippippp:detect_table", &text, &sensitivity, &labels, &extra, &delimiter, &header, &vote,
                         &context, &keep_emoji, &whole_words, &strict_short_names))
     return NULL;
@@ -223,11 +223,11 @@ static PyObject *Model_info(PyObject *obj, PyObject *unused) {
 
 static PyMethodDef Model_methods[] = {
     {"detect", Model_detect, METH_VARARGS,
-     "detect(text, sensitivity, labels, extra=None, keep_emoji=False, whole_words=False, strict_short_names=False) -> "
+     "detect(text, sensitivity, labels, extra=None, keep_emoji=False, whole_words=True, strict_short_names=False) -> "
      "[(start, end, label_id, source)]"},
     {"detect_table", Model_detect_table, METH_VARARGS,
      "detect_table(text, sensitivity, labels, extra=None, delimiter=0, header=True, vote=True, context=0, keep_emoji=False, "
-     "whole_words=False, strict_short_names=False) -> [(start, end, label_id, source)]"},
+     "whole_words=True, strict_short_names=False) -> [(start, end, label_id, source)]"},
     {"tokenize", Model_tokenize, METH_VARARGS, "tokenize(text) -> [(id, start, end)]"},
     {"info", Model_info, METH_NOARGS, "Model shape."},
     {NULL, NULL, 0, NULL},

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createRedactor } from "../src/redactor";
-import { detectTableSpans, isWordChar, snapGraphemes, wordEnd, wordStart } from "../src/table";
+import { detectTableSpans, isWordChar, MAX_PARTICLE_RUN, particlesOnly, snapGraphemes, wordEnd, wordStart } from "../src/table";
 import { VERSION } from "../src/version";
 import { MODEL_FILES, MODEL_VERSION } from "../src/models";
 import type { Span } from "../src/types";
@@ -34,7 +34,7 @@ describe("word characters", () => {
 describe("wholeWords snapping", () => {
   it("widens partial words: the reported cases", () => {
     expect(w("남성", "남")).toEqual(["남성:PERSON"]);
-    expect(w("경기도", "경기")).toEqual(["경기도:PERSON"]);
+    expect(w("경기도청", "경기")).toEqual(["경기도청:PERSON"]);
     expect(w("R23", "R", "ID_NUMBER")).toEqual(["R23:ID_NUMBER"]);
     expect(w("카카오 블로그", "카")).toEqual(["카카오:PERSON"]);
     expect(w("Jean-Luc Picard", "Luc")).toEqual(["Jean-Luc:PERSON"]);
@@ -48,19 +48,38 @@ describe("wholeWords snapping", () => {
     expect(w("คุณสมชาย", "สมชาย")).toEqual(["สมชาย:PERSON"]);
   });
 
+  it("ends a word where Hangul meets another word character", () => {
+    expect(w("전화는 010-1234-5678입니다", "010-1234-5678", "PHONE")).toEqual(["010-1234-5678:PHONE"]);
+    expect(w("kim@example.com으로", "kim@example.com", "EMAIL")).toEqual(["kim@example.com:EMAIL"]);
+    expect(w("R23호", "R", "ID_NUMBER")).toEqual(["R23:ID_NUMBER"]);
+  });
+
+  it("keeps Korean particles after a Hangul span; widens any other rest", () => {
+    expect(w("홍길동님께", "홍길동")).toEqual(["홍길동:PERSON"]);
+    expect(w("김민지씨는", "김민지")).toEqual(["김민지:PERSON"]);
+    expect(w("박박이라고", "박박")).toEqual(["박박:PERSON"]);
+    expect(w("경기도", "경기")).toEqual(["경기:PERSON"]); // 도 is a particle
+    expect(w("남성", "남")).toEqual(["남성:PERSON"]);
+    expect(w("이서연", "이서")).toEqual(["이서연:PERSON"]);
+    expect(w("홍길동-님", "홍길동")).toEqual(["홍길동-님:PERSON"]); // a joiner is not a particle
+    expect(particlesOnly("님께서는")).toBe(true);
+    expect(particlesOnly("")).toBe(false);
+    expect(particlesOnly("이".repeat(MAX_PARTICLE_RUN + 1))).toBe(false);
+  });
+
   it("merges spans that meet in one word; the longest original span keeps its label", () => {
     const t = "AB12CD";
     expect(show(t, snapGraphemes(t, [sp(0, 1, "USERNAME"), sp(2, 5, "ID_NUMBER")], undefined, true))).toEqual(["AB12CD:ID_NUMBER"]);
   });
 
-  it("is off by default", () => {
+  it("snapGraphemes widens to words only when asked", () => {
     expect(show("경기도", snapGraphemes("경기도", [sp(0, 2)]))).toEqual(["경기:PERSON"]);
   });
 
   it("table mode: widening stays inside the cell", () => {
     const t = "region,id\n경기도,R23\n서울,R24\n";
     const i = t.indexOf("경기"), j = t.indexOf("R23");
-    const spans = detectTableSpans(t, [sp(i, i + 2), sp(j, j + 1, "ID_NUMBER")], { vote: false }, undefined, [], true);
+    const spans = detectTableSpans(t, [sp(i, i + 1), sp(j, j + 1, "ID_NUMBER")], { vote: false }, undefined, [], true);
     expect(show(t, spans)).toEqual(["경기도:PERSON", "R23:ID_NUMBER"]);
   });
 });
@@ -88,17 +107,17 @@ describe.skipIf(!existsSync(`${MODELS}/pii-large/onnx/model_q4e.onnx`))("redacto
     await r.dispose();
   });
 
-  it("wholeWords masks the reported partial words whole", async () => {
+  it("wholeWords (the default since 1.3.0) masks the reported partial words whole", async () => {
     const opts = { size: "large" as const, modelUrl: `file://${MODELS}/pii-large/`, fetch: localFetch, cache: false };
-    const plain = await createRedactor(opts);
-    const whole = await createRedactor({ ...opts, wholeWords: true });
+    const plain = await createRedactor({ ...opts, wholeWords: false });
+    const whole = await createRedactor(opts);
     expect((await plain.redact("남성")).text).toBe("[PERSON]성");
     expect((await whole.redact("남성")).text).toBe("[PERSON]");
     expect((await plain.redact("경기도")).text).toBe("[PERSON]기도");
-    expect((await whole.redact("경기도")).text).toBe("[PERSON]");
+    expect((await whole.redact("경기도")).text).toBe("[PERSON]"); // a misread short value: the model marks 「경」, 「기도」 is no particle
     expect((await whole.redact("R23")).text).toBe("[ID_NUMBER]");
-    const text = "Hi, I'm Kim Minji, call me at 010-1234-5678.";
-    expect((await whole.redact(text)).text).toBe((await plain.redact(text)).text);
+    for (const text of ["Hi, I'm Kim Minji, call me at 010-1234-5678.", "제 메일은 kim@example.com, 전화는 010-1234-5678입니다"])
+      expect((await whole.redact(text)).text).toBe((await plain.redact(text)).text);
     await plain.dispose();
     await whole.dispose();
   });

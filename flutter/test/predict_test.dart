@@ -31,8 +31,14 @@ void main() {
       () async {
         final rows = readJsonl(file);
         final sw = Stopwatch()..start();
-        // Python O bias b is added to the O logit; sensitivity = -b
-        final pii = await NewmeanPii.create(size: size, variant: variant, modelDir: modelDir(size), sensitivity: -bias);
+        // Python O bias b is added to the O logit; sensitivity = -b; the evaluator's spans end where the model ends them
+        final pii = await NewmeanPii.create(
+          size: size,
+          variant: variant,
+          modelDir: modelDir(size),
+          sensitivity: -bias,
+          wholeWords: false,
+        );
         final got = List<String>.filled(rows.length, '');
         var next = 0;
         Future<void> worker() async {

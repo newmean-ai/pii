@@ -43,7 +43,7 @@ def test_predict(size, variant, bias):
         pytest.skip("fixture or model copy absent")
     rows = read_jsonl(fix)
     # Python O bias b is added to the O logit; sensitivity = -b
-    r = Redactor(size, variant, model_dir=model_dir(size), sensitivity=-bias)
+    r = Redactor(size, variant, model_dir=model_dir(size), sensitivity=-bias, whole_words=False)  # the evaluator's spans end where the model ends them
     t0 = time.perf_counter()
     same, diffs = 0, []
     for row in rows:

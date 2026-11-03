@@ -120,11 +120,13 @@ typedef struct {
   /* 0 (default): emoji are taken out of the text the model reads, so the model does not read them as PII; the spans keep the offsets of the input
    * (an emoji inside a span splits it). 1: the model reads the text as given. Added in 1.2.0. */
   int keep_emoji;
-  /* 1: a span that starts or ends inside a word is widened to the whole word ("경기도", not "[PERSON]기도"; "R23", not
+  /* 1: a span that starts or ends inside a word is widened to the whole word ("R23", not
    * "[ID_NUMBER]23"). A word is a run of letters, digits and marks (Unicode L, N, M) joined by apostrophes and hyphens;
-   * letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span. In table mode the
-   * widening stays inside the cell value. 0 (default): spans end where the model ends them. Same as the npm option
-   * `wholeWords`. Added in 1.3.0. */
+   * letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, ...) never extend a span, and a word ends
+   * where Hangul meets digits or Latin letters ("010-1234-5678입니다"); Korean particles after a
+   * Hangul span stay ("홍길동님께"). In table mode the
+   * widening stays inside the cell value. Default 1 (set by pii_options_init); 0: spans end where the model ends them (1.2
+   * behaviour). Same as the npm option `wholeWords`. Added in 1.3.0. */
   int whole_words;
   /* 1: on a text the model reads as at most 8 tokens (a survey answer, a table cell), the model needs stronger evidence to
    * read it as a person's name (PERSON and PERSON_L2 logits -3), so short values such as "경기", "남성" or "네이버" are left

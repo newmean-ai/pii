@@ -1,4 +1,4 @@
-// Spans of the npm package's detect() (builtin WebAssembly engine, baseline SIMD128 build, regex off) for JSON lines
+// Spans of the npm package's detect() (builtin WebAssembly engine, baseline SIMD128 build, regex and wholeWords off) for JSON lines
 // with a "text" field on stdin; one {"spans": [[start, end, label], ...]} line per input, offsets in UTF-16 units.
 // Used by run_tests.py to compare the native core with the WebAssembly engine; reads js/dist (build it with npm run build).
 //
@@ -18,6 +18,7 @@ const r = await createRedactor({
   fetch: localFetch,
   cache: false,
   regex: false,
+  wholeWords: false,
   sensitivity: Number(sens),
 });
 const lines = readFileSync(0, "utf8").split("\n").filter((l) => l.trim());

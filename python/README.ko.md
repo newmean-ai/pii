@@ -55,7 +55,7 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
     regex=False,               # 몇 가지 패턴(이메일, URL, 카드/계좌, 전화, 주민등록번호)도 가림;
                                # 기본 꺼짐: 추가 탐지는 거의 없고 과잉 마스킹이 두 배
     keep_emoji=False,          # True: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
-    whole_words=False,         # True: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
+    whole_words=True,          # 기본 True: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
     strict_short_names=False,  # True: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
     model_dir=None,            # tokenizer.web.json과 onnx/model_<variant>.onnx가 있는 폴더; 다운로드하지 않음
     cache_dir=None,            # 기본: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii 또는 ~/.cache/newmean-pii
@@ -83,7 +83,7 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
   통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`, `"model+regex"`, `"table"` 중 하나입니다.
 - **이모지**: 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간 안의
   이모지는 구간을 둘로 나눕니다. `keep_emoji=True`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
-- **낱말 단위**: `whole_words=True`면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다(「경기도」 → `[PERSON]기도`가 아니라 `[PERSON]`, "R23" → `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다.
+- **낱말 단위**: 기본으로(1.3.0부터) 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strict_short_names=True`를 씁니다. `whole_words=False`면 1.2와 같은 구간을 받습니다.
 - **짧은 값**: `strict_short_names=True`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다.
 - **버전**: `redactor.version`은 모델 버전(1.1.0)입니다. 감사 기록에 남길 패키지 버전은 `newmean_pii.__version__`이나
   `info()["package_version"]`입니다.

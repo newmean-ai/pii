@@ -161,8 +161,9 @@ class TableTest {
 
     @Test
     fun wholeWords() {
-        TestEnv.redactor(PiiSize.NANO, wholeWords = true).use { r ->
-            assertTrue(r.wholeWords)
+        TestEnv.redactor(PiiSize.NANO, wholeWords = false).use { assertFalse(it.wholeWords) }
+        TestEnv.redactor(PiiSize.NANO).use { r ->
+            assertTrue(r.wholeWords) // the default since 1.3.0
             for (text in listOf("남성", "경기도", "R23", "Hi, I'm Kim Minji, call me at 010-1234-5678.", "region,id\n경기도,R23\n서울,R24\n")) {
                 for (spans in listOf(r.detect(text), r.detectTable(text))) {
                     for (s in spans) { // no span starts or ends inside a word
