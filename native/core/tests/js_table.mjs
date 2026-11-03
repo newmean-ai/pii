@@ -10,20 +10,64 @@
 // Without a model: the table steps alone (detectTableSpans of js/src/table.ts, the module bundled into js/dist;
 // node strips its types) on given whole-text spans, the counterpart of pii_cli apply. Input lines also carry
 // "spans": [[cp_start, cp_end, "LABEL", source], ...]; out: {"spans": [[cp_start, cp_end, label, source], ...]}.
+// "plain": true runs the detect steps after combine (finishDetect). User lists as in pii_cli: "allow": [["text", "LABEL" |
+// null], ...], "block": [["text", "LABEL"], ...] (js/src/lists.ts); an invalid list gives {"error": [list, index, reason]}.
+// "lists" validates the lists only: {"counts": [allow, block]} or the error, the counterpart of pii_cli lists.
 //
 //   node js_table.mjs apply TABLE_TS
+//   node js_table.mjs lists TABLE_TS
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-if (process.argv[2] === "apply") {
-  const { detectTableSpans } = await import(pathToFileURL(process.argv[3]).href);
-  const SRC = { 1: "model", 2: "regex", 3: "model+regex", 4: "table" };
-  const BITS = { model: 1, regex: 2, "model+regex": 3, table: 4 };
+// Rows -> entries as the npm options take them; [list, index, reason] when invalid.
+function rowLists(Lists, row) {
+  if (row.allow === undefined && row.block === undefined) return { lists: null };
+  const allow = row.allow === undefined ? undefined : row.allow.map(([text, label]) => (label === null || label === undefined ? text : { text, label }));
+  const block = row.block === undefined ? undefined : row.block.map(([text, label]) => (label === null || label === undefined ? { text } : { text, label }));
+  try {
+    return { lists: new Lists(allow, block) };
+  } catch (e) {
+    if (e.name !== "ListError") throw e;
+    return { error: [e.list, e.index, e.reason] };
+  }
+}
+
+if (process.argv[2] === "apply" || process.argv[2] === "lists") {
+  // js/src imports its siblings as "./x.js": map those to the .ts files node strips the types of (node 22.18+; exit 3 on an
+  // older node, which run_tests.py reports as a skip)
+  const { registerHooks } = await import("node:module");
+  if (!registerHooks || !process.features?.typescript) {
+    process.stderr.write(`node ${process.version} cannot import TypeScript sources\n`);
+    process.exit(3);
+  }
+  registerHooks({
+    resolve(spec, ctx, next) {
+      try {
+        return next(spec, ctx);
+      } catch (e) {
+        if (spec.startsWith(".") && spec.endsWith(".js")) return next(spec.slice(0, -3) + ".ts", ctx);
+        throw e;
+      }
+    },
+  });
+  const { detectTableSpans, finishDetect } = await import(pathToFileURL(process.argv[3]).href);
+  const { Lists } = await import(new URL("lists.ts", pathToFileURL(process.argv[3])).href);
+  const SRC = { 1: "model", 2: "regex", 3: "model+regex", 4: "table", 8: "block" };
+  const BITS = { model: 1, regex: 2, "model+regex": 3, table: 4, block: 8 };
   const ALL = ["PERSON", "PERSON_L2", "EMAIL", "PHONE", "ADDRESS", "ID_NUMBER", "FINANCIAL", "ORG", "USERNAME", "URL", "URL_L2", "DATE_OF_BIRTH", "SECRET"];
   const out = [];
   for (const l of readFileSync(0, "utf8").split("\n").filter((x) => x.trim())) {
     const row = JSON.parse(l);
     const text = row.text;
+    const { lists, error } = rowLists(Lists, row);
+    if (error) {
+      out.push(JSON.stringify({ error }));
+      continue;
+    }
+    if (process.argv[2] === "lists") {
+      out.push(JSON.stringify({ counts: [lists?.allowCount ?? 0, lists?.blockCount ?? 0] }));
+      continue;
+    }
     const u16 = [0]; // code point index -> UTF-16 offset
     for (const ch of text) u16.push(u16[u16.length - 1] + ch.length);
     const cpOf = new Map(u16.map((u, i) => [u, i]));
@@ -32,7 +76,10 @@ if (process.argv[2] === "apply") {
     if (row.delimiter !== undefined) table.delimiter = row.delimiter;
     if (row.header !== undefined) table.header = row.header;
     if (row.vote !== undefined) table.vote = row.vote;
-    const got = detectTableSpans(text, spans, table, new Set(row.labels ?? ALL), [], row.words ?? false);
+    const active = lists && (lists.allowCount || lists.blockCount) ? lists : null;
+    const got = row.plain
+      ? finishDetect(text, spans, active, row.words ?? false)
+      : detectTableSpans(text, spans, table, new Set(row.labels ?? ALL), [], row.words ?? false, active);
     out.push(JSON.stringify({ spans: got.map((s) => [cpOf.get(s.start) ?? -1, cpOf.get(s.end) ?? -1, s.label, BITS[s.source]]) }));
   }
   await new Promise((done) => process.stdout.write(out.join("\n") + "\n", done)); // flush the pipe before exiting
@@ -42,11 +89,14 @@ if (process.argv[2] === "apply") {
 const [dist, modelDir, size, variant, sens, relaxed] = process.argv.slice(2);
 const pkg = await import(pathToFileURL(`${dist}/index.js`).href);
 const localFetch = async (url) => new Response(readFileSync(new URL(url)));
-const SOURCE = { model: 1, regex: 2, "model+regex": 3, table: 4 };
-const redactors = new Map(); // labels key -> Redactor (labels are a redactor option)
+const SOURCE = { model: 1, regex: 2, "model+regex": 3, table: 4, block: 8 };
+const redactors = new Map(); // options key -> Redactor (labels and lists are redactor options)
 
-async function redactor(labels, words, strict) {
-  const key = (labels ? JSON.stringify(labels) : "") + (words ? " words" : "") + (strict ? " strict" : "");
+async function redactor(labels, words, strict, row = {}) {
+  const lists = {};
+  if (row.allow !== undefined) lists.allow = row.allow.map(([text, label]) => (label === null || label === undefined ? text : { text, label }));
+  if (row.block !== undefined) lists.block = row.block.map(([text, label]) => (label === null || label === undefined ? { text } : { text, label }));
+  const key = (labels ? JSON.stringify(labels) : "") + (words ? " words" : "") + (strict ? " strict" : "") + JSON.stringify(lists);
   if (!redactors.has(key)) {
     const r = await pkg.createRedactor({
       engine: "builtin",
@@ -61,6 +111,7 @@ async function redactor(labels, words, strict) {
       ...(labels ? { labels } : {}),
       wholeWords: !!words,
       ...(strict ? { strictShortNames: true } : {}),
+      ...lists,
     });
     if (typeof r.detectTable !== "function") throw new Error("this js/dist has no detectTable (rebuild: npm run build)");
     redactors.set(key, r);
@@ -86,7 +137,14 @@ const lines = readFileSync(0, "utf8").split("\n").filter((l) => l.trim());
 const out = [];
 for (const l of lines) {
   const row = JSON.parse(l);
-  const r = await redactor(row.labels, row.words, row.strict);
+  let r;
+  try {
+    r = await redactor(row.labels, row.words, row.strict, row);
+  } catch (e) {
+    if (e.name !== "ListError") throw e;
+    out.push(JSON.stringify({ error: [e.list, e.index, e.reason] }));
+    continue;
+  }
   const table = {};
   if (row.delimiter !== undefined) table.delimiter = row.delimiter;
   if (row.header !== undefined) table.header = row.header;
@@ -98,4 +156,5 @@ for (const l of lines) {
   out.push(JSON.stringify({ spans: spans.map((s) => [s.start, s.end, s.label, SOURCE[s.source]]), extra }));
 }
 for (const r of redactors.values()) await r.dispose();
+redactors.clear();
 process.stdout.write(out.join("\n") + "\n");

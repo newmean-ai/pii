@@ -18,6 +18,7 @@ export interface Span {
   start: number;
   end: number;
   label: Label | string;
-  /** "model", "regex", "model+regex" when both found it, or "table" when table mode propagated it down a column */
-  source: "model" | "regex" | "model+regex" | "table";
+  /** "model", "regex", "model+regex" when both found it, "table" when table mode propagated it down a column, or "block"
+   *  for an entry of the option `block` (since 1.4.0) */
+  source: "model" | "regex" | "model+regex" | "table" | "block";
 }

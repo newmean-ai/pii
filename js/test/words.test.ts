@@ -103,6 +103,7 @@ describe.skipIf(!existsSync(`${MODELS}/pii-large/onnx/model_q4e.onnx`))("redacto
         tokenizer: { path: "tokenizer.web.json", ...MODEL_FILES.large.tokenizer },
       },
       verified: true,
+      lists: { allow: 0, block: 0, id: null },
     });
     await r.dispose();
   });

@@ -33,13 +33,14 @@ internal object TestEnv {
 
     fun redactor(size: PiiSize, variant: PiiVariant = size.defaultVariant, sensitivity: Double = 0.0, regex: Boolean = false,
                  labels: Collection<String> = PiiLabels.ALL, keepEmoji: Boolean = false, wholeWords: Boolean = true,
-                 strictShortNames: Boolean = false): PiiRedactor {
+                 strictShortNames: Boolean = false, allow: List<PiiAllowEntry> = emptyList(), block: List<PiiBlockEntry> = emptyList(),
+                 listsId: String? = null): PiiRedactor {
         requireNative()
         val dir = modelDir(size)
         val model = File(dir, PiiModels.modelPath(variant))
         assumeTrue("$model not found", model.isFile)
         return PiiRedactor.createBlocking(model, File(dir, PiiModels.TOKENIZER_PATH), size, variant, sensitivity, labels, regex, keepEmoji, wholeWords,
-            strictShortNames)
+            strictShortNames, allow, block, listsId)
     }
 
     /** The native model handle of [r], for calls straight to the JNI bridge. */

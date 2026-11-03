@@ -20,22 +20,27 @@ public final class PIIRedactor: @unchecked Sendable {
   public let wholeWords: Bool
   /// Whether short texts need stronger evidence to be read as names (see `init`).
   public let strictShortNames: Bool
-  /// Package and model versions, size, variant and the two checked model files.
+  /// Package and model versions, size, variant, the two checked model files and the list counts.
   public var info: PIIRedactorInfo {
     PIIRedactorInfo(packageVersion: Self.packageVersion, modelVersion: version, size: size, variant: variant, engine: "native",
-                    model: .model(size, variant), tokenizer: .tokenizer(size), build: Self.buildInfo)
+                    model: .model(size, variant), tokenizer: .tokenizer(size), build: Self.buildInfo,
+                    lists: PIIListsInfo(allow: lists.allowCount, block: lists.blockCount, id: listsId))
   }
   /// Kernel build of the C core ("neon", "sse", ...).
   public static var buildInfo: String { String(cString: pii_build_info()) }
-  /// Version of this package and its C core ("1.3.0").
+  /// Version of this package and its C core ("1.4.0").
   public static var packageVersion: String { String(cString: pii_version()) }
 
   private let model: OpaquePointer
+  /// Owns the C handle of `allow` and `block`; every call borrows it.
+  private let lists: PIIUserLists
+  private let listsId: String?
   private let labelBits: UInt32
   private let lock = NSLock()
   private var _sensitivity: Double
 
-  /// Loads a model.
+  /// Loads a model. `allow`, `block` and `listsId` are validated before any model file is downloaded or loaded
+  /// (`PIIListError`: list, index and reason, never the entry's text).
   /// - Parameters:
   ///   - size: nano (≈2.6 MB), small (≈7 MB), medium (≈11 MB, default) or large (≈15 MB).
   ///   - variant: weight file; default q4e for large and medium, q4 for small and nano.
@@ -56,12 +61,23 @@ public final class PIIRedactor: @unchecked Sendable {
   ///     needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
   ///     alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
   ///     unchanged. Default false.
+  ///   - allow: values you know are not PII in your data (survey categories, brands, jobs): a span whose whole text is an
+  ///     entry of the span's label family (or of any label) is not masked. ASCII letters are compared case-insensitively,
+  ///     nothing else is normalized: pass NFC text (`text.precomposedStringWithCanonicalMapping`). Since 1.4.0.
+  ///   - block: values you know are PII: every occurrence that starts and ends on a word boundary is masked with the
+  ///     entry's label (source `.block`), whatever `labels` enables, also where the model finds nothing; a Hangul entry
+  ///     also matches before Korean particles (「박지훈님께」 → 「[PERSON]님께」). Since 1.4.0.
+  ///   - listsId: your name for the lists (1 to 128 scalars), shown in `info.lists.id` for audit records. Since 1.4.0.
   ///   - modelDirectory: folder with `tokenizer.web.json` and `onnx/model_<variant>.onnx` (or `model_<variant>.onnx`
   ///     next to it), for example a folder in the app bundle. Default nil: `PIIModelStore.default`, which downloads the
   ///     files from Hugging Face once into Caches. Files are checked against the published SHA-256 either way.
   public init(size: PIISize = .default, variant: PIIVariant? = nil, sensitivity: Double = 0, labels: Set<PIILabel> = PIILabel.all,
               regex: Bool = false, keepEmoji: Bool = false, wholeWords: Bool = true, strictShortNames: Bool = false,
+              allow: [PIIAllowEntry] = [], block: [PIIBlockEntry] = [], listsId: String? = nil,
               modelDirectory: URL? = nil) async throws {
+    try PIIUserLists.checkID(listsId)
+    self.lists = try PIIUserLists(allow: allow, block: block)
+    self.listsId = listsId
     let variant = variant ?? size.defaultVariant
     let dir: URL
     if let modelDirectory {
@@ -163,15 +179,18 @@ public final class PIIRedactor: @unchecked Sendable {
     options.keep_emoji = keepEmoji ? 1 : 0
     options.whole_words = wholeWords ? 1 : 0
     options.strict_short_names = strictShortNames ? 1 : 0
+    options.lists = lists.pointer
     var out: UnsafeMutablePointer<pii_span>?
     var n = 0
-    let rc = text.withContiguousUTF8 { utf8 in
-      extra.withUnsafeBufferPointer { x in
-        options.extra = x.baseAddress
-        options.n_extra = x.count
-        return utf8.withMemoryRebound(to: CChar.self) { p in
-          guard var table else { return pii_detect(model, p.baseAddress, p.count, &options, &out, &n) }
-          return pii_detect_table(model, p.baseAddress, p.count, &options, &table, &out, &n)
+    let rc = withExtendedLifetime(lists) {  // the handle outlives the call
+      text.withContiguousUTF8 { utf8 in
+        extra.withUnsafeBufferPointer { x in
+          options.extra = x.baseAddress
+          options.n_extra = x.count
+          return utf8.withMemoryRebound(to: CChar.self) { p in
+            guard var table else { return pii_detect(model, p.baseAddress, p.count, &options, &out, &n) }
+            return pii_detect_table(model, p.baseAddress, p.count, &options, &table, &out, &n)
+          }
         }
       }
     }
@@ -179,9 +198,12 @@ public final class PIIRedactor: @unchecked Sendable {
     try PIIError.check(rc)
     let spans = UnsafeBufferPointer(start: out, count: n)
     let idx = text.indices(utf8Offsets: spans.flatMap { [$0.byte_start, $0.byte_end] })
-    return spans.enumerated().map { i, s in
-      PIISpan(range: idx[2 * i]..<idx[2 * i + 1], utf16Range: s.u16_start..<s.u16_end, scalarRange: s.cp_start..<s.cp_end,
-              label: PIILabel.byID[Int(s.label)], source: PIISource(bits: s.source))
+    return try spans.enumerated().map { i, s in
+      guard let source = PIISource(bits: s.source) else {
+        throw PIIError.core(code: Int(s.source), message: "unknown span source bits")
+      }
+      return PIISpan(range: idx[2 * i]..<idx[2 * i + 1], utf16Range: s.u16_start..<s.u16_end, scalarRange: s.cp_start..<s.cp_end,
+                     label: PIILabel.byID[Int(s.label)], source: source)
     }
   }
 

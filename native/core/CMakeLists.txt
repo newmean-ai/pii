@@ -17,7 +17,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(PII_SOURCES src/api.c src/engine.c src/onnx.c src/tokenizer.c src/util.c src/sha256.c src/models.c)
+set(PII_SOURCES src/api.c src/engine.c src/onnx.c src/tokenizer.c src/util.c src/sha256.c src/models.c src/lists.c)
 
 # Results must not depend on the compiler's contraction of a * b + c: -ffp-contract=off (Clang, GCC), /fp:precise (MSVC,
 # which has no vector extensions and uses the scalar path of src/simd.h). -fno-math-errno: sqrt without a libm call.

@@ -49,16 +49,26 @@ public enum PIILabel: String, Sendable, CaseIterable, Hashable {
   static let byID: [PIILabel] = (0..<Int32(PII_LABEL_COUNT.rawValue)).map { PIILabel(rawValue: String(cString: pii_label_name($0)))! }
 }
 
-/// Where a span came from: the model, the pattern layer (`regex: true`), both, or table mode's column vote.
+/// Where a span came from: the model, the pattern layer (`regex: true`), both, table mode's column vote, or the block list.
 public enum PIISource: String, Sendable, Hashable {
   case model
   case regex
   case modelAndRegex = "model+regex"
   /// Propagated down a table column by `detectTable`.
   case table
+  /// An entry of the `block` list (since 1.4.0).
+  case block
 
-  init(bits: Int32) {
-    self = bits == PII_SOURCE_MODEL ? .model : bits == PII_SOURCE_REGEX ? .regex : bits == PII_SOURCE_TABLE ? .table : .modelAndRegex
+  /// PII_SOURCE_* bits of the C core; nil for a pattern this package does not know.
+  init?(bits: Int32) {
+    switch bits {
+    case PII_SOURCE_MODEL: self = .model
+    case PII_SOURCE_REGEX: self = .regex
+    case PII_SOURCE_MODEL | PII_SOURCE_REGEX: self = .modelAndRegex
+    case PII_SOURCE_TABLE: self = .table
+    case PII_SOURCE_BLOCK: self = .block
+    default: return nil
+    }
   }
 }
 
@@ -173,7 +183,7 @@ public enum PIIError: Error, LocalizedError, Sendable {
 
 /// What a redactor runs (`PIIRedactor.info`).
 public struct PIIRedactorInfo: Sendable, Hashable {
-  /// Version of this package and its C core ("1.3.0").
+  /// Version of this package and its C core ("1.4.0").
   public let packageVersion: String
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
   public let modelVersion: String
@@ -186,4 +196,6 @@ public struct PIIRedactorInfo: Sendable, Hashable {
   public let tokenizer: PIIModelFile
   /// Kernel build of the C core ("neon", "sse", ...).
   public let build: String
+  /// Entries of `allow` and `block` after merging duplicates, and `listsId` (since 1.4.0).
+  public let lists: PIIListsInfo
 }

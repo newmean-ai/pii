@@ -39,7 +39,7 @@ extern "C" {
 #define PII_API
 #endif
 
-#define PII_VERSION "1.3.0"       /* this library */
+#define PII_VERSION "1.4.0"       /* this library */
 #define PII_MODEL_VERSION "1.1.0" /* model release (Hugging Face tag v1.1.0) */
 #define PII_DEFAULT_SIZE "medium"
 
@@ -76,6 +76,7 @@ enum pii_label {
 #define PII_SOURCE_MODEL 1
 #define PII_SOURCE_REGEX 2 /* from pii_options.extra; both bits when model and pattern found the same text */
 #define PII_SOURCE_TABLE 4 /* span propagated down a column by table mode (pii_detect_table; alone, not combined) */
+#define PII_SOURCE_BLOCK 8 /* an entry of the block list (pii_options.lists; alone, not combined). Added in 1.4.0 */
 
 /* Offset units of pii_options.extra */
 #define PII_UNIT_UTF8 0
@@ -104,8 +105,44 @@ typedef struct {
   int label;
 } pii_extra_span;
 
+/* User lists (pii_lists_create, added in 1.4.0). allow: values the caller knows are not PII; a span whose whole text is an
+ * allow entry (ASCII letters compared case-insensitively, nothing else normalized) is not masked, when the entry's label
+ * family (PERSON covers PERSON_L2, URL covers URL_L2; -1: any label) includes the span's. block: values the caller knows
+ * are PII; every occurrence that starts and ends on a word boundary (whole_words rules; a Hangul entry also matches before
+ * Korean particles, "박지훈님께") is masked with the entry's label, whatever options->labels enables, also where the model
+ * finds nothing. A span that holds a block match is never allowed. Texts and entries must use the same Unicode
+ * normalization (NFC). */
 typedef struct {
-  size_t struct_size; /* sizeof(pii_options); set by pii_options_init (fields may be appended in later versions) */
+  const char *utf8; /* the entry, UTF-8 (not NUL-terminated) */
+  size_t len;       /* bytes */
+  int label;        /* enum pii_label; -1 = any label (allow only) */
+} pii_term;
+typedef struct pii_lists pii_lists; /* immutable after pii_lists_create: one handle may be shared across threads */
+#define PII_LIST_ALLOW 0
+#define PII_LIST_BLOCK 1
+/* Reasons of pii_list_error. Each entry is checked in this order and the first failure is reported: BAD_SHAPE, TOO_LONG
+ * (representation), BAD_TEXT, EMPTY, TOO_LONG (code points), EDGE_SPACE, UNKNOWN_LABEL. The first 10,000 entries of a list are
+ * checked before TOO_MANY; allow before block; then LABEL_CONFLICT, then IN_BOTH. The numbers below are not that order. */
+#define PII_LIST_ERR_BAD_SHAPE 1      /* utf8 NULL, or a block entry without a label (-1) */
+#define PII_LIST_ERR_TOO_LONG 2       /* more than 1,024 bytes or 256 UTF-16 units, or (well-formed) more than 64 code points */
+#define PII_LIST_ERR_BAD_TEXT 3       /* malformed UTF-8 (strict), U+0000, or a line break (CR, LF, NEL, U+2028, U+2029) */
+#define PII_LIST_ERR_EMPTY 4          /* no code points */
+#define PII_LIST_ERR_EDGE_SPACE 5     /* first or last code point is White_Space (never trimmed) */
+#define PII_LIST_ERR_UNKNOWN_LABEL 6  /* not one of the PII_LABEL_COUNT labels (or -1 in allow) */
+#define PII_LIST_ERR_TOO_MANY 7       /* more than 10,000 entries in one list (index 10,000) */
+#define PII_LIST_ERR_LABEL_CONFLICT 8 /* two block entries with the same form and different labels (index of the later one) */
+#define PII_LIST_ERR_IN_BOTH 9        /* the same form in allow and block (index in block) */
+typedef struct {
+  int list;     /* PII_LIST_ALLOW or PII_LIST_BLOCK */
+  size_t index; /* entry index in that list */
+  int reason;   /* PII_LIST_ERR_* */
+} pii_list_error;
+
+typedef struct {
+  /* sizeof(pii_options); set by pii_options_init. Must equal the library's (pii_options_size()): the struct comes from
+   * the header of the same release, and calls with another size return PII_ERR_ARG (1.4.0; earlier releases accepted a
+   * prefix). */
+  size_t struct_size;
   /* Moves the decision threshold: > 0 masks more (fewer misses, more over-masking), < 0 masks less. Range about -1..1.
    * Same as the npm option `sensitivity`: the O logit gets the bias -sensitivity. Default 0. */
   double sensitivity;
@@ -133,11 +170,13 @@ typedef struct {
    * alone; a lone name is missed a little more often. Longer texts are unchanged. 0 (default): no change. Same as the npm
    * option `strictShortNames`. Added in 1.3.0. */
   int strict_short_names;
+  /* Optional user lists (pii_lists_create), borrowed for the call; NULL (default): none. Added in 1.4.0. */
+  const pii_lists *lists;
 } pii_options;
 
 /* Table mode (pii_detect_table). */
 typedef struct {
-  size_t struct_size; /* sizeof(pii_table_options); set by pii_table_options_init */
+  size_t struct_size; /* sizeof(pii_table_options); set by pii_table_options_init; must equal pii_table_options_size() */
   int delimiter;      /* 0 = auto (default), ',' , '\t', ';' or '|' (markdown pipe table) */
   int header;         /* 1 (default): the first row is a header row (never voted on or propagated into) */
   int vote;           /* 1 (default): column vote and propagation; 0: whole-file detection clipped to cells only */
@@ -149,7 +188,7 @@ typedef struct {
 #define PII_TABLE_CONTEXT_NONE 0
 #define PII_TABLE_CONTEXT_HEADER 1
 
-/* Library version ("1.3.0"). */
+/* Library version ("1.4.0"). */
 PII_API const char *pii_version(void);
 /* Message of a return code ("invalid argument", ...); static, never NULL. */
 PII_API const char *pii_strerror(int code);
@@ -177,7 +216,8 @@ typedef struct {
 PII_API void pii_model_get_info(const pii_model *model, pii_model_info *info);
 
 /* Spans to mask in utf8[0, len), sorted and non-overlapping and widened to whole grapheme clusters (the npm package's
- * detect() with regex: false, plus options->extra when given). options may be NULL (defaults). On success *out holds *n_out spans (NULL when none);
+ * detect() with regex: false, plus options->extra when given, and options->lists: block entries added, allowed spans
+ * dropped). options may be NULL (defaults). On success *out holds *n_out spans (NULL when none);
  * free with pii_spans_free. Returns PII_OK or a PII_ERR_* code (pii_strerror). Texts longer than INT32_MAX bytes are
  * PII_ERR_ARG; working memory is about 20 bytes per input byte plus one 256-token window. */
 PII_API int pii_detect(const pii_model *model, const char *utf8, size_t len, const pii_options *options, pii_span **out,
@@ -201,6 +241,20 @@ PII_API void pii_table_options_init(pii_table_options *table);
  * Redactor.detectTable gives the same spans (with its regex layer passed here as options->extra). */
 PII_API int pii_detect_table(const pii_model *model, const char *utf8, size_t len, const pii_options *options,
                              const pii_table_options *table, pii_span **out, size_t *n_out);
+
+/* Validates and copies the lists (an empty list may be NULL with count 0) into an immutable handle for pii_options.lists.
+ * PII_OK: *out holds the handle (free with pii_lists_free after every call that borrows it has returned). PII_ERR_ARG with
+ * *err set: an invalid entry (the first in list order: allow, then block; err never holds the entry's text); PII_ERR_ARG
+ * with *err unset: a NULL out or err, or a NULL list with a nonzero count. Equal entries (same form and label) merge;
+ * allow entries that differ only in label merge into one entry allowing all their families. */
+PII_API int pii_lists_create(const pii_term *allow, size_t n_allow, const pii_term *block, size_t n_block, pii_lists **out,
+                             pii_list_error *err);
+PII_API void pii_lists_free(pii_lists *lists);
+/* Entries of each list after merging (0 for a NULL handle). */
+PII_API void pii_lists_counts(const pii_lists *lists, size_t *n_allow, size_t *n_block);
+/* sizeof(pii_options) and sizeof(pii_table_options) of the library (bindings that lay the structs out by hand check theirs). */
+PII_API size_t pii_options_size(void);
+PII_API size_t pii_table_options_size(void);
 
 /* Token ids and offsets without <s> and </s>, as the npm package's tokenizer gives them: the ids and offsets of Hugging
  * Face tokenizers, except that a grapheme the normalizer replaces (e.g. "e" + U+0301) aligns as a whole. */

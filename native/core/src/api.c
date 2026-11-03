@@ -228,6 +228,24 @@ static size_t to_cp(const size_t *offsets, size_t n, size_t x) {
   return lo;
 }
 
+// ---------------------------------------------------------------- merge winners
+// Whether span x (original length xlen) replaces the winner w (original length wlen) of a merged group: a block span beats
+// every other span and the smaller key wins among block spans (the precedence rule); otherwise the longer original span
+// (ties keep the earlier one).
+static int wins(const pii_cspan *x, size_t xlen, const pii_cspan *w, size_t wlen) {
+  const int xb = x->source == PII_SOURCE_BLOCK, wb = w->source == PII_SOURCE_BLOCK;
+  if (xb != wb) return xb;
+  return xb ? pii_key_less(x, w) : xlen > wlen;
+}
+// The winner's label, source and key into a group's span.
+static void take(pii_cspan *dst, const pii_cspan *src) {
+  dst->label = src->label;
+  dst->source = src->source;
+  dst->key_start = src->key_start;
+  dst->key_len = src->key_len;
+  dst->key_index = src->key_index;
+}
+
 // ---------------------------------------------------------------- grapheme snapping
 // One forward walk over the clusters (spans are sorted and non-overlapping, so starts and ends only move forward). Empty
 // spans are kept as they are. With cells, a span inside a cell is clamped to its value range after widening, so a cell value
@@ -254,9 +272,8 @@ size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp
     if (k && a < s[k - 1].end) {
       if (a < s[k - 1].start) s[k - 1].start = a;  // only an empty span before x in x's cluster starts later
       if (b > s[k - 1].end) s[k - 1].end = b;
-      if (len > win) {
-        s[k - 1].label = x.label;
-        s[k - 1].source = x.source;
+      if (wins(&x, len, &s[k - 1], win)) {
+        take(&s[k - 1], &x);
         win = len;
       }
     } else {
@@ -271,7 +288,7 @@ size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp
 }
 
 // ---------------------------------------------------------------- whole words (isWordChar, wordStart, wordEnd of js/src/table.ts)
-static int word_cp(uint32_t c) {
+int pii_word_cp(uint32_t c) {
   size_t lo = 0, hi = sizeof PII_WORD_TABLE / sizeof PII_WORD_TABLE[0];
   while (lo < hi) {
     const size_t mid = (lo + hi) / 2;
@@ -281,28 +298,30 @@ static int word_cp(uint32_t c) {
   }
   return 0;
 }
-static int joiner(uint32_t c) { return c == 0x27 || c == 0x2019 || c == 0x2d || c == 0x2010; }  // apostrophes, hyphens
+int pii_joiner(uint32_t c) { return c == 0x27 || c == 0x2019 || c == 0x2d || c == 0x2010; }  // apostrophes, hyphens
 // Hangul syllables and jamo (isHangul): a word ends where Hangul meets another word character ("010-1234-5678입니다"),
 // and a Hangul end is not widened over particles only ("홍길동님께").
-static int hangul(uint32_t c) {
+int pii_hangul(uint32_t c) {
   return (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xa960 && c <= 0xa97f) ||
          (c >= 0xac00 && c <= 0xd7ff) || (c >= 0xffa0 && c <= 0xffdc);
 }
-static int same_word(uint32_t c, int h) { return word_cp(c) && hangul(c) == h; }
+int pii_same_word(uint32_t c, int h) { return pii_word_cp(c) && pii_hangul(c) == h; }
 
 // Start of the word that cp[a] belongs to (a when cp[a] is not a word character); end of the word of cp[b - 1].
 static size_t word_start(const uint32_t *cp, size_t n, size_t a) {
-  if (a >= n || !word_cp(cp[a])) return a;
-  const int h = hangul(cp[a]);
+  if (a >= n || !pii_word_cp(cp[a])) return a;
+  const int h = pii_hangul(cp[a]);
   while (a > 0) {
-    if (same_word(cp[a - 1], h)) a--;
-    else if (joiner(cp[a - 1]) && a >= 2 && same_word(cp[a - 2], h)) a--;
+    if (pii_same_word(cp[a - 1], h)) a--;
+    else if (pii_joiner(cp[a - 1]) && a >= 2 && pii_same_word(cp[a - 2], h)) a--;
     else break;
   }
   return a;
 }
+const size_t pii_max_particle_run = PII_MAX_PARTICLE_RUN;
+
 // Whether cp[0, n) is a run of PII_KO_PARTICLES (particlesOnly).
-static int particles_only(const uint32_t *cp, size_t n) {
+int pii_particles_only(const uint32_t *cp, size_t n) {
   if (n == 0 || n > PII_MAX_PARTICLE_RUN) return 0;
   int ok[PII_MAX_PARTICLE_RUN + 1] = {1};
   for (size_t i = 1; i <= n; i++)
@@ -318,15 +337,15 @@ static int particles_only(const uint32_t *cp, size_t n) {
   return ok[n];
 }
 static size_t word_end(const uint32_t *cp, size_t n, size_t b) {
-  if (b == 0 || !word_cp(cp[b - 1])) return b;
-  const int h = hangul(cp[b - 1]);
+  if (b == 0 || !pii_word_cp(cp[b - 1])) return b;
+  const int h = pii_hangul(cp[b - 1]);
   size_t e = b;
   while (e < n) {
-    if (same_word(cp[e], h)) e++;
-    else if (joiner(cp[e]) && e + 1 < n && same_word(cp[e + 1], h)) e++;
+    if (pii_same_word(cp[e], h)) e++;
+    else if (pii_joiner(cp[e]) && e + 1 < n && pii_same_word(cp[e + 1], h)) e++;
     else break;
   }
-  return h && e > b && particles_only(cp + b, e - b) ? b : e;
+  return h && e > b && pii_particles_only(cp + b, e - b) ? b : e;
 }
 
 typedef struct {
@@ -343,7 +362,7 @@ static size_t snap_words(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp,
   uint8_t *bound = malloc(ncp + 1);  // bound[i]: a cluster starts at i (and bound[ncp])
   if (!w || !tmp || !bound) {
     free(w), free(tmp), free(bound);
-    return pii_snap_graphemes(s, n, cp, ncp, cells, ncells);  // no memory: graphemes only
+    return (size_t)-1;  // no memory: skipping the widening would change the result
   }
   memset(bound, 0, ncp + 1);
   for (size_t i = 0; i < ncp; i = pii_grapheme_end(cp, i, ncp)) bound[i] = 1;
@@ -380,9 +399,8 @@ static size_t snap_words(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp,
     const pii_wspan x = w[i];
     if (k && x.s.start < s[k - 1].end) {
       if (x.s.end > s[k - 1].end) s[k - 1].end = x.s.end;
-      if (x.len > win) {
-        s[k - 1].label = x.s.label;
-        s[k - 1].source = x.s.source;
+      if (wins(&x.s, x.len, &s[k - 1], win)) {
+        take(&s[k - 1], &x.s);
         win = x.len;
       }
     } else {
@@ -685,11 +703,77 @@ done:
 
 int pii_table_apply(const pii_text *tx, const pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels,
                     pii_cspan **out, size_t *n_out) {
-  return pii_table_apply_ext(tx, spans, n, NULL, 0, delimiter, header, vote, labels, 0, out, n_out);
+  return pii_table_apply_lists(tx, spans, n, NULL, 0, delimiter, header, vote, labels, 0, NULL, out, n_out);
 }
 
 int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra, int delimiter,
                         int header, int vote, uint32_t labels, int words, pii_cspan **out, size_t *n_out) {
+  return pii_table_apply_lists(tx, spans, n, extra, n_extra, delimiter, header, vote, labels, words, NULL, out, n_out);
+}
+
+// ---------------------------------------------------------------- user lists in the pipeline
+// The allow filter: spans without a block match whose whole text is an allow entry of their label's family are dropped.
+static size_t allow_filter(const pii_text *tx, pii_cspan *s, size_t n, const pii_lists *l) {
+  if (!pii_lists_has_allow(l)) return n;
+  size_t k = 0;
+  for (size_t i = 0; i < n; i++)
+    if (s[i].source == PII_SOURCE_BLOCK || !pii_lists_allowed(l, tx->cp, s[i].start, s[i].end, s[i].label)) s[k++] = s[i];
+  return k;
+}
+
+// Sorted, non-overlapping spans a and block regions b -> *out (malloc'ed, capacity na + nb): overlapping spans become one,
+// with the label, source and key of its block region of the smallest key (5.3).
+static int merge_blocks(const pii_cspan *a, size_t na, const pii_cspan *b, size_t nb, pii_cspan **out, size_t *n) {
+  *n = 0;
+  if (!(*out = malloc((na + nb ? na + nb : 1) * sizeof **out))) return PII_ERR_NOMEM;
+  pii_cspan *o = *out;
+  size_t i = 0, j = 0, k = 0;
+  while (i < na || j < nb) {
+    const pii_cspan x = j >= nb || (i < na && a[i].start < b[j].start) ? a[i++] : b[j++];
+    if (k && x.start < o[k - 1].end) {
+      if (x.end > o[k - 1].end) o[k - 1].end = x.end;
+      if (wins(&x, 0, &o[k - 1], 0)) take(&o[k - 1], &x);
+    } else o[k++] = x;
+  }
+  *n = k;
+  return PII_OK;
+}
+
+int pii_detect_finish(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_lists *lists, int words, pii_cspan **out,
+                      size_t *n_out) {
+  *out = NULL;
+  *n_out = 0;
+  pii_vec blk;
+  pii_vec_init(&blk, sizeof(pii_cspan));
+  pii_cspan *res = NULL;
+  size_t nres = 0;
+  int rc = pii_lists_block(lists, tx->cp, 0, tx->n, &blk);
+  if (!rc) rc = merge_blocks(spans, n, blk.p, blk.n, &res, &nres);
+  if (!rc && (nres = pii_snap_spans(res, nres, tx->cp, tx->n, NULL, 0, words)) == (size_t)-1) rc = PII_ERR_NOMEM;
+  if (!rc) nres = allow_filter(tx, res, nres, lists);
+  pii_vec_free(&blk);
+  if (rc || !nres) {
+    free(res);
+    return rc;
+  }
+  *out = res;
+  *n_out = nres;
+  return PII_OK;
+}
+
+// Cluster starts of cp[0, n) (and n): bound[i] = 1.
+static uint8_t *cluster_bounds(const uint32_t *cp, size_t n) {
+  uint8_t *bound = malloc(n + 1);
+  if (!bound) return NULL;
+  memset(bound, 0, n + 1);
+  for (size_t i = 0; i < n; i = pii_grapheme_end(cp, i, n)) bound[i] = 1;
+  bound[n] = 1;
+  return bound;
+}
+
+int pii_table_apply_lists(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra,
+                          int delimiter, int header, int vote, uint32_t labels, int words, const pii_lists *lists,
+                          pii_cspan **out, size_t *n_out) {
   *out = NULL;
   *n_out = 0;
   pii_vec cells, all, clip_cell;
@@ -701,14 +785,11 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
   pii_cspan *res = NULL;
   int rc = pii_table_parse(tx, delimiter, &cells, &rows, &used);
   if (rc) goto done;
-  if (rows < 2) {  // not a table: detect's spans
-    if (n && !(res = malloc(n * sizeof *res))) {
-      rc = PII_ERR_NOMEM;
-      goto done;
-    }
-    if (n) memcpy(res, spans, n * sizeof *res);
-    nres = n;
-    goto snap;
+  if (rows < 2) {  // not a table: the steps of pii_detect
+    rc = pii_detect_finish(tx, spans, n, lists, words, &res, &nres);
+    if (!rc) *out = res, *n_out = nres;
+    res = NULL;
+    goto done;
   }
   // Step 4: spans clipped to cell values (cells are in text order and do not overlap, so their ends increase too)
   const pii_cell *c = cells.p;
@@ -730,6 +811,30 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
       *xc = j;
     }
   }
+  // Pre-vote allow filter: a clipped span whose candidate (the span alone, widened to its words and clusters and clamped to
+  // its cell, as the final snapping would) is allowed leaves before the vote
+  if (pii_lists_has_allow(lists) && all.n) {
+    uint8_t *bound = cluster_bounds(tx->cp, tx->n);
+    if (!bound) {
+      rc = PII_ERR_NOMEM;
+      goto done;
+    }
+    pii_cspan *x = all.p;
+    size_t *xc = clip_cell.p, k = 0;
+    for (size_t i = 0; i < all.n; i++) {
+      size_t a = words ? word_start(tx->cp, tx->n, x[i].start) : x[i].start, b = words ? word_end(tx->cp, tx->n, x[i].end) : x[i].end;
+      while (a > 0 && !bound[a]) a--;
+      while (b < tx->n && !bound[b]) b++;
+      const pii_cell *cell = &c[xc[i]];
+      if (a < cell->start) a = cell->start;
+      if (b > cell->end) b = cell->end;
+      if (pii_lists_allowed(lists, tx->cp, a, b, x[i].label)) continue;
+      x[k] = x[i];
+      xc[k++] = xc[i];
+    }
+    all.n = clip_cell.n = k;
+    free(bound);
+  }
   // Step 5: column vote; the vote counts only the clipped spans (appending may move all.p, so vote on a copy)
   const size_t nclip = all.n;
   if (vote && nclip) {
@@ -743,6 +848,9 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
     free(clip);
     if (rc) goto done;
   }
+  // Block regions per cell, inside each cell's value range (they never vote)
+  for (size_t j = 0; j < nc && !rc; j++) rc = pii_lists_block(lists, tx->cp, c[j].start, c[j].end, &all);
+  if (rc) goto done;
   for (size_t i = 0; i < n_extra; i++) {  // header context (pii_detect_table), after the vote so it never votes
     pii_cspan *x = pii_vec_push(&all);
     if (!x) {
@@ -751,7 +859,8 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
     }
     *x = extra[i];
   }
-  // Step 6: overlapping spans -> one; a TABLE span's label if any (the first by start), else the longest (code points)
+  // Step 6: overlapping spans -> one; the block span of the smallest key if any, else a TABLE span's label (the first by
+  // start), else the longest (code points)
   pii_cspan *s = all.p;
   sort_spans(s, all.n, cmp_start, NULL);  // stable: clipped spans before propagated ones at the same start
   if (all.n && !(res = malloc(all.n * sizeof *res))) {
@@ -760,12 +869,13 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
   }
   for (size_t g0 = 0; g0 < all.n;) {
     size_t g1 = g0 + 1, end = s[g0].end, pick = g0;
-    int table = s[g0].source == PII_SOURCE_TABLE;
     for (; g1 < all.n && s[g1].start < end; g1++) {
       if (s[g1].end > end) end = s[g1].end;
-      if (table) continue;
-      if (s[g1].source == PII_SOURCE_TABLE) table = 1, pick = g1;
-      else if (s[g1].end - s[g1].start > s[pick].end - s[pick].start) pick = g1;
+      const pii_cspan *x = &s[g1], *p = &s[pick];
+      if (x->source == PII_SOURCE_BLOCK) {
+        if (p->source != PII_SOURCE_BLOCK || pii_key_less(x, p)) pick = g1;
+      } else if (p->source == PII_SOURCE_BLOCK || p->source == PII_SOURCE_TABLE) continue;
+      else if (x->source == PII_SOURCE_TABLE || x->end - x->start > p->end - p->start) pick = g1;
     }
     res[nres] = s[pick];
     res[nres].start = s[g0].start;
@@ -773,13 +883,18 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
     nres++;
     g0 = g1;
   }
-snap:
-  nres = pii_snap_spans(res, nres, tx->cp, tx->n, rows < 2 ? NULL : cells.p, cells.n, words);  // Step 7, inside each cell
+  // Step 7, inside each cell; then the final allow filter
+  if ((nres = pii_snap_spans(res, nres, tx->cp, tx->n, cells.p, cells.n, words)) == (size_t)-1) {
+    rc = PII_ERR_NOMEM;
+    goto done;
+  }
+  nres = allow_filter(tx, res, nres, lists);
   if (nres) *out = res;
   else free(res);
   *n_out = nres;
+  res = NULL;
 done:
-  if (rc) free(res);
+  free(res);
   pii_vec_free(&cells);
   pii_vec_free(&all);
   pii_vec_free(&clip_cell);
@@ -890,12 +1005,13 @@ done:
   return rc;
 }
 
-// Options with defaults for the fields an older caller's struct lacks; PII_ERR_ARG when malformed.
+// The caller's options (defaults when NULL); PII_ERR_ARG when malformed. struct_size must be this library's: the struct comes
+// from the same release's header (size alone cannot tell older layouts apart, so they are not decoded).
 static int read_options(const pii_options *opt, pii_options *o) {
   pii_options_init(o);
   if (opt) {
-    if (opt->struct_size < offsetof(pii_options, extra_unit) + sizeof(int)) return PII_ERR_ARG;
-    memcpy(o, opt, sizeof *o < opt->struct_size ? sizeof *o : opt->struct_size);
+    if (opt->struct_size != sizeof *o) return PII_ERR_ARG;
+    *o = *opt;
   }
   if (o->n_extra && !o->extra) return PII_ERR_ARG;
   return PII_OK;
@@ -1053,10 +1169,12 @@ int pii_detect(const pii_model *m, const char *utf8, size_t len, const pii_optio
   if (read_options(opt, &o) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
   pii_text tx;
   if (pii_text_init(&tx, utf8 ? utf8 : "", len)) return PII_ERR_NOMEM;
-  pii_cspan *comb;
-  size_t n;
+  pii_cspan *comb, *res = NULL;
+  size_t n, nres = 0;
   int rc = detect_spans(m, &tx, &o, &comb, &n);
-  if (!rc) rc = emit(&tx, comb, pii_snap_spans(comb, n, tx.cp, tx.n, NULL, 0, o.whole_words != 0), out, n_out);
+  if (!rc) rc = pii_detect_finish(&tx, comb, n, o.lists, o.whole_words != 0, &res, &nres);
+  if (!rc) rc = emit(&tx, res, nres, out, n_out);
+  free(res);
   free(comb);
   pii_text_free(&tx);
   return rc;
@@ -1124,6 +1242,7 @@ static int header_context_spans(const pii_model *m, const pii_text *tx, const ch
   pii_options o2 = *o;
   o2.extra = NULL;
   o2.n_extra = 0;
+  o2.lists = NULL;  // lists apply once, to the table
   for (size_t i = 0; !rc && i < cells.n; i++) {
     if (c[i].row == 0 || !ok[c[i].col]) continue;
     size_t va = c[i].start, vb = c[i].end;
@@ -1196,8 +1315,8 @@ int pii_detect_table(const pii_model *m, const char *utf8, size_t len, const pii
   pii_table_options t;
   pii_table_options_init(&t);
   if (table) {
-    if (table->struct_size < offsetof(pii_table_options, vote) + sizeof(int)) return PII_ERR_ARG;
-    memcpy(&t, table, sizeof t < table->struct_size ? sizeof t : table->struct_size);
+    if (table->struct_size != sizeof t) return PII_ERR_ARG;
+    t = *table;
   }
   if (t.delimiter != 0 && t.delimiter != ',' && t.delimiter != '\t' && t.delimiter != ';' && t.delimiter != '|') return PII_ERR_ARG;
   if (t.context != PII_TABLE_CONTEXT_NONE && t.context != PII_TABLE_CONTEXT_HEADER) return PII_ERR_ARG;
@@ -1210,8 +1329,8 @@ int pii_detect_table(const pii_model *m, const char *utf8, size_t len, const pii
   int rc = detect_spans(m, &tx, &o, &comb, &n);
   if (!rc && t.context == PII_TABLE_CONTEXT_HEADER && t.header) rc = header_context_spans(m, &tx, utf8 ? utf8 : "", &o, t.delimiter, &ctx);
   if (!rc)
-    rc = pii_table_apply_ext(&tx, comb, n, ctx.p, ctx.n, t.delimiter, t.header != 0, t.vote != 0, o.labels,
-                             o.whole_words != 0, &res, &nres);
+    rc = pii_table_apply_lists(&tx, comb, n, ctx.p, ctx.n, t.delimiter, t.header != 0, t.vote != 0, o.labels,
+                               o.whole_words != 0, o.lists, &res, &nres);
   pii_vec_free(&ctx);
   if (!rc) rc = emit(&tx, res, nres, out, n_out);
   free(res);

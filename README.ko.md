@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.3.0`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.3.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.4.0`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
@@ -170,6 +170,16 @@ medium 9.50 / 9.37, small 9.80 / 13.43, nano 8.04 / 24.36. 옵션을 정할 때 
 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝나므로
 「010-1234-5678입니다」 → `[PHONE]입니다`, 한글 구간 뒤 조사는 그대로, 「홍길동님께」 → `[PERSON]님께`). 모든 세트에서 놓침이 0.1~1.4점 줄고(large: 공개 테스트 1.63%→1.54%,
 KDPII 9.61%→9.08%), 조금 더 가립니다(large 과잉 가림: 공개 테스트 0.47%→0.53%, KDPII 1.70%→2.09%). 모든 패키지에 패키지·모델 버전과 검사한 모델 파일을 주는 `info`도 더했습니다.
+
+1.4에서 더한 것. SDK 1.4.0이며 모델은 v1.1 그대로입니다. 모든 패키지에 사용자 목록을 더했습니다. `block`: 개인정보라고 아는 값
+(강사 이름 등)은 낱말 경계에서 시작하고 끝나는 곳마다 가립니다. 조사 앞에서도 맞고(「박지훈님께」 → `[PERSON]님께`) 모델이
+놓친 곳도 가립니다(출처 `block`). `allow`: 구간 글 전체가 개인정보가 아니라고 아는 값(설문의 지역, 상표 등)이면 가리지
+않습니다. ASCII 영문자만 대소문자를 무시하고 그 밖은 정규화하지 않습니다(NFC 글을 넘기세요). 목록은 모델 파일을 읽기 전에
+검사하고, 오류는 목록, 항목 번호, 사유만 알려 주며 글은 담지 않습니다. `info`에 항목 수와 `listsId`가 들어 있습니다. KDPII dev 분할(large)에서 세트의
+이름을 모두 넣은 block 목록(상한)은 PERSON 글자 놓침을 24.6%에서 3.1%로 줄이고 과잉 가림을 0.4점 늘립니다. 일반 allow 목록
+(136개)은 예상대로 거의 바꾸지 않습니다(allow는 자기 열의 값을 넣는 용도). 자세한
+내용: [js/README.ko.md](js/README.ko.md#목록). 패키지 없이 C 코어를 직접 쓰는 경우: C API는 소스 호환만 약속하므로
+릴리스마다 그 릴리스의 `pii.h`로 다시 빌드해야 하며, 다른 릴리스의 옵션 구조체는 거절됩니다([native/core](native/core/README.ko.md#api)).
 
 ## 저장소 구성
 

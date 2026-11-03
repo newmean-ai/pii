@@ -72,6 +72,9 @@ createRedactor(options?: {
   keepEmoji?: boolean;         // true: the model also reads emoji (1.0 behaviour); default false: never read or masked
   wholeWords?: boolean;        // default true: a span that ends inside a word covers the whole word; false: 1.2 spans
   strictShortNames?: boolean;  // true: short texts (≤ 8 tokens) need stronger evidence to be read as names; default false
+  allow?: (string | { text: string; label?: Label })[];  // values that are not PII in your data (see Lists); since 1.4.0
+  block?: { text: string; label: Label }[];              // values that are PII in your data (see Lists); since 1.4.0
+  listsId?: string;            // your name for the lists, shown in info.lists.id; since 1.4.0
   cache?: boolean;             // keep model files in the Cache API; default true
   verify?: boolean;            // check SHA-256 of model files; default true
   onProgress?: (p) => void;    // download progress
@@ -89,13 +92,16 @@ redactor.setSensitivity(value)
 redactor.engine                  // "onnxruntime" | "builtin"
 redactor.version                 // model release ("1.1.0"); the package version is VERSION or info.packageVersion
 redactor.info                    // { packageVersion, modelVersion, size, variant, engine, modelUrl,
-                                 //   files: { model, tokenizer: { path, bytes, sha256 } }, verified }
+                                 //   files: { model, tokenizer: { path, bytes, sha256 } }, verified,
+                                 //   lists: { allow, block, id } }
 redactor.dispose()
 ```
 
 Offsets are UTF-16 indices, as used by `String.prototype.slice`. Spans are widened to whole grapheme clusters, so an emoji,
 flag or combining sequence is masked whole or kept whole (this needs `Intl.Segmenter`; where it is missing, spans stay on code
-point boundaries). By default emoji are taken out of the text the model reads, so the model does not read them as PII: offsets still refer to the
+point boundaries). Grapheme segmentation is the runtime's: the C core uses Unicode 17.0, and a browser or Node with other
+Unicode data can segment some sequences differently, which can change merges, labels and allow decisions, not only span
+edges; word characters (`wholeWords`, block boundaries) come from a pinned Unicode 17.0 table in every runtime. By default emoji are taken out of the text the model reads, so the model does not read them as PII: offsets still refer to the
 input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.0 behaviour).
 By default (`wholeWords`, since 1.3.0), a span that starts or ends inside a word is widened to the whole word: "R23" becomes `[ID_NUMBER]`
 instead of `[ID_NUMBER]23`. A word is a run of letters, digits and marks
@@ -106,6 +112,39 @@ With `strictShortNames: true`, a text the model reads as at most 8 tokens (a sur
 `info` names what ran, for audit records: the package and model versions and the size and SHA-256 of the two model files
 (checked when `verify` is on).
 Inference runs on the calling thread; for long texts, create the redactor inside a Web Worker.
+
+## Lists
+
+Since 1.4.0 you can tell the redactor what you already know about your data:
+
+```ts
+const redactor = await createRedactor({
+  allow: ["제주", "배민", { text: "경기", label: "PERSON" }],  // a string allows any label
+  block: [{ text: "박지훈", label: "PERSON" }, { text: "새솔고등학교", label: "ORG" }],
+  listsId: "survey-2026-11 v3",
+});
+await redactor.redact("박지훈님께 제주에서 연락".normalize("NFC")); // "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
+  `"block"`), also where the model finds nothing and whatever `labels` enables. A Hangul entry also matches before Korean
+  particles (「박지훈님께」 → 「[PERSON]님께」); "Kim" does not match inside "Kimberly", nor in "Kim's" or "Kim-Lee"
+  (apostrophes and hyphens join words, as in `wholeWords`); in scripts written without spaces any occurrence matches. A
+  region with a block match takes the block label and is never allowed.
+- `allow`: a span whose whole text is an entry is not masked; with `label`, only spans of that label family (PERSON covers
+  PERSON_L2, URL covers URL_L2). The test is on the whole span, so it depends on where the model ends a span: a span
+  「제주도」 is not allowed by "제주"; list both forms when both occur.
+- Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized. Pass NFC text and entries: files exported on
+  macOS or copied from PDFs may hold NFD Hangul, which never matches (`text.normalize("NFC")`).
+- Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
+  word that is 김 plus particles (「김은」, 「김도」).
+- In table mode, block entries match inside each cell and do not vote; allowed spans leave before the column vote.
+- Up to 10,000 entries per list, 1 to 64 code points each, no line breaks, no leading or trailing white space. Invalid lists
+  throw `ListError` (`list`: "allow", "block" or "meta" for `listsId`; `index`; `reason`: `bad_shape`, `too_long`,
+  `bad_text`, `empty`, `edge_space`, `unknown_label`, `too_many`, `label_conflict`, `in_both`, `bad_lists_id`) before any
+  model file is downloaded. The error never holds an entry's text.
+- `info.lists` gives the entry counts after merging duplicates and your `listsId`, for audit records; nothing derived from
+  the entries' text.
 
 ## Tables
 

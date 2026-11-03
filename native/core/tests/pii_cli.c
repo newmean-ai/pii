@@ -9,7 +9,12 @@
 //     detect and table: "strict": bool (strict_short_names).
 //   pii_cli apply                                         pii_table_apply without a model (parity of the table steps): each
 //     line also has "spans": [[cp_s, cp_e, "LABEL", source], ...] (sorted, non-overlapping, as detect gives them before
-//     snapping); {"spans": [[cp_s, cp_e, "LABEL", source], ...]} out
+//     snapping); {"spans": [[cp_s, cp_e, "LABEL", source], ...]} out. "plain": true runs the steps of pii_detect after
+//     combine instead (pii_detect_finish).
+//     User lists (apply, detect, table, lists): "allow": [["text", "LABEL" | null], ...], "block": [["text", "LABEL"], ...]
+//     (a label name that is not a label is passed as 99, a missing one as -1); an invalid list gives
+//     {"error": ["allow" | "block", index, "reason"]} for that line.
+//   pii_cli lists                                         pii_lists_create only: {"counts": [allow, block]} or the error
 //   pii_cli threads MODEL.onnx TOKENIZER.json N [SENS]    every text in N threads at once; "ok" when all equal one thread
 //   pii_cli bench MODEL.onnx TOKENIZER.json               ms per text (all inputs, inputs of <= 64 tokens, a 1,000-token text)
 //   pii_cli verify FILE SIZE KIND                         checks FILE against the pinned size and SHA-256
@@ -53,7 +58,31 @@ typedef struct {
   int delimiter, header, vote, context, words, strict;
   pii_cspan *spans;  // "spans" (pii_cli apply), code points
   size_t n_spans;
+  int plain;         // "plain" (pii_cli apply): the detect steps
+  pii_lists *lists;  // "allow" / "block"
+  pii_list_error list_err;
+  int list_rc;
 } input;
+
+static const char *const REASONS[] = {"", "bad_shape", "too_long", "bad_text", "empty", "edge_space", "unknown_label",
+                                      "too_many", "label_conflict", "in_both"};
+
+// "allow" / "block" of an input line -> terms (texts point into the JSON, which outlives the call).
+static pii_term *read_terms(const pii_json *v, size_t *n) {
+  *n = 0;
+  if (!v || v->type != PJ_ARR) return NULL;
+  pii_term *t = calloc(v->n ? v->n : 1, sizeof *t);
+  for (size_t i = 0; i < v->n; i++) {
+    const pii_json *x = &v->items[i];
+    const pii_json *text = x->type == PJ_ARR && x->n >= 1 ? &x->items[0] : NULL;
+    const pii_json *label = x->type == PJ_ARR && x->n >= 2 ? &x->items[1] : NULL;
+    t[i].utf8 = text && text->type == PJ_STR ? text->str : NULL;
+    t[i].len = text && text->type == PJ_STR ? text->len : 0;
+    t[i].label = !label || label->type != PJ_STR ? -1 : pii_label_from_name(label->str) >= 0 ? pii_label_from_name(label->str) : 99;
+  }
+  *n = v->n;
+  return t;
+}
 
 // Optional fields of an input line (see the top of this file).
 static void read_line_options(const pii_json *j, input *in) {
@@ -67,14 +96,25 @@ static void read_line_options(const pii_json *j, input *in) {
   in->strict = 0;
   in->spans = NULL;
   in->n_spans = 0;
+  in->plain = 0;
+  in->lists = NULL;
+  in->list_rc = 0;
+  const pii_json *va = pii_json_get(j, "allow"), *vb = pii_json_get(j, "block");
+  if (va || vb) {
+    size_t na, nb;
+    pii_term *ta = read_terms(va, &na), *tb = read_terms(vb, &nb);
+    in->list_rc = pii_lists_create(ta, na, tb, nb, &in->lists, &in->list_err);
+    free(ta);
+    free(tb);
+  }
   const pii_json *v = pii_json_get(j, "spans");
   if (v && v->type == PJ_ARR && v->n) {
     in->spans = calloc(v->n, sizeof *in->spans);
     for (size_t i = 0; i < v->n; i++) {
       const pii_json *x = &v->items[i];
       if (x->type != PJ_ARR || x->n != 4 || x->items[2].type != PJ_STR) continue;
-      in->spans[in->n_spans++] = (pii_cspan){(size_t)x->items[0].num, (size_t)x->items[1].num, pii_label_from_name(x->items[2].str),
-                                             (int)x->items[3].num};
+      in->spans[in->n_spans++] = (pii_cspan){.start = (size_t)x->items[0].num, .end = (size_t)x->items[1].num,
+                                             .label = pii_label_from_name(x->items[2].str), .source = (int)x->items[3].num};
     }
   }
   v = pii_json_get(j, "extra");
@@ -103,6 +143,15 @@ static void read_line_options(const pii_json *j, input *in) {
   if ((v = pii_json_get(j, "context")) && v->type == PJ_STR) in->context = !strcmp(v->str, "header") ? PII_TABLE_CONTEXT_HEADER : 0;
   if ((v = pii_json_get(j, "words")) && v->type == PJ_BOOL) in->words = v->num != 0;
   if ((v = pii_json_get(j, "strict")) && v->type == PJ_BOOL) in->strict = v->num != 0;
+  if ((v = pii_json_get(j, "plain")) && v->type == PJ_BOOL) in->plain = v->num != 0;
+}
+
+// Prints the list error of an input line; 1 when there was one.
+static int print_list_error(const input *in) {
+  if (!in->list_rc) return 0;
+  printf("{\"error\": [\"%s\", %zu, \"%s\"]}\n", in->list_err.list == PII_LIST_ALLOW ? "allow" : "block", in->list_err.index,
+         in->list_err.reason > 0 && in->list_err.reason <= 9 ? REASONS[in->list_err.reason] : "?");
+  return 1;
 }
 
 // pii_options of an input line (base: the command-line options).
@@ -114,6 +163,7 @@ static pii_options line_options(const pii_options *base, const input *in) {
   o.extra_unit = PII_UNIT_CODEPOINT;
   o.whole_words = in->words;
   o.strict_short_names = in->strict;
+  o.lists = in->lists;
   return o;
 }
 
@@ -239,7 +289,7 @@ static int fails;
   } while (0)
 
 static pii_cspan cs(size_t s, size_t e, int label, int source) {
-  pii_cspan x = {s, e, label, source};
+  pii_cspan x = {.start = s, .end = e, .label = label, .source = source};
   return x;
 }
 
@@ -742,6 +792,72 @@ static int same_spans(const pii_span *a, size_t na, const pii_span *b, size_t nb
   return 1;
 }
 
+// pii_lists_create (arguments, strict UTF-8, counts) and the list steps without a model.
+static pii_term term(const char *s, int label) { return (pii_term){s, strlen(s), label}; }
+
+static int list_reason(const pii_term *a, size_t na, const pii_term *b, size_t nb, int list, size_t index) {
+  pii_lists *l = NULL;
+  pii_list_error e = {-1, 0, 0};
+  const int rc = pii_lists_create(a, na, b, nb, &l, &e);
+  pii_lists_free(l);
+  return rc == PII_ERR_ARG && e.list == list && e.index == index ? e.reason : -1;
+}
+
+static void selftest_lists(void) {
+  pii_lists *l = NULL;
+  pii_list_error e = {-1, 7, 7};
+  const pii_term ok = term("Kim", PII_PERSON);
+  EXPECT(pii_lists_create(NULL, 1, NULL, 0, &l, &e) == PII_ERR_ARG && !l && e.list == -1 && e.index == 7);  // err unset
+  EXPECT(pii_lists_create(&ok, 1, NULL, 0, NULL, &e) == PII_ERR_ARG && pii_lists_create(&ok, 1, NULL, 0, &l, NULL) == PII_ERR_ARG);
+  EXPECT(pii_lists_create(NULL, 0, NULL, 0, &l, &e) == PII_OK && l);
+  size_t na = 9, nb = 9;
+  pii_lists_counts(l, &na, &nb);
+  EXPECT(na == 0 && nb == 0);
+  pii_lists_free(l);
+  pii_lists_free(NULL);
+  // strict UTF-8: overlong, surrogate, above U+10FFFF, truncated, lone continuation
+  const char *bad[] = {"\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xf5\x80\x80\x80", "a\xe2\x82", "\x80", "\xe0\x80\xaf"};
+  for (size_t i = 0; i < sizeof bad / sizeof bad[0]; i++) {
+    const pii_term t = term(bad[i], -1);
+    EXPECT(list_reason(&t, 1, NULL, 0, PII_LIST_ALLOW, 0) == PII_LIST_ERR_BAD_TEXT);
+  }
+  static char buf257[257];  // NUL then 256 ASCII letters: too_long before the scan finds the NUL
+  memset(buf257 + 1, 'a', 256);
+  const pii_term nul = {"a\0b", 3, -1}, nul257 = {buf257, 257, -1};
+  EXPECT(list_reason(&nul, 1, NULL, 0, PII_LIST_ALLOW, 0) == PII_LIST_ERR_BAD_TEXT);
+  EXPECT(list_reason(&nul257, 1, NULL, 0, PII_LIST_ALLOW, 0) == PII_LIST_ERR_TOO_LONG);  // the representation bound comes first
+  const pii_term null_text = {NULL, 0, -1}, no_label = term("Kim", -1), bad_label = term("Kim", PII_LABEL_COUNT);
+  EXPECT(list_reason(&null_text, 1, NULL, 0, PII_LIST_ALLOW, 0) == PII_LIST_ERR_BAD_SHAPE);
+  EXPECT(list_reason(NULL, 0, &no_label, 1, PII_LIST_BLOCK, 0) == PII_LIST_ERR_BAD_SHAPE);
+  EXPECT(list_reason(&bad_label, 1, NULL, 0, PII_LIST_ALLOW, 0) == PII_LIST_ERR_UNKNOWN_LABEL);
+  // allow before block; within a list, the first invalid entry
+  const pii_term two[] = {term("ok", -1), term(" x", -1)};
+  EXPECT(list_reason(two, 2, &no_label, 1, PII_LIST_ALLOW, 1) == PII_LIST_ERR_EDGE_SPACE);
+  // merging: same form and label -> one; allow labels union; counts after merging
+  const pii_term allow[] = {term("Seoul", PII_ADDRESS), term("SEOUL", PII_ORG), term("seoul", PII_ADDRESS), term("Busan", -1)};
+  const pii_term block[] = {term("Kim", PII_PERSON), term("KIM", PII_PERSON), term("Lee", PII_PERSON_L2)};
+  EXPECT(pii_lists_create(allow, 4, block, 3, &l, &e) == PII_OK);
+  pii_lists_counts(l, &na, &nb);
+  EXPECT(na == 2 && nb == 2);
+  pii_text tx;
+  // the precedence rule: a block region takes over the model span it overlaps; allow drops an unblocked span of its family
+  const char *text = "seoul Kim Leeds, LEE님께 kimchi";
+  EXPECT(pii_text_init(&tx, text, strlen(text)) == 0);
+  pii_cspan in[3] = {cs(0, 5, PII_ADDRESS, PII_SOURCE_MODEL), cs(8, 15, PII_ORG, PII_SOURCE_MODEL), cs(23, 29, PII_EMAIL, PII_SOURCE_MODEL)};
+  pii_cspan *out;
+  size_t n;
+  EXPECT(pii_detect_finish(&tx, in, 3, l, 1, &out, &n) == PII_OK && n == 3);
+  if (n == 3) {
+    EXPECT(out[0].start == 6 && out[0].end == 15 && out[0].label == PII_PERSON && out[0].source == PII_SOURCE_BLOCK);  // Kim + Leeds
+    EXPECT(out[1].start == 17 && out[1].end == 20 && out[1].label == PII_PERSON_L2 && out[1].source == PII_SOURCE_BLOCK);  // LEE before 님께
+    EXPECT(out[2].start == 23 && out[2].label == PII_EMAIL);  // "Kim" does not match inside "kimchi"
+  }
+  free(out);
+  pii_text_free(&tx);
+  pii_lists_free(l);
+  EXPECT(pii_options_size() == sizeof(pii_options) && pii_table_options_size() == sizeof(pii_table_options));
+}
+
 // pii_detect_table and grapheme snapping of pii_detect with a model.
 static void selftest_model_table(const pii_model *m) {
   pii_span *s, *s2;
@@ -754,6 +870,29 @@ static void selftest_model_table(const pii_model *m) {
   t.delimiter = 0;
   t.struct_size = 8;
   EXPECT(pii_detect_table(m, csv, strlen(csv), NULL, &t, &s, &n) == PII_ERR_ARG);
+  t.struct_size = sizeof t - sizeof(int);  // an older release's prefix is not decoded (1.4.0)
+  EXPECT(pii_detect_table(m, csv, strlen(csv), NULL, &t, &s, &n) == PII_ERR_ARG);
+  pii_table_options_init(&t);
+  {
+    pii_options o;
+    pii_options_init(&o);
+    o.struct_size = offsetof(pii_options, lists);  // the 1.3 layout
+    EXPECT(pii_detect(m, csv, strlen(csv), &o, &s, &n) == PII_ERR_ARG);
+    // block entries are masked whatever labels enables, and inside cells of a table ("maria.lopez@" is no match of it)
+    const pii_term b = term("MARIA LOPEZ", PII_ORG);
+    pii_list_error e;
+    pii_lists *l;
+    EXPECT(pii_lists_create(NULL, 0, &b, 1, &l, &e) == PII_OK);
+    pii_options_init(&o);
+    o.labels = 0;
+    o.lists = l;
+    EXPECT(pii_detect_table(m, csv, strlen(csv), &o, &t, &s, &n) == PII_OK && n == 1 && s[0].source == PII_SOURCE_BLOCK &&
+           s[0].label == PII_ORG && !memcmp(csv + s[0].byte_start, "Maria Lopez", 11));
+    pii_spans_free(s);
+    EXPECT(pii_detect(m, csv, strlen(csv), &o, &s, &n) == PII_OK && n == 1 && s[0].source == PII_SOURCE_BLOCK);
+    pii_spans_free(s);
+    pii_lists_free(l);
+  }
   EXPECT(pii_detect_table(m, NULL, 3, NULL, NULL, &s, &n) == PII_ERR_ARG);
   EXPECT(pii_detect_table(m, "", 0, NULL, NULL, &s, &n) == PII_OK && n == 0 && !s);
   // a table: spans never hold a delimiter, quote or line break (no field here has one inside its value)
@@ -1041,21 +1180,37 @@ int main(int argc, char **argv) {
     selftest_table_parse();
     selftest_table_apply();
     selftest_table_vote();
+    selftest_lists();
     if (argc >= 4) selftest_model(argv[2], argv[3]);
     printf("%s\n", fails ? "failed" : "ok");
     return fails != 0;
+  }
+  if (argc >= 2 && !strcmp(argv[1], "lists")) {
+    size_t nt;
+    input *texts = read_texts(&nt);
+    for (size_t i = 0; i < nt; i++) {
+      if (print_list_error(&texts[i])) continue;
+      size_t a, b;
+      pii_lists_counts(texts[i].lists, &a, &b);
+      printf("{\"counts\": [%zu, %zu]}\n", a, b);
+    }
+    for (size_t i = 0; i < nt; i++) free(texts[i].s), pii_lists_free(texts[i].lists);
+    free(texts);
+    return 0;
   }
   if (argc >= 2 && !strcmp(argv[1], "apply")) {
     size_t nt;
     input *texts = read_texts(&nt);
     int rc = 0;
     for (size_t i = 0; i < nt; i++) {
+      if (print_list_error(&texts[i])) continue;
       pii_text tx;
       pii_cspan *out = NULL;
       size_t n = 0;
       if (pii_text_init(&tx, texts[i].s, texts[i].n) ||
-          pii_table_apply_ext(&tx, texts[i].spans, texts[i].n_spans, NULL, 0, texts[i].delimiter, texts[i].header, texts[i].vote,
-                              texts[i].labels, texts[i].words, &out, &n)) {
+          (texts[i].plain ? pii_detect_finish(&tx, texts[i].spans, texts[i].n_spans, texts[i].lists, texts[i].words, &out, &n)
+                          : pii_table_apply_lists(&tx, texts[i].spans, texts[i].n_spans, NULL, 0, texts[i].delimiter, texts[i].header,
+                                                  texts[i].vote, texts[i].labels, texts[i].words, texts[i].lists, &out, &n))) {
         rc = 1;
         break;
       }
@@ -1066,7 +1221,7 @@ int main(int argc, char **argv) {
       free(out);
       pii_text_free(&tx);
     }
-    for (size_t i = 0; i < nt; i++) free(texts[i].s), free(texts[i].extra), free(texts[i].spans);
+    for (size_t i = 0; i < nt; i++) free(texts[i].s), free(texts[i].extra), free(texts[i].spans), pii_lists_free(texts[i].lists);
     free(texts);
     return rc;
   }
@@ -1106,6 +1261,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < nt; i++) {
       pii_span *s;
       size_t n;
+      if (print_list_error(&texts[i])) continue;
       const pii_options o = line_options(&opt, &texts[i]);
       if (pii_detect(m, texts[i].s, texts[i].n, &o, &s, &n)) {
         rc = 1;
@@ -1119,6 +1275,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < nt; i++) {
       pii_span *s;
       size_t n;
+      if (print_list_error(&texts[i])) continue;
       const pii_options o = line_options(&opt, &texts[i]);
       pii_table_options t;
       pii_table_options_init(&t);

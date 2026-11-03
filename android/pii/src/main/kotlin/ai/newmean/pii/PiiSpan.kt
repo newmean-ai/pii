@@ -9,7 +9,10 @@ public enum class PiiSource(public val id: String) {
     MODEL_AND_REGEX("model+regex"),
 
     /** Propagated down a table column by [PiiRedactor.detectTable]. */
-    TABLE("table");
+    TABLE("table"),
+
+    /** An entry of the redactor's `block` list ([PiiBlockEntry]). Since 1.4.0. */
+    BLOCK("block");
 
     override fun toString(): String = id
 }

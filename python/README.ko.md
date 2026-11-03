@@ -57,6 +57,9 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
     keep_emoji=False,          # True: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
     whole_words=True,          # 기본 True: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
     strict_short_names=False,  # True: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
+    allow=None,                # 데이터에서 개인정보가 아닌 값: str 또는 (str, label) (아래 '목록' 참고); 1.4.0부터
+    block=None,                # 데이터에서 개인정보인 값: (str, label) (아래 '목록' 참고); 1.4.0부터
+    lists_id=None,             # 목록에 붙이는 이름, info()["lists"]["id"]에 나옴; 1.4.0부터
     model_dir=None,            # tokenizer.web.json과 onnx/model_<variant>.onnx가 있는 폴더; 다운로드하지 않음
     cache_dir=None,            # 기본: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii 또는 ~/.cache/newmean-pii
     model_url=None,            # newmean-ai/pii-<size> 미러의 기준 URL (https://, http://, file://)
@@ -70,7 +73,8 @@ redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="n
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # 다시 불러오지 않음
 redactor.tokenize(text)                # -> [Token(id, start, end)]
-redactor.info()                        # package_version, model_version, size, variant, files(path, bytes, sha256), 모델 구조, build
+redactor.info()                        # package_version, model_version, size, variant, files(path, bytes, sha256), 모델 구조, build,
+                                       # lists(allow, block, id)
 redactor.close()                       # 또는: with create_redactor() as r: ...
 
 apply_redaction(text, spans, mode="tag", mask_char="*", replace=None)
@@ -80,7 +84,7 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
 
 - **오프셋**은 Python `str` 인덱스(코드 포인트)입니다. 이모지가 있어도 `text[span.start:span.end]`가 가릴 텍스트입니다.
   npm 패키지는 같은 구간을 UTF-16 인덱스로 냅니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기, 결합 문자열은
-  통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`, `"model+regex"`, `"table"` 중 하나입니다.
+  통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`, `"model+regex"`, `"table"`, `"block"` 중 하나입니다.
 - **이모지**: 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간 안의
   이모지는 구간을 둘로 나눕니다. `keep_emoji=True`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
 - **낱말 단위**: 기본으로(1.3.0부터) 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strict_short_names=True`를 씁니다. `whole_words=False`면 1.2와 같은 구간을 받습니다.
@@ -100,7 +104,45 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
 
 - **속도**: Apple M5 Pro 한 스레드에서 짧은 텍스트 하나에 nano 약 10 ms, medium 약 15 ms, 1,000토큰 텍스트는 0.4초(nano)
   ~0.55초(medium). 긴 텍스트는 256토큰 창으로 겹쳐 나눠 처리합니다.
-- 오류: 잘못된 옵션은 `ValueError`, 파일이 없거나 내려받지 못하거나 고정값과 다르면 `ModelFileError`.
+- 오류: 잘못된 옵션은 `ValueError`(잘못된 목록은 `ValueError`의 하위 클래스인 `ListError`), 파일이 없거나 내려받지 못하거나
+  고정값과 다르면 `ModelFileError`.
+
+## 목록
+
+1.4.0부터 데이터에 대해 이미 아는 것을 알려 줄 수 있습니다.
+
+```python
+import unicodedata
+
+redactor = create_redactor(
+    allow=["제주", "배민", ("경기", "PERSON")],  # 문자열은 모든 레이블을 허용
+    block=[("박지훈", "PERSON"), ("새솔고등학교", "ORG")],
+    lists_id="survey-2026-11 v3",
+)
+redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연락")).text  # '[PERSON]님께 제주에서 연락'
+```
+
+- `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `"block"`). 모델이 찾지 못한 곳도,
+  `labels`로 끈 레이블도 가립니다. 한글 항목은 조사 앞에서도 맞습니다(「박지훈님께」 → 「[PERSON]님께」). "Kim"은
+  "Kimberly" 안에서 맞지 않고, "Kim's"나 "Kim-Lee"에서도 맞지 않습니다(`whole_words`처럼 아포스트로피와 하이픈이 낱말을
+  잇습니다). 띄어쓰기 없이 쓰는 문자는 어디서든 맞습니다. block이 맞은 영역은 block 레이블을 쓰고 allow로 빠지지 않습니다.
+- `allow`: 구간 글 전체가 항목과 같으면 가리지 않습니다. 레이블이 있으면 그 레이블 계열의 구간만 허용합니다(PERSON은
+  PERSON_L2, URL은 URL_L2 포함). 구간 전체를 비교하므로 모델이 구간을 어디서 끝내느냐에 달려 있습니다. 「제주도」 구간은
+  "제주"로 허용되지 않으니, 두 형태가 다 나오면 둘 다 넣으세요.
+- 항목: `allow`는 `str`이나 `(str, label)`(label이 `None`이면 모든 레이블), `block`은 `(str, label)`을 받습니다. 두 목록 모두
+  `str`과 `bytes`가 아닌 이터러블이면 됩니다. 2-튜플을 목록 자체로 넘기면(`block=("Kim", "PERSON")`) 항목 두 개로 읽으니
+  `block=[("Kim", "PERSON")]`로 쓰세요.
+- ASCII 영문자만 대소문자를 무시하고(`KIM` = `kim`) 그 밖은 정규화하지 않습니다. 글과 항목을 NFC로 넘기세요. macOS에서
+  내보낸 파일이나 PDF에서 복사한 글은 NFD 한글일 수 있고, 그러면 맞지 않습니다(`unicodedata.normalize("NFC", text)`).
+- 정확한 형태만 맞습니다. 「박 지훈」과 「박지훈」은 다른 항목입니다. 「김」 같은 한 글자 항목은 김에 조사가 붙은
+  낱말(「김은」, 「김도」)도 모두 가립니다.
+- 표 모드에서 block 항목은 칸마다 맞추고 열 투표에 참여하지 않습니다. 허용된 구간은 열 투표 전에 빠집니다.
+- 목록마다 항목 10,000개까지, 항목마다 1~64글자, 줄바꿈과 앞뒤 공백은 안 됩니다. 잘못된 목록은 모델 파일을 불러오기 전에
+  `newmean_pii.ListError`(`ValueError`의 하위 클래스)를 냅니다(`.list`: "allow", "block", `lists_id`는 "meta"; `.index`,
+  `lists_id`와 목록 자체의 오류는 `None`; `.reason`: `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`,
+  `unknown_label`, `too_many`, `label_conflict`, `in_both`, `bad_lists_id`). 오류에는 항목 글이 들어가지 않습니다.
+- `info()["lists"]`에는 감사 기록용으로 중복을 합친 뒤의 항목 수와 `lists_id`가 들어 있습니다. 항목 글에서 만든 값은
+  없습니다. 목록은 redactor와 함께 해제됩니다.
 
 ## 표
 

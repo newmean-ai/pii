@@ -11,7 +11,7 @@
 ```kotlin
 // 앱 모듈의 build.gradle.kts
 dependencies {
-    implementation("ai.newmean:pii:1.3.0")
+    implementation("ai.newmean:pii:1.4.0")
 }
 ```
 
@@ -100,6 +100,9 @@ PiiRedactor.create(                       // suspend, Dispatchers.IO에서 불�
     keepEmoji = false,                    // true: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
     wholeWords = true,                    // true: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
     strictShortNames = false,             // true: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
+    allow = emptyList<PiiAllowEntry>(),   // 데이터에서 개인정보가 아닌 값(아래 '목록' 참고); 1.4.0부터
+    block = emptyList<PiiBlockEntry>(),   // 데이터에서 개인정보인 값(아래 '목록' 참고); 1.4.0부터
+    listsId = null,                       // 목록에 붙이는 이름, info().lists.id에 나옴; 1.4.0부터
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // 디스크의 파일; 바이트는 fromBytes(model, tokenizer, size, ...)
 
@@ -109,14 +112,14 @@ redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → 
 redactor.detectTable(text)                // 표 모드(아래 '표' 참고)
 redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // 모델을 다시 불러오지 않고 임계값 변경
-redactor.info()                           // packageVersion, modelVersion, size, variant, 모델·토크나이저 고정값, 모델 구조
-redactor.close()                          // 모델 해제 (AutoCloseable: use { })
+redactor.info()                           // packageVersion, modelVersion, size, variant, 모델·토크나이저 고정값, 모델 구조, 목록
+redactor.close()                          // 모델과 목록 해제 (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
 PiiRegex.spans(text)                      // 패턴 층만
 ```
 
 `PiiSpan`에는 `start`·`end`(텍스트의 UTF-16 인덱스, `String.substring`이 받는 값이자 npm 패키지가 돌려주는 값), `label`,
-`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`)가 있습니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기,
+`source`(`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`, `BLOCK`)가 있습니다. 구간은 문자소 클러스터 단위로 넓혀지므로 이모지, 국기,
 결합 문자열은 통째로 가려지거나 통째로 남습니다. `MASK`는 npm 패키지처럼 코드 포인트마다 가림 문자 하나를 씁니다.
 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의 이모지는 구간을 나눔).
 `keepEmoji = true`면 모델이 텍스트를 그대로 읽습니다(1.0 동작). 기본으로(`wholeWords`, 1.3.0부터) 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strictShortNames`를 씁니다. `wholeWords = false`면 1.2와 같은 구간을 받습니다. `strictShortNames = true`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다. `redactor.version`은
@@ -129,6 +132,43 @@ ms(medium), 130토큰 문단 40~60 ms(Apple M5에서 잰 C 코어 수치; Androi
 
 **R8 / ProGuard.** 추가할 것이 없습니다. AAR에 JNI 클래스 `ai.newmean.pii.internal.NativeBridge`를 지키는 consumer 규칙이
 들어 있습니다.
+
+## 목록
+
+1.4.0부터 데이터에 대해 이미 아는 것을 알려 줄 수 있습니다.
+
+```kotlin
+import java.text.Normalizer
+
+val redactor = PiiRedactor.create(
+    context,
+    allow = listOf(PiiAllowEntry("제주"), PiiAllowEntry("배민"), PiiAllowEntry("경기", PiiLabels.PERSON)),  // 레이블이 없으면 모든 레이블
+    block = listOf(PiiBlockEntry("박지훈", PiiLabels.PERSON), PiiBlockEntry("새솔고등학교", PiiLabels.ORG)),
+    listsId = "survey-2026-11 v3",
+)
+redactor.redact(Normalizer.normalize("박지훈님께 제주에서 연락", Normalizer.Form.NFC)).text  // "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `BLOCK`). 모델이 찾지 못한 곳도,
+  `labels`로 끈 레이블도 가립니다. 한글 항목은 조사 앞에서도 맞습니다(「박지훈님께」 → 「[PERSON]님께」). "Kim"은
+  "Kimberly" 안에서 맞지 않고, "Kim's"나 "Kim-Lee"에서도 맞지 않습니다(`wholeWords`처럼 아포스트로피와 하이픈이 낱말을
+  잇습니다). 띄어쓰기 없이 쓰는 문자는 어디서든 맞습니다. block이 맞은 영역은 block 레이블을 쓰고 allow로 빠지지 않습니다.
+- `allow`: 구간 글 전체가 항목과 같으면 가리지 않습니다. `label`이 있으면 그 레이블 계열의 구간만 허용합니다(PERSON은
+  PERSON_L2, URL은 URL_L2 포함). 구간 전체를 비교하므로 모델이 구간을 어디서 끝내느냐에 달려 있습니다. 「제주도」 구간은
+  "제주"로 허용되지 않으니, 두 형태가 다 나오면 둘 다 넣으세요.
+- ASCII 영문자만 대소문자를 무시하고(`KIM` = `kim`) 그 밖은 정규화하지 않습니다. 글과 항목을 NFC로 넘기세요. macOS에서
+  내보낸 파일이나 PDF에서 복사한 글은 NFD 한글일 수 있고, 그러면 맞지 않습니다
+  (`java.text.Normalizer.normalize(s, Normalizer.Form.NFC)`).
+- 정확한 형태만 맞습니다. 「박 지훈」과 「박지훈」은 다른 항목입니다. 「김」 같은 한 글자 항목은 김에 조사가 붙은
+  낱말(「김은」, 「김도」)도 모두 가립니다.
+- 표 모드에서 block 항목은 칸마다 맞추고 열 투표에 참여하지 않습니다. 허용된 구간은 열 투표 전에 빠집니다.
+- 목록마다 항목 10,000개까지, 항목마다 1~64글자, 줄바꿈과 앞뒤 공백은 안 됩니다. 잘못된 목록은 `create`, `createBlocking`,
+  `fromBytes` 모두 모델 파일을 읽기 전에 `IllegalArgumentException`인 `PiiListException`을 던집니다(`list`: "allow",
+  "block", `listsId`는 "meta"; `index`, `listsId`는 null; `reason`은 `id`가 `bad_shape`, `too_long`, `bad_text`, `empty`,
+  `edge_space`, `unknown_label`, `too_many`, `label_conflict`, `in_both`, `bad_lists_id` 중 하나인 `PiiListReason`). 예외에는
+  항목 글이 들어가지 않습니다.
+- `info().lists`(`PiiListsInfo`: `allow`, `block`, `id`)에는 감사 기록용으로 중복을 합친 뒤의 항목 수와 `listsId`가 들어
+  있습니다. 항목 글에서 만든 값은 없습니다. 목록은 `close()`가 모델과 함께 해제합니다.
 
 ## 표
 

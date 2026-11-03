@@ -12,10 +12,15 @@ const piiUnitUtf16 = 2;
 const piiSourceModel = 1;
 const piiSourceRegex = 2;
 const piiSourceTable = 4;
+const piiSourceBlock = 8;
+const piiListAllow = 0;
+const piiListBlock = 1;
 const piiTableContextNone = 0;
 const piiTableContextHeader = 1;
 
 final class PiiModel extends Opaque {}
+
+final class PiiLists extends Opaque {}
 
 final class PiiSpanC extends Struct {
   @Size()
@@ -52,6 +57,7 @@ final class PiiOptionsC extends Struct {
   external int wholeWords;
   @Int()
   external int strictShortNames;
+  external Pointer<PiiLists> lists;
 }
 
 final class PiiTableOptionsC extends Struct {
@@ -59,6 +65,23 @@ final class PiiTableOptionsC extends Struct {
   external int structSize;
   @Int()
   external int delimiter, header, vote, context;
+}
+
+final class PiiTermC extends Struct {
+  external Pointer<Utf8> utf8;
+  @Size()
+  external int len;
+  @Int()
+  external int label;
+}
+
+final class PiiListErrorC extends Struct {
+  @Int()
+  external int list;
+  @Size()
+  external int index;
+  @Int()
+  external int reason;
 }
 
 final class PiiFilePinC extends Struct {
@@ -76,6 +99,12 @@ external Pointer<Utf8> piiBuildInfo();
 
 @Native<Pointer<Utf8> Function(Int)>(symbol: 'pii_strerror', isLeaf: true)
 external Pointer<Utf8> piiStrerror(int code);
+
+@Native<Size Function()>(symbol: 'pii_options_size', isLeaf: true)
+external int piiOptionsSize();
+
+@Native<Size Function()>(symbol: 'pii_table_options_size', isLeaf: true)
+external int piiTableOptionsSize();
 
 @Native<Void Function(Pointer<PiiOptionsC>)>(symbol: 'pii_options_init', isLeaf: true)
 external void piiOptionsInit(Pointer<PiiOptionsC> options);
@@ -137,6 +166,28 @@ external void piiSpansFree(Pointer<PiiSpanC> spans);
 
 @Native<Pointer<PiiFilePinC> Function(Pointer<Utf8>, Pointer<Utf8>)>(symbol: 'pii_model_file', isLeaf: true)
 external Pointer<PiiFilePinC> piiModelFile(Pointer<Utf8> size, Pointer<Utf8> file);
+
+@Native<
+  Int Function(Pointer<PiiTermC>, Size, Pointer<PiiTermC>, Size, Pointer<Pointer<PiiLists>>, Pointer<PiiListErrorC>)
+>(symbol: 'pii_lists_create')
+external int piiListsCreate(
+  Pointer<PiiTermC> allow,
+  int nAllow,
+  Pointer<PiiTermC> block,
+  int nBlock,
+  Pointer<Pointer<PiiLists>> out,
+  Pointer<PiiListErrorC> err,
+);
+
+@Native<Void Function(Pointer<PiiLists>)>(symbol: 'pii_lists_free', isLeaf: true)
+external void piiListsFree(Pointer<PiiLists> lists);
+
+@Native<Void Function(Pointer<PiiLists>, Pointer<Size>, Pointer<Size>)>(symbol: 'pii_lists_counts', isLeaf: true)
+external void piiListsCounts(Pointer<PiiLists> lists, Pointer<Size> nAllow, Pointer<Size> nBlock);
+
+/// Address of pii_lists_free, for a [NativeFinalizer].
+Pointer<NativeFinalizerFunction> get piiListsFreePointer =>
+    Native.addressOf<NativeFunction<Void Function(Pointer<PiiLists>)>>(piiListsFree).cast();
 
 /// Address of pii_model_free, for a [NativeFinalizer].
 Pointer<NativeFinalizerFunction> get piiModelFreePointer =>

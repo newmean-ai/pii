@@ -2,8 +2,74 @@
 // (native/core/src/api.c, pii_detect_table); parity is checked span for span. Positions are UTF-16 code units (Span
 // offsets), but every length, count and median below is in code points.
 import type { Span } from "./types.js";
+import { KO_PARTICLES, MAX_PARTICLE_RUN, WORD_RANGES } from "./word_tables.js";
 
 export type TableDelimiter = "auto" | "," | "\t" | ";" | "markdown";
+
+/** Block-region winner key (option `block`): the smallest (start, length in code points, entry index) of its matches. */
+export interface Key {
+  start: number;
+  len: number;
+  index: number;
+}
+/** A span inside the pipeline; block regions carry a key (dropped at the API boundary). */
+export type KSpan = Span & { key?: Key };
+
+/** a's key sorts before b's: start ascending, then length descending, then entry index ascending. */
+export function keyLess(a: Key, b: Key): boolean {
+  if (a.start !== b.start) return a.start < b.start;
+  if (a.len !== b.len) return a.len > b.len;
+  return a.index < b.index;
+}
+
+/** The precedence rule of every merge: a block span beats every other span and the smaller key wins among block spans;
+ *  undefined when neither is a block span (the merge step's own rule decides). */
+export function blockWins(x: KSpan, w: KSpan): boolean | undefined {
+  const xb = x.source === "block";
+  const wb = w.source === "block";
+  if (xb !== wb) return xb;
+  return xb ? keyLess(x.key!, w.key!) : undefined;
+}
+
+/** What the pipeline needs of validated user lists (js/src/lists.ts). */
+export interface UserLists {
+  readonly allowCount: number;
+  readonly blockCount: number;
+  /** text[start, end) in compared form is an allow entry whose families include label's. */
+  allowed(text: string, start: number, end: number, label: string): boolean;
+  /** Block regions of text[start, end), in start order. */
+  blocks(text: string, start: number, end: number): KSpan[];
+}
+
+/** The allow filter: spans without a block match whose whole text is an allow entry of their label's family are dropped. */
+export function allowFilter(text: string, spans: KSpan[], lists: UserLists | null): KSpan[] {
+  return lists?.allowCount ? spans.filter((s) => s.source === "block" || !lists.allowed(text, s.start, s.end, s.label)) : spans;
+}
+
+/** Sorted, non-overlapping spans and block regions → one list: overlapping spans become one, with the label, source and key
+ *  of its block region of the smallest key. */
+export function mergeBlocks(spans: KSpan[], blocks: KSpan[]): KSpan[] {
+  if (!blocks.length) return spans;
+  const out: KSpan[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < spans.length || j < blocks.length) {
+    const x = j >= blocks.length || (i < spans.length && spans[i].start < blocks[j].start) ? spans[i++] : blocks[j++];
+    const w = out[out.length - 1];
+    if (w && x.start < w.end) {
+      const end = Math.max(w.end, x.end);
+      out[out.length - 1] = blockWins(x, w) ? { ...x, start: w.start, end } : { ...w, end };
+    } else out.push({ ...x });
+  }
+  return out;
+}
+
+/** The steps of `detect` after combine: block regions of the whole text merged in, word widening and grapheme snapping, then
+ *  the allow filter. */
+export function finishDetect(text: string, spans: KSpan[], lists: UserLists | null, words: boolean): KSpan[] {
+  const merged = lists?.blockCount ? mergeBlocks(spans, lists.blocks(text, 0, text.length)) : spans;
+  return allowFilter(text, snapGraphemes(text, merged, undefined, words), lists);
+}
 
 export interface TableOptions {
   /** Field separator. "auto" (default) picks markdown when the text starts with pipe-table lines, else the one of
@@ -287,20 +353,33 @@ export function detectTableSpans(
   enabled?: Set<string>,
   extra: Span[] = [],
   words = false,
-): Span[] {
-  const { spans: out, cells } = tableSteps(text, spans, options, enabled, extra);
-  return snapGraphemes(text, out, cells ?? undefined, words);
+  lists: UserLists | null = null,
+): KSpan[] {
+  const { spans: out, cells } = tableSteps(text, spans, options, enabled, extra, words, lists);
+  if (!cells) return finishDetect(text, spans, lists, words); // not a table: the steps of detect
+  return allowFilter(text, snapGraphemes(text, out, cells, words), lists);
 }
 
-function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?: Set<string>, extra: Span[] = []): { spans: Span[]; cells: Cell[] | null } {
+function tableSteps(
+  text: string,
+  spans: Span[],
+  options: TableOptions,
+  enabled?: Set<string>,
+  extra: Span[] = [],
+  wholeWords = false,
+  lists: UserLists | null = null,
+): { spans: KSpan[]; cells: Cell[] | null } {
   const t = parseTable(text, options.delimiter ?? "auto");
   if (!t) return { spans, cells: null };
   const { cells } = t;
   const firstData = options.header ?? true ? 1 : 0;
 
-  // clip: keep each span ∩ cell value that holds a non-whitespace code point
+  // clip: keep each span ∩ cell value that holds a non-whitespace code point; pre-vote allow filter: a clipped span whose
+  // candidate (the span alone, widened to its words and clusters and clamped to its cell, as the final snapping would) is
+  // allowed leaves before the vote
   const clipped: Span[] = [];
   const byCell: Span[][] = cells.map(() => []);
+  const segs = lists?.allowCount && segmenter ? segmenter.segment(text) : null;
   let k = 0;
   cells.forEach((cell, ci) => {
     if (cell.end <= cell.start) return;
@@ -310,6 +389,15 @@ function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?
       const e = Math.min(spans[j].end, cell.end);
       if (e <= s || !nonSpace(text, s, e)) continue;
       const c: Span = { start: s, end: e, label: spans[j].label, source: spans[j].source };
+      if (lists?.allowCount) {
+        const ws = wholeWords ? wordStart(text, s) : s;
+        const we = wholeWords ? wordEnd(text, e) : e;
+        const a = segs?.containing(ws);
+        const b = segs?.containing(we - 1);
+        const cs = Math.max(a ? a.index : ws, cell.start);
+        const ce = Math.min(b ? b.index + b.segment.length : we, cell.end);
+        if (lists.allowed(text, cs, ce, c.label)) continue;
+      }
       clipped.push(c);
       byCell[ci].push(c);
     }
@@ -369,10 +457,15 @@ function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?
     }
   }
 
-  // merge overlapping spans: a table span's label wins, else the longest span's (ties → earliest start). Group ends are
-  // tracked in the loop (a spread over a group of 100k+ spans would exceed the engine's argument limit).
-  const all = [...clipped, ...propagated, ...extra].sort((a, b) => a.start - b.start);
-  const groups: { spans: Span[]; end: number }[] = [];
+  // block regions per cell, inside each cell's value range (they never vote)
+  const blocked: KSpan[] = [];
+  if (lists?.blockCount) for (const cell of cells) for (const b of lists.blocks(text, cell.start, cell.end)) blocked.push(b);
+
+  // merge overlapping spans: the block span of the smallest key wins, else a table span's label, else the longest span's
+  // (ties → earliest start). Group ends are tracked in the loop (a spread over a group of 100k+ spans would exceed the
+  // engine's argument limit).
+  const all: KSpan[] = [...clipped, ...propagated, ...blocked, ...extra].sort((a, b) => a.start - b.start);
+  const groups: { spans: KSpan[]; end: number }[] = [];
   for (const s of all) {
     const g = groups[groups.length - 1];
     if (g && s.start < g.end) {
@@ -380,41 +473,42 @@ function tableSteps(text: string, spans: Span[], options: TableOptions, enabled?
       if (s.end > g.end) g.end = s.end;
     } else groups.push({ spans: [s], end: s.end });
   }
-  const merged = groups.map(({ spans: g, end }) => {
-    let pick = g.find((s) => s.source === "table");
-    if (!pick) {
-      pick = g[0];
-      let len = cpLength(text, pick.start, pick.end);
-      for (let i = 1; i < g.length; i++) {
-        const l = cpLength(text, g[i].start, g[i].end);
-        if (l > len) [pick, len] = [g[i], l];
+  const merged = groups.map(({ spans: g, end }): KSpan => {
+    let pick = g[0];
+    let len = cpLength(text, pick.start, pick.end);
+    for (let i = 1; i < g.length; i++) {
+      const x = g[i];
+      const b = blockWins(x, pick);
+      if (b !== undefined) {
+        if (b) pick = x;
+        continue;
       }
+      if (pick.source === "table") continue;
+      const l = cpLength(text, x.start, x.end);
+      if (x.source === "table" || l > len) [pick, len] = [x, l];
     }
-    return { start: g[0].start, end, label: pick.label, source: pick.source };
+    return { start: g[0].start, end, label: pick.label, source: pick.source, ...(pick.key ? { key: pick.key } : {}) };
   });
   return { spans: merged, cells };
 }
 
 // ---------------------------------------------------------------- whole words (option wholeWords)
-// Same rule as the C core (native/core/src/api.c, word_start / word_end), whose table native/core/src/word_tables.h is
-// generated from isWordChar below by native/core/scripts/gen_words.mjs.
-/** Scripts written without spaces between words (Thai, Lao, Tibetan, Myanmar, Khmer, CJK, kana, Bopomofo, Yi): their letters
- *  never extend a span, since a "word" there would be a whole phrase. [lo, hi] pairs, sorted. */
-export const NO_SPACE: readonly number[] = [
-  0x0e00, 0x0eff, 0x0f00, 0x0fff, 0x1000, 0x109f, 0x1780, 0x17ff, 0x19e0, 0x19ff, 0x2e80, 0x2fdf, 0x3000, 0x312f, 0x3190, 0x31ff,
-  0x3400, 0x4dbf, 0x4e00, 0x9fff, 0xa000, 0xa4cf, 0xa9e0, 0xa9ff, 0xaa60, 0xaa7f, 0xf900, 0xfaff, 0xff66, 0xff9f, 0x16fe0, 0x18cff,
-  0x1aff0, 0x1b2ff, 0x20000, 0x3ffff,
-];
+// Same rule as the C core (native/core/src/api.c, word_start / word_end). The word characters, KO_PARTICLES and
+// MAX_PARTICLE_RUN come from js/src/word_tables.ts, which native/core/scripts/gen_words.mjs writes together with
+// native/core/src/word_tables.h (pinned Unicode 17.0 data, whatever the runtime's Unicode version).
+export { KO_PARTICLES, MAX_PARTICLE_RUN, NO_SPACE } from "./word_tables.js";
 
-const LETTER = /[\p{L}\p{N}\p{M}]/u;
-
-/** A letter, digit or mark (Unicode L, N, M) outside NO_SPACE. */
+/** A letter, digit or mark (Unicode 17.0 L, N, M) outside NO_SPACE. */
 export function isWordChar(c: number): boolean {
-  for (let i = 0; i < NO_SPACE.length; i += 2) {
-    if (c < NO_SPACE[i]) break;
-    if (c <= NO_SPACE[i + 1]) return false;
+  let lo = 0;
+  let hi = WORD_RANGES.length >> 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (c > WORD_RANGES[2 * mid + 1]) lo = mid + 1;
+    else if (c < WORD_RANGES[2 * mid]) hi = mid;
+    else return true;
   }
-  return LETTER.test(String.fromCodePoint(c));
+  return false;
 }
 
 /** Apostrophes and hyphens join two words into one: O'Brien, Jean-Luc. */
@@ -426,18 +520,7 @@ export const isHangul = (c: number) =>
   (c >= 0x1100 && c <= 0x11ff) || (c >= 0x3130 && c <= 0x318f) || (c >= 0xa960 && c <= 0xa97f) || (c >= 0xac00 && c <= 0xd7ff) ||
   (c >= 0xffa0 && c <= 0xffdc);
 
-/** Korean particles, copula endings and the honorifics 님 / 씨 / 들. A span that ends inside a Hangul word is not widened
- *  when the rest of the word is a run of these (「홍길동님께」 keeps 「님께」 = 님 + 께), since that rest is grammar, not part of
- *  the name; any other rest is widened (「남성」). At most 3 code points each; written to native/core/src/word_tables.h by
- *  native/core/scripts/gen_words.mjs. */
-export const KO_PARTICLES: readonly string[] = [
-  "님", "씨", "들", "께", "께서", "이", "가", "은", "는", "을", "를", "의", "에", "에서", "에게", "한테", "로", "으로", "와", "과",
-  "랑", "하고", "도", "만", "까지", "부터", "처럼", "보다", "나", "든", "며", "야", "아", "이여", "이다", "입니다", "이고", "라고",
-  "라", "인데", "니까", "이에요", "예요", "이요", "이죠", "였", "이었", "이었다", "였다", "이지", "지만", "면",
-];
 const PARTICLES = new Set(KO_PARTICLES);
-/** Longer rests are always widened. */
-export const MAX_PARTICLE_RUN = 12;
 
 /** Whether `rest` is a run of KO_PARTICLES (at most MAX_PARTICLE_RUN code points). */
 export function particlesOnly(rest: string): boolean {
@@ -509,7 +592,7 @@ const segmenter: { segment(s: string): Segments } | null =
  *  `words` (option wholeWords): before that, a span that starts or ends inside a word is widened to the whole word
  *  (isWordChar: letters, digits and marks, joined by apostrophes and hyphens; not in scripts written without spaces; a word
  *  ends where Hangul meets another word character; a Hangul end is kept when the rest of the word is particles only). */
-export function snapGraphemes(text: string, spans: Span[], cells?: readonly { start: number; end: number }[], words = false): Span[] {
+export function snapGraphemes(text: string, spans: KSpan[], cells?: readonly { start: number; end: number }[], words = false): KSpan[] {
   if (!spans.length || (!segmenter && !words)) return spans;
   const segs = segmenter ? segmenter.segment(text) : null;
   let j = 0;
@@ -534,13 +617,13 @@ export function snapGraphemes(text: string, spans: Span[], cells?: readonly { st
       return { span: { ...s, start, end }, len };
     })
     .sort((a, b) => a.span.start - b.span.start);
-  const out: Span[] = [];
+  const out: KSpan[] = [];
   let winLen = 0;
   for (const { span: s, len } of snapped) {
     const cur = out[out.length - 1];
     if (cur && s.start < cur.end) {
       const end = Math.max(cur.end, s.end);
-      if (len > winLen) {
+      if (blockWins(s, cur) ?? len > winLen) {
         out[out.length - 1] = { ...s, start: cur.start, end };
         winLen = len;
       } else cur.end = end;

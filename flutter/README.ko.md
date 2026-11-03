@@ -8,7 +8,7 @@ Flutter·Dart 앱에서 텍스트 속 개인정보를 **기기 안에서** 찾�
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.3.0
+  newmean_pii: ^1.4.0
 ```
 
 ```dart
@@ -82,6 +82,9 @@ NewmeanPii.create({
   bool keepEmoji = false,      // true: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
   bool wholeWords = true,      // true: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
   bool strictShortNames = false, // true: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
+  Iterable<PiiAllowEntry>? allow,  // 데이터에서 개인정보가 아닌 값(아래 '목록' 참고); 1.4.0부터
+  Iterable<PiiBlockEntry>? block,  // 데이터에서 개인정보인 값(아래 '목록' 참고); 1.4.0부터
+  String? listsId,             // 목록에 붙이는 이름, info.lists.id에 나옴; 1.4.0부터
   String? modelDir,            // 로컬 폴더: tokenizer.web.json, onnx/model_<variant>.onnx
   Future<Uint8List> Function(String path)? readFile,  // 예: Flutter 에셋
   Uri? modelUrl,               // 직접 호스팅하는 모델 폴더("/"로 끝남); 기본 Hugging Face
@@ -90,7 +93,7 @@ NewmeanPii.create({
   bool verify = true,          // 모든 파일의 크기와 SHA-256 검사
   void Function(PiiProgress)? onProgress,
 }) → Future<NewmeanPii>
-NewmeanPii.fromBytes(onnx: ..., tokenizer: ..., size: ..., variant: ...) → Future<NewmeanPii>
+NewmeanPii.fromBytes(onnx: ..., tokenizer: ..., size: ..., variant: ..., allow: ..., block: ..., listsId: ...) → Future<NewmeanPii>
 
 pii.detect(text)              // → Future<List<PiiSpan>> {start, end, label, source}, 정렬·겹침 없음
 pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blank → 삭제; 또는 replace: (span, original) => ...
@@ -98,7 +101,7 @@ pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blan
 pii.detectSync(text), pii.redactSync(text)  // 같은 일을 호출한 isolate에서
 pii.detectTable(text), pii.redactTable(text) // 표 모드(아래 '표' 참고); detectTableSync, redactTableSync
 pii.sensitivity = 0.3          // 또는 setSensitivity(0.3); 다시 로드하지 않음
-pii.info                       // packageVersion, modelVersion, size, variant, 모델·토크나이저 고정값, build
+pii.info                       // packageVersion, modelVersion, size, variant, 모델·토크나이저 고정값, build, 목록
 pii.dispose()
 
 regexSpans(text), applyRedaction(text, spans, mode: ...)  // 패턴 레이어와 마스킹 방식만 따로
@@ -107,7 +110,7 @@ modelFile(size, file)          // 'q4', 'q4e', 'tokenizer'의 공개 경로·크
 
 - **오프셋**은 UTF-16 코드 유닛, 곧 Dart `String`의 인덱스입니다: `text.substring(span.start, span.end)`. 구간은 문자소
   클러스터 단위로 넓혀지므로 이모지, 국기, 결합 문자열은 통째로 가려지거나 통째로 남습니다. `source`는 `"model"`, `"regex"`,
-  `"model+regex"`, `"table"` 중 하나입니다. `mask`는 코드 포인트마다 마스크 문자 하나를 씁니다.
+  `"model+regex"`, `"table"`, `"block"` 중 하나입니다. `mask`는 코드 포인트마다 마스크 문자 하나를 씁니다.
 - **이모지**: 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다. 오프셋은 그대로 입력 기준이고, 구간 안의
   이모지는 구간을 둘로 나눕니다. `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
 - **낱말 단위**: 기본으로(1.3.0부터) 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strictShortNames`를 씁니다. `wholeWords: false`면 1.2와 같은 구간을 받습니다.
@@ -118,7 +121,41 @@ modelFile(size, file)          // 'q4', 'q4e', 'tokenizer'의 공개 경로·크
   동시에 부르면 여러 코어에서 병렬로 돕니다. 직접 만든 백그라운드 isolate 안에서는 `detectSync`로 한 단계를 줄일 수
   있습니다.
 - **메모리**: 로드한 모델은 대략 파일 크기에 토크나이저를 더한 만큼 차지합니다. `dispose()`는 실행 중인 호출이 끝난 뒤
-  해제합니다(부르지 않으면 객체가 가비지 컬렉션될 때 해제).
+  모델과 목록을 해제합니다(부르지 않으면 객체가 가비지 컬렉션될 때 해제).
+
+## 목록
+
+1.4.0부터 데이터에 대해 이미 아는 것을 알려 줄 수 있습니다(`create`와 `fromBytes` 모두).
+
+```dart
+final pii = await NewmeanPii.create(
+  allow: [PiiAllowEntry('제주'), PiiAllowEntry('배민'), PiiAllowEntry('경기', label: 'PERSON')],  // 레이블이 없으면 모든 레이블
+  block: [PiiBlockEntry('박지훈', 'PERSON'), PiiBlockEntry('새솔고등학교', 'ORG')],
+  listsId: 'survey-2026-11 v3',
+);
+final r = await pii.redact('박지훈님께 제주에서 연락');  // NFC 텍스트
+// r.text: "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `"block"`). 모델이 찾지 못한 곳도,
+  `labels`로 끈 레이블도 가립니다. 한글 항목은 조사 앞에서도 맞습니다(「박지훈님께」 → 「[PERSON]님께」). "Kim"은
+  "Kimberly" 안에서 맞지 않고, "Kim's"나 "Kim-Lee"에서도 맞지 않습니다(`wholeWords`처럼 아포스트로피와 하이픈이 낱말을
+  잇습니다). 띄어쓰기 없이 쓰는 문자는 어디서든 맞습니다. block이 맞은 영역은 block 레이블을 쓰고 allow로 빠지지 않습니다.
+- `allow`: 구간 글 전체가 항목과 같으면 가리지 않습니다. `label`이 있으면 그 레이블 계열의 구간만 허용합니다(PERSON은
+  PERSON_L2, URL은 URL_L2 포함). 구간 전체를 비교하므로 모델이 구간을 어디서 끝내느냐에 달려 있습니다. 「제주도」 구간은
+  "제주"로 허용되지 않으니, 두 형태가 다 나오면 둘 다 넣으세요.
+- ASCII 영문자만 대소문자를 무시하고(`KIM` = `kim`) 그 밖은 정규화하지 않습니다. 글과 항목을 NFC로 넘기세요. macOS에서
+  내보낸 파일이나 PDF에서 복사한 글은 NFD 한글일 수 있고, 그러면 맞지 않습니다. Dart에는 정규화 기능이 내장되어 있지 않으니
+  `unorm_dart` 같은 패키지로 미리 NFC로 정규화해서 넘기세요.
+- 정확한 형태만 맞습니다. 「박 지훈」과 「박지훈」은 다른 항목입니다. 「김」 같은 한 글자 항목은 김에 조사가 붙은
+  낱말(「김은」, 「김도」)도 모두 가립니다.
+- 표 모드에서 block 항목은 칸마다 맞추고 열 투표에 참여하지 않습니다. 허용된 구간은 열 투표 전에 빠집니다.
+- 목록마다 항목 10,000개까지, 항목마다 1~64글자, 줄바꿈과 앞뒤 공백은 안 됩니다. 잘못된 목록은 모델 파일을 읽기 전에
+  `PiiListException`을 던집니다(`list`: "allow", "block", `listsId`는 "meta"; `index`, `listsId`는 null; `reason`:
+  `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`, `unknown_label`, `too_many`, `label_conflict`, `in_both`,
+  `bad_lists_id`). 예외에는 항목 글이 들어가지 않습니다.
+- `info.lists`(`PiiListsInfo`: `allow`, `block`, `id`)에는 감사 기록용으로 중복을 합친 뒤의 항목 수와 `listsId`가 들어
+  있습니다. 항목 글에서 만든 값은 없습니다.
 
 ## 표
 

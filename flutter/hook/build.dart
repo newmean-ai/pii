@@ -7,7 +7,7 @@ import 'package:hooks/hooks.dart';
 import 'package:logging/logging.dart';
 import 'package:native_toolchain_c/native_toolchain_c.dart';
 
-const _sources = ['api.c', 'engine.c', 'onnx.c', 'tokenizer.c', 'util.c', 'sha256.c', 'models.c'];
+const _sources = ['api.c', 'engine.c', 'onnx.c', 'tokenizer.c', 'util.c', 'sha256.c', 'models.c', 'lists.c'];
 const _headers = ['pii.h', 'src/internal.h', 'src/simd.h', 'src/unicode_tables.h', 'src/word_tables.h'];
 
 /// The core sources, relative to the package root: the repository checkout first, then the vendored copy.

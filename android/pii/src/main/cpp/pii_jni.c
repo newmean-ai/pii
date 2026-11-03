@@ -10,6 +10,22 @@
 
 #define FN(name) Java_ai_newmean_pii_internal_NativeBridge_##name
 
+// What this file and the Kotlin side assume about the core (pii_options and the lists API of native/core/pii.h). The
+// structs come from pii.h and are filled by field name, so the compiler keeps their layout in step; these are the rest:
+// handles travel as jlong, labels, sources and list errors as jint, and Kotlin decodes these codes by value
+// (PiiLabels.ALL, PiiRedactor.sourceOf, PiiListReason, list 0 = allow).
+_Static_assert(sizeof(jlong) >= sizeof(void *), "a model or lists handle must fit in a jlong");
+_Static_assert(sizeof(jint) >= sizeof(int), "labels, sources and list errors must fit in a jint");
+_Static_assert(sizeof(((pii_options *)0)->lists) == sizeof(void *), "pii_options.lists is a pointer (1.4.0 header)");
+_Static_assert(PII_LABEL_COUNT == 13, "PiiLabels.ALL has 13 labels in model order");
+_Static_assert(PII_SOURCE_MODEL == 1 && PII_SOURCE_REGEX == 2 && PII_SOURCE_TABLE == 4 && PII_SOURCE_BLOCK == 8,
+               "PiiRedactor.sourceOf maps these bit patterns");
+_Static_assert(PII_LIST_ALLOW == 0 && PII_LIST_BLOCK == 1, "PreparedLists.create reads list 0 as allow");
+_Static_assert(PII_LIST_ERR_BAD_SHAPE == 1 && PII_LIST_ERR_TOO_LONG == 2 && PII_LIST_ERR_BAD_TEXT == 3 && PII_LIST_ERR_EMPTY == 4 &&
+                   PII_LIST_ERR_EDGE_SPACE == 5 && PII_LIST_ERR_UNKNOWN_LABEL == 6 && PII_LIST_ERR_TOO_MANY == 7 &&
+                   PII_LIST_ERR_LABEL_CONFLICT == 8 && PII_LIST_ERR_IN_BOTH == 9,
+               "PiiListReason.code values");
+
 static void throw_new(JNIEnv *env, const char *cls, const char *msg) {
   if ((*env)->ExceptionCheck(env)) return;
   jclass c = (*env)->FindClass(env, cls);
@@ -66,12 +82,15 @@ JNIEXPORT jintArray JNICALL FN(modelInfo)(JNIEnv *env, jclass cls, jlong handle)
 
 // pii_detect (table NULL) or pii_detect_table; spans as [utf16_start, utf16_end, label, source] * n. extra: [utf16_start,
 // utf16_end, label] * n (pattern spans) or null.
+// lists: handle of listsCreate or 0 (borrowed for the call).
 static jintArray run_detect(JNIEnv *env, jlong handle, jbyteArray text, jdouble sensitivity, jint labels, jintArray extra,
-                            jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names, const pii_table_options *table) {
+                            jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names, jlong lists,
+                            const pii_table_options *table) {
   const pii_model *m = model_of(env, handle);
   if (!m) return NULL;
   pii_options o;
   pii_options_init(&o);
+  o.lists = (const pii_lists *)(intptr_t)lists;
   o.sensitivity = sensitivity;
   o.labels = (uint32_t)labels;
   o.keep_emoji = keep_emoji ? 1 : 0;
@@ -141,15 +160,17 @@ static jintArray run_detect(JNIEnv *env, jlong handle, jbyteArray text, jdouble 
 }
 
 JNIEXPORT jintArray JNICALL FN(detect)(JNIEnv *env, jclass cls, jlong handle, jbyteArray text, jdouble sensitivity, jint labels,
-                                      jintArray extra, jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names) {
+                                      jintArray extra, jboolean keep_emoji, jboolean whole_words, jboolean strict_short_names,
+                                      jlong lists) {
   (void)cls;
-  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, NULL);
+  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, lists, NULL);
 }
 
 // Table mode; delimiter: 0 (auto), ',', '\t', ';' or '|' (markdown); context: PII_TABLE_CONTEXT_NONE or _HEADER.
 JNIEXPORT jintArray JNICALL FN(detectTable)(JNIEnv *env, jclass cls, jlong handle, jbyteArray text, jdouble sensitivity,
                                            jint labels, jintArray extra, jboolean keep_emoji, jboolean whole_words,
-                                           jboolean strict_short_names, jint delimiter, jboolean header, jboolean vote, jint context) {
+                                           jboolean strict_short_names, jlong lists, jint delimiter, jboolean header, jboolean vote,
+                                           jint context) {
   (void)cls;
   pii_table_options t;
   pii_table_options_init(&t);
@@ -157,7 +178,111 @@ JNIEXPORT jintArray JNICALL FN(detectTable)(JNIEnv *env, jclass cls, jlong handl
   t.header = header ? 1 : 0;
   t.vote = vote ? 1 : 0;
   t.context = context;
-  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, &t);
+  return run_detect(env, handle, text, sensitivity, labels, extra, keep_emoji, whole_words, strict_short_names, lists, &t);
+}
+
+// One list for pii_lists_create: entries as UTF-8 bytes back to back (lens[i] bytes each), label ids (-1: any label).
+typedef struct {
+  jbyteArray bytes;
+  jbyte *buf;
+  pii_term *terms;
+  size_t n;
+} term_list;
+
+static void terms_release(JNIEnv *env, term_list *t) {
+  if (t->buf) (*env)->ReleaseByteArrayElements(env, t->bytes, t->buf, JNI_ABORT);
+  free(t->terms);
+}
+
+// 0, or -1 with an exception pending (t is released then).
+static int terms_get(JNIEnv *env, jbyteArray bytes, jintArray lens, jintArray labels, term_list *t) {
+  *t = (term_list){bytes, NULL, NULL, 0};
+  jsize n = (*env)->GetArrayLength(env, lens), nb = (*env)->GetArrayLength(env, bytes);
+  if ((*env)->GetArrayLength(env, labels) != n) {
+    throw_code(env, PII_ERR_ARG);
+    return -1;
+  }
+  if (!n) return 0;
+  if ((size_t)n > SIZE_MAX / (2 * sizeof(jint))) {
+    throw_code(env, PII_ERR_NOMEM);
+    return -1;
+  }
+  jint *v = malloc(2 * (size_t)n * sizeof *v);
+  t->terms = malloc((size_t)n * sizeof *t->terms);
+  if (!v || !t->terms) {
+    free(v);
+    terms_release(env, t);
+    throw_code(env, PII_ERR_NOMEM);
+    return -1;
+  }
+  (*env)->GetIntArrayRegion(env, lens, 0, n, v);
+  (*env)->GetIntArrayRegion(env, labels, 0, n, v + n);
+  if (nb && !(t->buf = (*env)->GetByteArrayElements(env, bytes, NULL))) {
+    free(v);
+    terms_release(env, t);
+    return -1;
+  }
+  size_t off = 0;
+  for (jsize i = 0; i < n; i++) {
+    if (v[i] < 0 || (size_t)v[i] > (size_t)nb - off) {
+      free(v);
+      terms_release(env, t);
+      throw_code(env, PII_ERR_ARG);
+      return -1;
+    }
+    t->terms[i] = (pii_term){t->buf ? (const char *)t->buf + off : "", (size_t)v[i], v[n + i]};
+    off += (size_t)v[i];
+  }
+  t->n = (size_t)n;
+  free(v);
+  return 0;
+}
+
+// Handle of pii_lists_create (the core copies the entries), or 0 with error = [list, index, reason] for an invalid entry.
+JNIEXPORT jlong JNICALL FN(listsCreate)(JNIEnv *env, jclass cls, jbyteArray allow, jintArray allow_lens, jintArray allow_labels,
+                                        jbyteArray block, jintArray block_lens, jintArray block_labels, jintArray error) {
+  (void)cls;
+  if ((*env)->GetArrayLength(env, error) < 3) {
+    throw_code(env, PII_ERR_ARG);
+    return 0;
+  }
+  term_list a, b;
+  if (terms_get(env, allow, allow_lens, allow_labels, &a)) return 0;
+  if (terms_get(env, block, block_lens, block_labels, &b)) {
+    terms_release(env, &a);
+    return 0;
+  }
+  pii_lists *l = NULL;
+  pii_list_error err = {-1, 0, 0};
+  int rc = pii_lists_create(a.terms, a.n, b.terms, b.n, &l, &err);
+  terms_release(env, &b);
+  terms_release(env, &a);
+  if (rc == PII_ERR_ARG && err.reason > 0) {
+    jint e[3] = {err.list, (jint)err.index, err.reason};
+    (*env)->SetIntArrayRegion(env, error, 0, 3, e);
+    return 0;
+  }
+  if (rc != PII_OK) {
+    throw_code(env, rc);
+    return 0;
+  }
+  return (jlong)(intptr_t)l;
+}
+
+JNIEXPORT void JNICALL FN(listsFree)(JNIEnv *env, jclass cls, jlong handle) {
+  (void)env, (void)cls;
+  pii_lists_free((pii_lists *)(intptr_t)handle);
+}
+
+// [allow, block]: entries after merging duplicates.
+JNIEXPORT jintArray JNICALL FN(listsCounts)(JNIEnv *env, jclass cls, jlong handle) {
+  (void)cls;
+  size_t na = 0, nb = 0;
+  pii_lists_counts((const pii_lists *)(intptr_t)handle, &na, &nb);
+  jint v[2] = {(jint)na, (jint)nb};
+  jintArray out = (*env)->NewIntArray(env, 2);
+  if (out) (*env)->SetIntArrayRegion(env, out, 0, 2, v);
+  return out;
 }
 
 // Tokens (without <s> and </s>) as [id, utf16_start, utf16_end] * n.

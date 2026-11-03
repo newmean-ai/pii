@@ -15,7 +15,7 @@ class NativeTest {
     @Test
     fun corePinsAndVersionMatchKotlin() {
         TestEnv.requireNative()
-        assertEquals("1.3.0", NativeBridge.version())
+        assertEquals("1.4.0", NativeBridge.version())
         for (size in PiiSize.entries) {
             for ((file, pin) in PiiVariant.entries.map { it.id to PiiModels.modelPin(size, it) } + ("tokenizer" to PiiModels.tokenizerPin(size))) {
                 assertEquals("$size $file", "${pin.path}\n${pin.bytes}\n${pin.sha256}", NativeBridge.filePin(size.id, file))

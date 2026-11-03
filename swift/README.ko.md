@@ -12,7 +12,7 @@ Swift Package Manager: Xcode에서 File › Add Package Dependencies… › `htt
 `NewmeanPII`. 또는 `Package.swift`에:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.3.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.4.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -80,6 +80,9 @@ try await PIIRedactor(
   keepEmoji: Bool = false,          // true: 모델이 이모지도 읽음(1.0 동작); 기본: 이모지는 읽지도 가리지도 않음
   wholeWords: Bool = true,          // true: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘
   strictShortNames: Bool = false,   // true: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄
+  allow: [PIIAllowEntry] = [],      // 데이터에서 개인정보가 아닌 값(아래 '목록' 참고); 1.4.0부터
+  block: [PIIBlockEntry] = [],      // 데이터에서 개인정보인 값(아래 '목록' 참고); 1.4.0부터
+  listsId: String? = nil,           // 목록에 붙이는 이름, info.lists.id에 나옴; 1.4.0부터
   modelDirectory: URL? = nil)       // 모델 파일 폴더; nil이면 Caches로 한 번 내려받음
 
 try await redactor.detect(text)                  // [PIISpan], 정렬, 겹침 없음
@@ -93,13 +96,14 @@ PIIRegex.spans(in: text)                         // 패턴 층만 따로
 ```
 
 `PIISpan`에는 `range`(찾은 텍스트의 `Range<String.Index>`), `utf16Range`(NSString·NSRange 오프셋, npm 패키지의 `start`·`end`),
-`scalarRange`(유니코드 스칼라, Python 오프셋), `label`, `source`(`.model`, `.regex`, `.modelAndRegex`, `.table`)가 있습니다.
+`scalarRange`(유니코드 스칼라, Python 오프셋), `label`, `source`(`.model`, `.regex`, `.modelAndRegex`, `.table`, `.block`)가 있습니다.
 구간은 문자소 클러스터 단위(UAX #29, C 코어 구현 기준)로 넓혀지므로 이모지, 국기, 결합 문자열은 통째로 가려지거나 통째로 남습니다.
 자를 때는 `redact`처럼 `text.unicodeScalars[span.range]`나 `utf16Range`를 쓰세요. `.mask`는 npm 패키지처럼 유니코드 스칼라마다
 가림 문자 하나를 씁니다. 기본으로 이모지는 모델이 읽는 텍스트에서 빠지므로 모델이 이모지를 개인정보로 읽지 않습니다(오프셋은 입력 기준 그대로, 구간 안의
 이모지는 구간을 나눔). `keepEmoji: true`면 모델이 텍스트를 그대로 읽습니다(1.0 동작).
 기본으로(`wholeWords`, 1.3.0부터) 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strictShortNames`를 씁니다. `wholeWords: false`면 1.2와 같은 구간을 받습니다. `strictShortNames: true`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다. `redactor.version`은 모델 버전(1.1.0)이고, `redactor.info`에는 패키지 버전
-(`PIIRedactor.packageVersion`), 크기, 종류, 검사한 두 모델 파일(`PIIModelFile`: 경로, 크기, SHA-256)이 더해집니다.
+(`PIIRedactor.packageVersion`), 크기, 종류, 검사한 두 모델 파일(`PIIModelFile`: 경로, 크기, SHA-256), 목록(`PIIListsInfo`,
+아래 '목록' 참고)이 더해집니다.
 
 **스레드.** `PIIRedactor`는 `Sendable`이고 잠글 필요가 없습니다. 여러 작업이 한 인스턴스의 `detect`를 동시에 불러도 됩니다.
 async 메서드는 모델을 분리된 작업(detached task)에서 실행하고 호출한 액터에서 돌리지 않으므로, 메인 액터에서 불러도 UI가
@@ -110,6 +114,39 @@ async 메서드는 모델을 분리된 작업(detached task)에서 실행하고 
 **Debug 빌드는 느립니다.** Xcode는 Debug 구성에서 패키지의 C 코드를 최적화 없이 컴파일하므로 모델이 약 18배 느려집니다(Apple
 M5 Pro, medium, 짧은 텍스트 약 19 ms → 350 ms). 속도는 Release 빌드에서 재세요. Release는 코어를 `-Os`로 컴파일하며
 `-O3`과 속도가 같습니다.
+
+## 목록
+
+1.4.0부터 데이터에 대해 이미 아는 것을 알려 줄 수 있습니다.
+
+```swift
+let redactor = try await PIIRedactor(
+  allow: ["제주", "배민", PIIAllowEntry(text: "경기", label: .person)],  // 문자열 리터럴은 모든 라벨을 허용
+  block: [PIIBlockEntry(text: "박지훈", label: .person), PIIBlockEntry(text: "새솔고등학교", label: .org)],
+  listsId: "survey-2026-11 v3")
+let (text, _) = try await redactor.redact("박지훈님께 제주에서 연락".precomposedStringWithCanonicalMapping)
+// text: "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 라벨로 가립니다(출처 `.block`). 모델이 찾지 못한 곳도,
+  `labels`로 끈 라벨도 가립니다. 한글 항목은 조사 앞에서도 맞습니다(「박지훈님께」 → 「[PERSON]님께」). "Kim"은
+  "Kimberly" 안에서 맞지 않고, "Kim's"나 "Kim-Lee"에서도 맞지 않습니다(`wholeWords`처럼 아포스트로피와 하이픈이 낱말을
+  잇습니다). 띄어쓰기 없이 쓰는 문자는 어디서든 맞습니다. block이 맞은 영역은 block 라벨을 쓰고 allow로 빠지지 않습니다.
+- `allow`: 구간 글 전체가 항목과 같으면 가리지 않습니다. `label`이 있으면 그 라벨 계열의 구간만 허용합니다(`.person`은
+  `.personL2`, `.url`은 `.urlL2` 포함). 구간 전체를 비교하므로 모델이 구간을 어디서 끝내느냐에 달려 있습니다. 「제주도」
+  구간은 "제주"로 허용되지 않으니, 두 형태가 다 나오면 둘 다 넣으세요.
+- ASCII 영문자만 대소문자를 무시하고(`KIM` = `kim`) 그 밖은 정규화하지 않습니다(정준 등가인 문자열을 같다고 보는 Swift의
+  `==`와 다릅니다). 글과 항목을 NFC로 넘기세요. macOS에서 내보낸 파일이나 PDF에서 복사한 글은 NFD 한글일 수 있고, 그러면
+  맞지 않습니다(`text.precomposedStringWithCanonicalMapping`).
+- 정확한 형태만 맞습니다. 「박 지훈」과 「박지훈」은 다른 항목입니다. 「김」 같은 한 글자 항목은 김에 조사가 붙은
+  낱말(「김은」, 「김도」)도 모두 가립니다.
+- 표 모드에서 block 항목은 칸마다 맞추고 열 투표에 참여하지 않습니다. 허용된 구간은 열 투표 전에 빠집니다.
+- 목록마다 항목 10,000개까지, 항목마다 유니코드 스칼라 1~64개, 줄바꿈과 앞뒤 공백은 안 됩니다. 잘못된 목록은 모델 파일을
+  내려받거나 불러오기 전에 `PIIListError`를 던집니다(`list`: `.allow`, `.block`, `listsId`는 `.meta`; `index`, `listsId`는
+  nil; `reason`은 원시값이 `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`, `unknown_label`, `too_many`,
+  `label_conflict`, `in_both`, `bad_lists_id`인 `PIIListError.Reason`). 오류에는 항목 글이 들어가지 않습니다.
+- `info.lists`(`allow`, `block`, `id`)에는 감사 기록용으로 중복을 합친 뒤의 항목 수와 `listsId`가 들어 있습니다. 항목
+  글에서 만든 값은 없습니다. 목록은 redactor와 함께(`deinit`에서) 해제됩니다.
 
 ## 표
 

@@ -46,9 +46,14 @@ public class PiiRedactor private constructor(
      * little more often (large: 98.9% → 96.5% of lone names found). Longer texts are unchanged. Default false.
      */
     public val strictShortNames: Boolean,
+    lists: UserLists,
 ) : AutoCloseable {
     private val lock = ReentrantReadWriteLock()
     private val labelBits = PiiLabels.bits(labels)
+
+    // the core's lists handle (0: none); borrowed by every call under the read lock, freed by close()
+    private var listsHandle: Long = lists.handle
+    private val listsInfo: PiiListsInfo = lists.info
 
     /** Model release, not the package version: see [info] (packageVersion). */
     public val version: String = PiiModels.VERSION
@@ -114,11 +119,11 @@ public class PiiRedactor private constructor(
         val raw = lock.read {
             check(handle != 0L) { "PiiRedactor is closed" }
             if (table == null) {
-                NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames)
+                NativeBridge.detect(handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames, listsHandle)
             } else {
                 NativeBridge.detectTable(
-                    handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames, table.delimiter.code, table.header,
-                    table.vote, table.context.code,
+                    handle, utf8, sensitivity, labelBits, extra, keepEmoji, wholeWords, strictShortNames, listsHandle, table.delimiter.code,
+                    table.header, table.vote, table.context.code,
                 )
             }
         }
@@ -140,7 +145,10 @@ public class PiiRedactor private constructor(
         return PiiRedaction(applyRedaction(text, spans, RedactMode.TAG, "*", replace), spans)
     }
 
-    /** Model shape, package and model versions and the two checked model files, for diagnostics and audit records. */
+    /**
+     * Model shape, package and model versions, the two checked model files and the list counts with the caller's listsId, for
+     * diagnostics and audit records.
+     */
     public fun info(): PiiModelInfo = lock.read {
         check(handle != 0L) { "PiiRedactor is closed" }
         val i = NativeBridge.modelInfo(handle)
@@ -148,6 +156,7 @@ public class PiiRedactor private constructor(
             i[0], i[1], i[2], i[3], i[4], i[5], if (i[6] == 2) "int4" else "int8",
             packageVersion = NativeBridge.version(), modelVersion = version, size = size, variant = variant,
             model = PiiModels.modelPin(size, variant), tokenizer = PiiModels.tokenizerPin(size), build = NativeBridge.buildInfo(),
+            lists = listsInfo,
         )
     }
 
@@ -156,12 +165,16 @@ public class PiiRedactor private constructor(
         NativeBridge.tokenize(handle, Utf8.encode(text))
     }
 
-    /** Frees the model; waits for running calls. Later calls throw IllegalStateException. */
+    /** Frees the model and the lists; waits for running calls. Later calls throw IllegalStateException. */
     override fun close() {
         lock.write {
             if (handle != 0L) {
                 NativeBridge.modelFree(handle)
                 handle = 0L
+            }
+            if (listsHandle != 0L) {
+                NativeBridge.listsFree(listsHandle)
+                listsHandle = 0L
             }
         }
     }
@@ -179,6 +192,10 @@ public class PiiRedactor private constructor(
          * @param wholeWords true: spans are widened to whole words ("R23", not "[ID_NUMBER]23"); default true.
          * @param strictShortNames true: texts of at most 8 tokens need stronger evidence to be read as names ("경기", "남성" are
          *   left alone; a lone name is missed a little more often); default false.
+         * @param allow values that are not PII in your data ([PiiAllowEntry]): a span whose whole text is an entry is not masked.
+         * @param block values that are PII ([PiiBlockEntry]): every whole-word occurrence is masked, whatever [labels] says.
+         * @param listsId your name for the lists (1 to 128 code points), shown in [PiiModelInfo.lists] for audit records.
+         * @throws PiiListException for an invalid list entry or listsId, before any model file is read.
          */
         public suspend fun create(
             context: Context,
@@ -191,8 +208,11 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean = false,
             wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
+            allow: List<PiiAllowEntry> = emptyList(),
+            block: List<PiiBlockEntry> = emptyList(),
+            listsId: String? = null,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji, wholeWords, strictShortNames)
+            createBlocking(context, size, variant, sensitivity, labels, regex, source, keepEmoji, wholeWords, strictShortNames, allow, block, listsId)
         }
 
         /** [create] from model files on disk (checked against the pins of [size] and [variant]). */
@@ -207,8 +227,11 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean = false,
             wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
+            allow: List<PiiAllowEntry> = emptyList(),
+            block: List<PiiBlockEntry> = emptyList(),
+            listsId: String? = null,
         ): PiiRedactor = withContext(Dispatchers.IO) {
-            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames)
+            createBlocking(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, allow, block, listsId)
         }
 
         /** Blocking [create]; call it off the main thread. */
@@ -226,10 +249,13 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean = false,
             wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
-        ): PiiRedactor {
+            allow: List<PiiAllowEntry> = emptyList(),
+            block: List<PiiBlockEntry> = emptyList(),
+            listsId: String? = null,
+        ): PiiRedactor = userLists(allow, block, listsId).freeOnError { lists ->
             val modelPin = PiiModels.modelPin(size, variant)
             val tokPin = PiiModels.tokenizerPin(size)
-            return when (source) {
+            when (source) {
                 is PiiModelSource.Assets -> {
                     val dir = source.folder(size)
                     fun asset(path: String, pin: PiiFilePin): ByteArray = try {
@@ -241,7 +267,7 @@ public class PiiRedactor private constructor(
                     }
                     load(
                         asset(modelPin.path, modelPin), asset(tokPin.path, tokPin), size, variant, sensitivity, labels, regex, keepEmoji,
-                        wholeWords, strictShortNames,
+                        wholeWords, strictShortNames, lists,
                     )
                 }
                 is PiiModelSource.Download -> {
@@ -249,9 +275,7 @@ public class PiiRedactor private constructor(
                     val files = PiiModels.download(
                         File(root, "pii-${size.id}"), size, variant, source.baseUrl ?: PiiModels.baseUrl(size), source.onProgress,
                     )
-                    createBlocking(
-                        files.model, files.tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames,
-                    )
+                    loadFiles(files.model, files.tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, lists)
                 }
             }
         }
@@ -271,11 +295,12 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean = false,
             wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
-        ): PiiRedactor = load(
-            ModelStore.readVerified(model, PiiModels.modelPin(size, variant)),
-            ModelStore.readVerified(tokenizer, PiiModels.tokenizerPin(size)),
-            size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames,
-        )
+            allow: List<PiiAllowEntry> = emptyList(),
+            block: List<PiiBlockEntry> = emptyList(),
+            listsId: String? = null,
+        ): PiiRedactor = userLists(allow, block, listsId).freeOnError { lists ->
+            loadFiles(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, lists)
+        }
 
         /** Blocking [create] from the bytes of the two files (checked against the pins; they may be dropped afterwards). */
         @JvmStatic
@@ -292,10 +317,13 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean = false,
             wholeWords: Boolean = true,
             strictShortNames: Boolean = false,
-        ): PiiRedactor {
+            allow: List<PiiAllowEntry> = emptyList(),
+            block: List<PiiBlockEntry> = emptyList(),
+            listsId: String? = null,
+        ): PiiRedactor = userLists(allow, block, listsId).freeOnError { lists ->
             if (!ModelStore.matches(model, PiiModels.modelPin(size, variant))) throw ModelStore.mismatch("model_${variant.id}.onnx")
             if (!ModelStore.matches(tokenizer, PiiModels.tokenizerPin(size))) throw ModelStore.mismatch(PiiModels.TOKENIZER_PATH)
-            return load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames)
+            load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, lists)
         }
 
         /** Replaces [spans] in [text] as [redact] does (for spans kept from [detect] or edited by the app). */
@@ -313,6 +341,36 @@ public class PiiRedactor private constructor(
         @JvmStatic
         public fun buildInfo(): String = NativeBridge.buildInfo()
 
+        /** The lists of the options, validated (here and by the core) before any model file is read. */
+        private fun userLists(allow: List<PiiAllowEntry>, block: List<PiiBlockEntry>, listsId: String?): UserLists =
+            PreparedLists.of(allow, block, listsId).create()
+
+        /** Frees the lists when [body] fails; on success the redactor it returns owns them. */
+        private inline fun UserLists.freeOnError(body: (UserLists) -> PiiRedactor): PiiRedactor = try {
+            body(this)
+        } catch (t: Throwable) {
+            free()
+            throw t
+        }
+
+        private fun loadFiles(
+            model: File,
+            tokenizer: File,
+            size: PiiSize,
+            variant: PiiVariant,
+            sensitivity: Double,
+            labels: Collection<String>,
+            regex: Boolean,
+            keepEmoji: Boolean,
+            wholeWords: Boolean,
+            strictShortNames: Boolean,
+            lists: UserLists,
+        ): PiiRedactor = load(
+            ModelStore.readVerified(model, PiiModels.modelPin(size, variant)),
+            ModelStore.readVerified(tokenizer, PiiModels.tokenizerPin(size)),
+            size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, lists,
+        )
+
         private fun load(
             model: ByteArray,
             tokenizer: ByteArray,
@@ -324,11 +382,13 @@ public class PiiRedactor private constructor(
             keepEmoji: Boolean,
             wholeWords: Boolean,
             strictShortNames: Boolean,
+            lists: UserLists,
         ): PiiRedactor {
             PiiLabels.bits(labels) // unknown labels fail before the model loads
             checkSensitivity(sensitivity)
             return PiiRedactor(
                 NativeBridge.modelLoad(model, tokenizer), size, variant, labels, regex, sensitivity, keepEmoji, wholeWords, strictShortNames,
+                lists,
             )
         }
 
@@ -337,11 +397,14 @@ public class PiiRedactor private constructor(
             return v
         }
 
+        // each bit pattern the core emits (PII_SOURCE_*; TABLE and BLOCK alone); anything else is a core this package does not know
         private fun sourceOf(bits: Int): PiiSource = when (bits) {
             1 -> PiiSource.MODEL
             2 -> PiiSource.REGEX
+            3 -> PiiSource.MODEL_AND_REGEX
             4 -> PiiSource.TABLE
-            else -> PiiSource.MODEL_AND_REGEX
+            8 -> PiiSource.BLOCK
+            else -> throw IllegalStateException("unknown span source $bits from the native core")
         }
 
         private fun extraOf(spans: List<PiiSpan>): IntArray? {

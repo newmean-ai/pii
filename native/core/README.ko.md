@@ -23,6 +23,12 @@
 
 ## API
 
+> **C API를 직접 쓸 때.** 코어는 패키지(npm, Python, Swift, Android, Flutter)를 통해 쓰는 것이 기본입니다. 패키지는 같은
+> 릴리스의 코어를 함께 묶어 배포하고 그 코어로 시험합니다. C API는 소스 호환만 약속하므로, 링크하는 코어의 `pii.h`로
+> 컴파일하고 릴리스마다 다시 빌드해야 합니다. 릴리스가 다른 바이너리는 호환되지 않습니다. 1.4.0부터 다른 릴리스 헤더의 옵션
+> 구조체는 `PII_ERR_ARG`로 거절되며(`struct_size`가 `pii_options_size()` / `pii_table_options_size()`와 같아야 함), 공유
+> 라이브러리는 내지 않습니다.
+
 ```c
 #include "pii.h"
 
@@ -39,6 +45,14 @@ o.keep_emoji = 0;             // 기본: 이모지는 읽지도 가리지도 않
 o.whole_words = 1;            // 기본 1: 낱말 중간에서 끝나는 구간을 낱말 전체로 넓힘, 0: 1.2 구간(npm `wholeWords`)
 o.strict_short_names = 0;     // 1: 8토큰 이하의 짧은 글은 근거가 더 있어야 이름으로 봄(npm `strictShortNames`)
 
+// 사용자 목록(1.4.0): 한 번 검사하고, 핸들은 호출과 스레드가 함께 쓰며, 마지막 호출 뒤에 해제
+const pii_term allow[] = {{"제주", strlen("제주"), -1}, {"경기", strlen("경기"), PII_PERSON}};  // -1: 모든 라벨
+const pii_term block[] = {{"박지훈", strlen("박지훈"), PII_PERSON}};
+pii_lists *lists;
+pii_list_error lerr;          // 목록, 번호, 사유(PII_LIST_ERR_*); 글은 담지 않음
+if (pii_lists_create(allow, 2, block, 1, &lists, &lerr) != PII_OK) { /* lerr를 알리고, 목록 없이 detect하지 않음 */ }
+o.lists = lists;
+
 pii_span *spans;
 size_t n;
 if (pii_detect(m, text, strlen(text), &o, &spans, &n) == PII_OK) {
@@ -52,6 +66,7 @@ pii_table_options_init(&t);   // 구분자 자동 감지, 머리글 행, 열 투
 t.delimiter = ',';            // 0(자동), ',', '\t', ';', '|'(마크다운 파이프 표)
 t.context = PII_TABLE_CONTEXT_HEADER;  // 값이 서로 다른 열의 칸을 "<머리글>: <값>"으로도 읽음
 if (pii_detect_table(m, csv, strlen(csv), &o, &t, &spans, &n) == PII_OK) pii_spans_free(spans);
+pii_lists_free(lists);         // 빌려 쓰는 호출이 모두 끝난 뒤
 pii_model_free(m);
 ```
 
@@ -66,13 +81,14 @@ pii_model_free(m);
   씁니다. 잘리거나 손상된 모델·토크나이저 파일은 메시지와 함께 실패하며 멈추지 않습니다. 돌려받은 배열은 호출한 쪽이
   소유하며 `pii_spans_free` / `pii_tokens_free`로 해제합니다(Windows에서는 `free`가 다른 C 런타임 것일 수 있음). 글은
   `INT32_MAX` 바이트까지이며, 작업 메모리는 입력 1바이트당 약 20바이트에 윈도 하나분이 더해집니다.
+  1.4.0부터는 결과를 바꿀 메모리 실패(낱말 넓힘, block 일치)가 `PII_ERR_NOMEM`을 돌려줍니다. 1.3은 낱말 넓힘을 건너뛰고 덜 가린 결과를 돌려줬습니다.
 - **옵션**은 npm 패키지와 같습니다. `sensitivity`(O 로짓에 `-sensitivity`를 더함), `labels`(비트 집합, 기본은 13개 전부).
   `extra`는 래퍼의 패턴 계층이 찾은 구간을 받아 npm `combine`과 똑같이 병합합니다(모델 라벨 우선, 같은 계열의 모델
   라벨이 덮지 않는 곳에서만 패턴 라벨 사용). 그래서 패턴 계층은 각 언어에 둘 수 있습니다.
   `keep_emoji`(기본 0)는 이모지를 모델이 읽는 텍스트에서 빼므로 모델이 이모지를 개인정보로 읽지 않습니다. 구간은 입력 기준 오프셋을 그대로
   쓰고, 구간 안의 이모지는 구간을 나누며, 키캡은 바탕 문자로 읽습니다(그 문자를 덮는 구간은 키캡 전체를 덮음). 1이면 모델이
   텍스트를 그대로 읽습니다(1.0 동작). `whole_words`(1.3.0부터 기본 1, 0이면 1.2와 같은 구간)가 1이면 낱말 중간에서 시작하거나 끝나는 구간을 낱말 전체로 넓힙니다("R23" → `[ID_NUMBER]23`이 아니라 `[ID_NUMBER]`). 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않습니다(표 모드에서는 칸 안에서만). 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strict_short_names`를 씁니다. 낱말 표
-  `src/word_tables.h`는 `js/src/table.ts`에서 만들므로(`node scripts/gen_words.mjs`) 두 패키지가 같은 글자를 씁니다.
+  `src/word_tables.h`와 `js/src/word_tables.ts`는 `node scripts/gen_words.mjs`가 함께 쓰므로(Unicode 17.0 데이터 고정) 두 패키지가 같은 글자를 씁니다.
   `strict_short_names`(기본 0)가 1이면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)의 PERSON·PERSON_L2 로짓에 −3을 더해
   「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」는 여전히 찾습니다(large: 개인정보 없는 짧은 설문 항목을 가린 비율 7.9% →
   4.3%, 단독 이름을 찾은 비율 98.9% → 96.5%). 긴 글은 그대로입니다.
@@ -88,7 +104,18 @@ pii_model_free(m);
   `table->context = PII_TABLE_CONTEXT_HEADER`(기본 `PII_TABLE_CONTEXT_NONE`)이고 머리글 행이 있으면, 비어 있지 않은 값의 80%
   이상이 서로 다른 열의 비어 있지 않은 데이터 칸을 "<머리글>: <값>"으로 한 번 더 따로 읽어 그 구간을 더합니다. 이름·연락처·ID
   열을 덜 놓치는 대신 개인정보가 없는 칸을 더 가리고, 그런 칸마다 모델을 한 번 더 부릅니다.
-- **스레드**: `pii_model`은 로드 뒤 바뀌지 않습니다. 여러 스레드가 한 모델로 동시에 `pii_detect` / `pii_detect_table` /
+- **사용자 목록**(1.4.0, `pii_options.lists`, npm 옵션 `allow`와 `block`): `block` 항목은 낱말 경계에서 시작하고 끝나는 곳마다
+  (`whole_words` 규칙, 한글 항목은 조사 앞에서도) 항목의 라벨과 출처 `PII_SOURCE_BLOCK`으로 가립니다. 모델이 찾지 못한 곳도,
+  `labels`로 끈 라벨도 가리며, block이 맞은 영역은 block 라벨을 씁니다. 구간 글 전체가 라벨 계열이 맞는 `allow` 항목이면 그
+  구간을 뺍니다(표 모드에서는 열 투표 전에도). ASCII 영문자만 대소문자를 무시하고 그 밖은 정규화하지 않으니 NFC 글을
+  넘기세요(macOS에서 내보낸 NFD 한글은 NFC 항목과 맞지 않습니다). `pii_lists_create`는 항목마다 검사하고(엄격한 UTF-8,
+  1~64글자, NUL과 줄바꿈 없음, 앞뒤 공백 없음, 알려진 라벨, 목록마다 10,000개 이하, 두 목록에 같은 형태 없음, block 형태마다
+  라벨 하나) 처음 걸린 것을 목록, 번호, 사유로 알려 줍니다.
+- **구조체 크기**: `pii_options`와 `pii_table_options`는 같은 릴리스의 헤더에서 와야 합니다. 1.4.0부터 `struct_size`가
+  라이브러리의 값(`pii_options_size()`, `pii_table_options_size()`)과 다르면 `PII_ERR_ARG`입니다(이전 릴리스는 예전 앞부분을
+  받았습니다. 1.0과 1.2 배치는 크기가 같을 수 있어 해석하지 않습니다). C API는 소스 호환만 약속하며, 패키지는 코어를 함께
+  묶어 배포하고 공유 라이브러리는 내지 않습니다.
+- **스레드**: `pii_model`과 `pii_lists`는 만든 뒤 바뀌지 않습니다. 여러 스레드가 한 모델(과 한 목록 핸들)로 동시에 `pii_detect` / `pii_detect_table` /
   `pii_tokenize`를 불러도 됩니다. 호출마다 작업 메모리를 따로 잡습니다(256토큰 윈도 하나에 약 4.5 MB, 짧은 글은 더 적음).
 - `pii_tokenize`는 토큰 id와 오프셋(`<s>`, `</s>` 제외)을, `pii_model_get_info`는 모델 형태를, `pii_build_info`는 커널
   빌드 종류를 돌려줍니다.

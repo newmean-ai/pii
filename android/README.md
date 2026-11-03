@@ -12,7 +12,7 @@ device; nothing is sent anywhere.
 ```kotlin
 // build.gradle.kts of the app module
 dependencies {
-    implementation("ai.newmean:pii:1.3.0")
+    implementation("ai.newmean:pii:1.4.0")
 }
 ```
 
@@ -102,6 +102,9 @@ PiiRedactor.create(                       // suspend, loads on Dispatchers.IO; c
     keepEmoji = false,                    // true: the model also reads emoji (1.0 behaviour); default: never read or masked
     wholeWords = true,                    // true: a span that ends inside a word covers the whole word
     strictShortNames = false,             // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
+    allow = emptyList<PiiAllowEntry>(),   // values that are not PII in your data (see Lists); since 1.4.0
+    block = emptyList<PiiBlockEntry>(),   // values that are PII in your data (see Lists); since 1.4.0
+    listsId = null,                       // your name for the lists, shown in info().lists.id; since 1.4.0
 )
 PiiRedactor.create(modelFile, tokenizerFile, size, ...)   // files on disk; fromBytes(model, tokenizer, size, ...) for bytes
 
@@ -111,14 +114,14 @@ redactor.redact(text, RedactMode.TAG)     // PiiRedaction(text, spans); TAG → 
 redactor.detectTable(text)                // table mode (see Tables)
 redactor.redactTable(text)                // PiiRedaction(text, spans)
 redactor.sensitivity = 0.3                // changes the threshold without reloading
-redactor.info()                           // packageVersion, modelVersion, size, variant, model and tokenizer pins, shape
-redactor.close()                          // frees the model (AutoCloseable: use { })
+redactor.info()                           // packageVersion, modelVersion, size, variant, model and tokenizer pins, shape, lists
+redactor.close()                          // frees the model and the lists (AutoCloseable: use { })
 PiiRedactor.applyRedaction(text, spans, RedactMode.TAG)
 PiiRegex.spans(text)                      // the pattern layer on its own
 ```
 
 `PiiSpan` has `start` and `end` (UTF-16 indices into the text, as `String.substring` takes them and as the npm package
-returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`). Spans are widened to whole grapheme
+returns them), `label` and `source` (`MODEL`, `REGEX`, `MODEL_AND_REGEX`, `TABLE`, `BLOCK`). Spans are widened to whole grapheme
 clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `MASK` writes one mask character per code
 point, like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets
 still refer to the input; an emoji inside a span splits it); `keepEmoji = true` gives the model the text as given (1.0
@@ -133,6 +136,44 @@ one core: about 10 ms (nano) to 15 ms (medium) for a short text and 40 to 60 ms 
 
 **R8 / ProGuard.** Nothing to add: the AAR ships its consumer rule, which keeps the JNI class
 `ai.newmean.pii.internal.NativeBridge`.
+
+## Lists
+
+Since 1.4.0 you can tell the redactor what you already know about your data:
+
+```kotlin
+import java.text.Normalizer
+
+val redactor = PiiRedactor.create(
+    context,
+    allow = listOf(PiiAllowEntry("제주"), PiiAllowEntry("배민"), PiiAllowEntry("경기", PiiLabels.PERSON)),  // no label: any label
+    block = listOf(PiiBlockEntry("박지훈", PiiLabels.PERSON), PiiBlockEntry("새솔고등학교", PiiLabels.ORG)),
+    listsId = "survey-2026-11 v3",
+)
+redactor.redact(Normalizer.normalize("박지훈님께 제주에서 연락", Normalizer.Form.NFC)).text  // "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
+  `BLOCK`), also where the model finds nothing and whatever `labels` enables. A Hangul entry also matches before Korean
+  particles (「박지훈님께」 → 「[PERSON]님께」); "Kim" does not match inside "Kimberly", nor in "Kim's" or "Kim-Lee"
+  (apostrophes and hyphens join words, as in `wholeWords`); in scripts written without spaces any occurrence matches. A
+  region with a block match takes the block label and is never allowed.
+- `allow`: a span whose whole text is an entry is not masked; with `label`, only spans of that label family (PERSON covers
+  PERSON_L2, URL covers URL_L2). The test is on the whole span, so it depends on where the model ends a span: a span
+  「제주도」 is not allowed by "제주"; list both forms when both occur.
+- Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized. Pass NFC text and entries: files exported on
+  macOS or copied from PDFs may hold NFD Hangul, which never matches
+  (`java.text.Normalizer.normalize(s, Normalizer.Form.NFC)`).
+- Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
+  word that is 김 plus particles (「김은」, 「김도」).
+- In table mode, block entries match inside each cell and do not vote; allowed spans leave before the column vote.
+- Up to 10,000 entries per list, 1 to 64 code points each, no line breaks, no leading or trailing white space. Invalid lists
+  throw `PiiListException`, an `IllegalArgumentException` (`list`: "allow", "block" or "meta" for `listsId`; `index`, null
+  for `listsId`; `reason`, a `PiiListReason` whose `id` is `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`,
+  `unknown_label`, `too_many`, `label_conflict`, `in_both` or `bad_lists_id`), from `create`, `createBlocking` and
+  `fromBytes` alike, before any model file is read. The exception never holds an entry's text.
+- `info().lists` (`PiiListsInfo`: `allow`, `block`, `id`) gives the entry counts after merging duplicates and your
+  `listsId`, for audit records; nothing derived from the entries' text. `close()` frees the lists with the model.
 
 ## Tables
 

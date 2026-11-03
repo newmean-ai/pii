@@ -26,11 +26,12 @@ internal object NativeBridge {
 
     /**
      * [utf16_start, utf16_end, label, source] per span; extra: [utf16_start, utf16_end, label] per pattern span; keepEmoji,
-     * wholeWords, strictShortNames: pii_options.keep_emoji, whole_words, strict_short_names.
+     * wholeWords, strictShortNames, lists: pii_options.keep_emoji, whole_words, strict_short_names, lists (a [listsCreate]
+     * handle or 0, borrowed for the call).
      */
     @JvmStatic external fun detect(
         handle: Long, utf8: ByteArray, sensitivity: Double, labels: Int, extra: IntArray?, keepEmoji: Boolean, wholeWords: Boolean,
-        strictShortNames: Boolean,
+        strictShortNames: Boolean, lists: Long,
     ): IntArray
 
     /**
@@ -39,8 +40,23 @@ internal object NativeBridge {
      */
     @JvmStatic external fun detectTable(
         handle: Long, utf8: ByteArray, sensitivity: Double, labels: Int, extra: IntArray?, keepEmoji: Boolean, wholeWords: Boolean,
-        strictShortNames: Boolean, delimiter: Int, header: Boolean, vote: Boolean, context: Int,
+        strictShortNames: Boolean, lists: Long, delimiter: Int, header: Boolean, vote: Boolean, context: Int,
     ): IntArray
+
+    /**
+     * pii_lists_create: each list as UTF-8 entries back to back, their byte lengths and label ids (-1: any). Returns the
+     * handle, or 0 with error = [list (0 allow, 1 block), index, PII_LIST_ERR_*] for an invalid entry.
+     */
+    @JvmStatic external fun listsCreate(
+        allow: ByteArray, allowLens: IntArray, allowLabels: IntArray, block: ByteArray, blockLens: IntArray, blockLabels: IntArray,
+        error: IntArray,
+    ): Long
+
+    /** Only after every call that borrows the handle has returned. */
+    @JvmStatic external fun listsFree(handle: Long)
+
+    /** [allow, block]: entries after merging duplicates. */
+    @JvmStatic external fun listsCounts(handle: Long): IntArray
 
     /** [id, utf16_start, utf16_end] per token, without <s> and </s>. */
     @JvmStatic external fun tokenize(handle: Long, utf8: ByteArray): IntArray

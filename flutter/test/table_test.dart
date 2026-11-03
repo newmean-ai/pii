@@ -208,7 +208,7 @@ void main() {
 
     test('info', () {
       final i = pii.info;
-      expect(i.packageVersion, '1.3.0');
+      expect(i.packageVersion, '1.4.0');
       expect(i.packageVersion, nativeVersion);
       expect(i.modelVersion, pii.version);
       expect(

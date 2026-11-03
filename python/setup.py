@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 VENDORED = HERE / "native-core"
 CORE = VENDORED if VENDORED.is_dir() else HERE.parent / "native" / "core"
 CORE_FILES = ["pii.h", "LICENSE", "NOTICE"] + [f"src/{n}" for n in (
-    "api.c", "engine.c", "onnx.c", "tokenizer.c", "util.c", "sha256.c", "models.c", "internal.h", "simd.h", "unicode_tables.h", "word_tables.h",
+    "api.c", "engine.c", "onnx.c", "tokenizer.c", "util.c", "sha256.c", "models.c", "lists.c", "internal.h", "simd.h", "unicode_tables.h", "word_tables.h",
 )]
 if not (CORE / "pii.h").is_file():
     raise SystemExit(f"native core not found at {CORE}: build from the repository or from the sdist")

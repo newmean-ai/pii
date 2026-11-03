@@ -32,7 +32,7 @@ def test_constants_match_the_npm_package():
     assert LEVEL1_LABELS == [l for l in LABELS if l not in ("PERSON_L2", "URL_L2")]
     assert len(TAGS) == 27 and TAGS[:3] == ["O", "B-PERSON", "I-PERSON"]
     assert MODEL_VERSION == "1.1.0"
-    assert _core.version() == "1.3.0"
+    assert _core.version() == "1.4.0"
     assert re.fullmatch(r"(neon|sse|vector|scalar)(\+fma)?", _core.build_info())
 
 

@@ -44,7 +44,8 @@ public data class PiiFilePin(val path: String, val bytes: Long, val sha256: Stri
 /**
  * What a redactor runs: the model shape (hidden size, layers, layer applications (nano shares one layer), vocabulary, tokens
  * per window, tags, embedding type), the versions of this package (and its native core) and of the model release, size,
- * variant, the two model files with the size and SHA-256 the loaded bytes were checked against, and the kernel build.
+ * variant, the two model files with the size and SHA-256 the loaded bytes were checked against, the kernel build, and the
+ * entries of the `allow` and `block` lists after merging duplicates with the caller's listsId (since 1.4.0).
  */
 public data class PiiModelInfo(
     val hidden: Int,
@@ -61,6 +62,7 @@ public data class PiiModelInfo(
     val model: PiiFilePin? = null,
     val tokenizer: PiiFilePin? = null,
     val build: String = "",
+    val lists: PiiListsInfo = PiiListsInfo(),
 )
 
 /** The two files of a model on disk. */

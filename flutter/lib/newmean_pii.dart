@@ -3,6 +3,7 @@
 /// locally or downloaded once from Hugging Face and checked against pinned SHA-256 values.
 library;
 
+export 'src/lists.dart' show PiiAllowEntry, PiiBlockEntry, PiiListException, PiiListsInfo;
 export 'src/loader.dart' show PiiProgress, defaultCacheDir;
 export 'src/models.dart'
     show PiiModelFile, defaultSize, defaultVariant, modelFile, modelSizes, modelVersion, nativeBuildInfo, nativeVersion;

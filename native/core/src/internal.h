@@ -122,6 +122,10 @@ int pii_is_js_space(uint32_t c);  // JavaScript \s and String.prototype.trim
 typedef struct {
   size_t start, end;  // code points
   int label, source;
+  // Winner key of a block region (source PII_SOURCE_BLOCK; unused otherwise): the smallest (start, length in code points,
+  // entry index) of its matches; kept unchanged by copying, clipping, widening and snapping.
+  size_t key_start;
+  uint32_t key_len, key_index;
 } pii_cspan;
 // Model and extra spans (sorted in place) -> masking regions in out (capacity n); returns the count. Overlapping model
 // spans rank by length in UTF-16 units (u16: the text's n + 1 UTF-16 offsets; NULL counts code points). Exposed for tests.
@@ -143,6 +147,7 @@ int pii_table_parse(const pii_text *tx, int delimiter, pii_vec *cells, size_t *r
 size_t pii_snap_graphemes(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells);
 // As pii_snap_graphemes; words (pii_options.whole_words): each span is first widened to the words its start and end fall in
 // (snapGraphemes of js/src/table.ts with words), then sorted again by start and merged by the same rule.
+// (size_t)-1 when the words step cannot allocate (PII_ERR_NOMEM: skipping the widening would change the result).
 size_t pii_snap_spans(pii_cspan *s, size_t n, const uint32_t *cp, size_t ncp, const pii_cell *cells, size_t ncells, int words);
 // Table-mode steps after whole-text detection: spans (detect's sorted, non-overlapping spans before snapping) -> clipped to
 // cells, column vote and propagation (labels: enabled labels), merge, snapping. Not a table: the snapped spans. *out is
@@ -153,6 +158,32 @@ int pii_table_apply_ext(const pii_text *tx, const pii_cspan *spans, size_t n, co
                         int header, int vote, uint32_t labels, int words, pii_cspan **out, size_t *n_out);
 int pii_table_apply(const pii_text *tx, const pii_cspan *spans, size_t n, int delimiter, int header, int vote, uint32_t labels,
                     pii_cspan **out, size_t *n_out);
+// As pii_table_apply_ext, with user lists (NULL: none): block regions per cell, the allow filter before the vote and after
+// the final merge; not a table: pii_detect_finish.
+int pii_table_apply_lists(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_cspan *extra, size_t n_extra,
+                          int delimiter, int header, int vote, uint32_t labels, int words, const pii_lists *lists,
+                          pii_cspan **out, size_t *n_out);
+// The steps of pii_detect after combine: spans (combine's sorted, non-overlapping spans) merged with the block regions of the
+// whole text, widened (words) and snapped, then the allow filter. *out is malloc'ed (NULL when *n_out is 0).
+int pii_detect_finish(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_lists *lists, int words, pii_cspan **out,
+                      size_t *n_out);
+// ---------------------------------------------------------------- whole words and user lists (lists.c)
+int pii_word_cp(uint32_t c);  // isWordChar: Unicode L, N, M outside the scripts written without spaces
+int pii_hangul(uint32_t c);
+int pii_joiner(uint32_t c);   // apostrophes and hyphens join two words
+int pii_same_word(uint32_t c, int hangul);
+int pii_particles_only(const uint32_t *cp, size_t n);
+extern const size_t pii_max_particle_run;  // PII_MAX_PARTICLE_RUN of word_tables.h: longer rests are never particles only
+// Block-key order: start ascending, then length descending, then entry index ascending (a before b).
+int pii_key_less(const pii_cspan *a, const pii_cspan *b);
+int pii_lists_has_allow(const pii_lists *l);
+int pii_lists_has_block(const pii_lists *l);
+// cp[a, b) (in compared form) is an allow entry whose families include label's.
+int pii_lists_allowed(const pii_lists *l, const uint32_t *cp, size_t a, size_t b, int label);
+// Block regions of the search range [a, b) of cp, appended to out (pii_cspan, source PII_SOURCE_BLOCK, in start order):
+// every boundary-valid match, overlapping ones unioned, each region with the label and key of its smallest key.
+int pii_lists_block(const pii_lists *l, const uint32_t *cp, size_t a, size_t b, pii_vec *out);
+
 #define PII_WINDOW 256
 #define PII_STRIDE 64
 // pii_options.strict_short_names: texts of at most PII_SHORT_TOKENS tokens get PII_SHORT_PERSON_BIAS on the PERSON and

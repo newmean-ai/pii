@@ -1,5 +1,5 @@
-// Calls into the native core. These functions block; NewmeanPii runs them in a background isolate. A pii_model is
-// immutable after loading, so any number of isolates may detect on one model at once.
+// Calls into the native core. These functions block; NewmeanPii runs them in a background isolate. A pii_model and a
+// pii_lists are immutable after creation, so any number of isolates may detect on them at once.
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:typed_data';
@@ -42,9 +42,28 @@ int labelMask(Iterable<String> labels) {
 String _source(int bits) => switch (bits) {
   piiSourceModel => 'model',
   piiSourceRegex => 'regex',
+  const (piiSourceModel | piiSourceRegex) => 'model+regex',
   piiSourceTable => 'table',
-  _ => 'model+regex',
+  piiSourceBlock => 'block',
+  _ => throw StateError('newmean_pii: unknown span source $bits'),
 };
+
+// The Dart VM lays PiiOptionsC and PiiTableOptionsC out from their annotations; the core must agree before pii_options_init
+// writes struct_size bytes into a Dart allocation (flutter/test/layout_test.dart checks the fields on the host).
+final bool _layout = () {
+  final (o, lo) = (sizeOf<PiiOptionsC>(), piiOptionsSize());
+  final (t, lt) = (sizeOf<PiiTableOptionsC>(), piiTableOptionsSize());
+  if (o != lo || t != lt) {
+    throw StateError(
+      'newmean_pii: the native core does not match this package (pii_options $lo bytes, PiiOptionsC $o; '
+      'pii_table_options $lt bytes, PiiTableOptionsC $t)',
+    );
+  }
+  return true;
+}();
+
+/// Throws [StateError] when the native core's option structs differ in size from this package's bindings.
+void checkLayout() => _layout;
 
 /// pii_table_options.delimiter of a `NewmeanPii.detectTable` delimiter ("auto", ",", "\t", ";" or "markdown").
 int tableDelimiter(String delimiter) => switch (delimiter) {
@@ -63,7 +82,7 @@ int tableContext(String context) => switch (context) {
 
 /// Spans to mask in [text] (UTF-16 offsets): the model's spans, merged with the pattern layer's when [regex] is true,
 /// filtered by [labels] (a [labelMask]); [keepEmoji], [wholeWords], [strictShortNames]: pii_options.keep_emoji, whole_words,
-/// strict_short_names. Same steps as detect() of the npm package.
+/// strict_short_names; [lists]: a pii_lists address (0: none). Same steps as detect() of the npm package.
 /// With [table] (a [tableDelimiter] code, header, vote, a [tableContext] code): table mode (pii_detect_table, detectTable()
 /// of the npm package).
 List<PiiSpan> detectSpans(
@@ -74,9 +93,11 @@ List<PiiSpan> detectSpans(
   bool regex,
   bool keepEmoji,
   bool wholeWords,
-  bool strictShortNames, [
+  bool strictShortNames,
+  int lists, [
   (int, bool, bool, int)? table,
 ]) => using((arena) {
+  checkLayout();
   // Lone surrogates become U+FFFD (one UTF-16 unit either way), so offsets stay Dart string indices.
   final bytes = utf8.encode(text);
   final opts = arena<PiiOptionsC>();
@@ -86,7 +107,8 @@ List<PiiSpan> detectSpans(
     ..labels = labels
     ..keepEmoji = keepEmoji ? 1 : 0
     ..wholeWords = wholeWords ? 1 : 0
-    ..strictShortNames = strictShortNames ? 1 : 0;
+    ..strictShortNames = strictShortNames ? 1 : 0
+    ..lists = Pointer<PiiLists>.fromAddress(lists);
   if (regex) {
     final extra = regexSpans(text);
     if (extra.isNotEmpty) {

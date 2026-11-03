@@ -13,7 +13,7 @@ Swift Package Manager: in Xcode, File › Add Package Dependencies… › `https
 `NewmeanPII`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.3.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.4.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -83,6 +83,9 @@ try await PIIRedactor(
   keepEmoji: Bool = false,          // true: the model also reads emoji (1.0 behaviour); default: never read or masked
   wholeWords: Bool = true,          // true: a span that ends inside a word covers the whole word
   strictShortNames: Bool = false,   // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
+  allow: [PIIAllowEntry] = [],      // values that are not PII in your data (see Lists); since 1.4.0
+  block: [PIIBlockEntry] = [],      // values that are PII in your data (see Lists); since 1.4.0
+  listsId: String? = nil,           // your name for the lists, shown in info.lists.id; since 1.4.0
   modelDirectory: URL? = nil)       // folder with the model files; nil: download once into Caches
 
 try await redactor.detect(text)                  // [PIISpan], sorted, non-overlapping
@@ -97,13 +100,14 @@ PIIRegex.spans(in: text)                         // the pattern layer on its own
 
 `PIISpan` has `range` (`Range<String.Index>` in the text it was detected in), `utf16Range` (NSString / NSRange offsets,
 the npm package's `start` and `end`), `scalarRange` (Unicode scalars, Python's offsets), `label` and `source`
-(`.model`, `.regex`, `.modelAndRegex`, `.table`). Spans are widened to whole grapheme clusters (UAX #29, as the C core
+(`.model`, `.regex`, `.modelAndRegex`, `.table`, `.block`). Spans are widened to whole grapheme clusters (UAX #29, as the C core
 implements it), so an emoji, flag or combining sequence is masked whole or kept whole. Slice with
 `text.unicodeScalars[span.range]` or `utf16Range`, as `redact` does. `.mask` writes one mask character per Unicode scalar,
 like the npm package. By default emoji are taken out of the text the model reads, so the model does not read them as PII (offsets still refer
 to the input; an emoji inside a span splits it); `keepEmoji: true` gives the model the text as given (1.0 behaviour).
 By default (`wholeWords`, since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strictShortNames` leaves such values alone. `wholeWords: false` gives the 1.2 spans. With `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged. `redactor.version` is the model release (1.1.0); `redactor.info` adds the package
-version (`PIIRedactor.packageVersion`), size, variant and the two checked model files (`PIIModelFile`: path, bytes, SHA-256).
+version (`PIIRedactor.packageVersion`), size, variant, the two checked model files (`PIIModelFile`: path, bytes, SHA-256)
+and the lists (`PIIListsInfo`, see Lists).
 
 **Threads.** `PIIRedactor` is `Sendable` and needs no locking: any number of tasks may call `detect` on one instance at
 once. The async methods run the model on a detached task, never on the caller's actor, so calling them from the main
@@ -115,6 +119,41 @@ slower).
 **Debug builds are slow.** Xcode compiles package C code without optimization in the Debug configuration, which makes
 the model about 18 times slower (about 350 ms instead of 19 ms for a short text with medium on Apple M5 Pro). Measure
 speed in a Release build; Release compiles the core at `-Os`, as fast as `-O3`.
+
+## Lists
+
+Since 1.4.0 you can tell the redactor what you already know about your data:
+
+```swift
+let redactor = try await PIIRedactor(
+  allow: ["제주", "배민", PIIAllowEntry(text: "경기", label: .person)],  // a string literal allows any label
+  block: [PIIBlockEntry(text: "박지훈", label: .person), PIIBlockEntry(text: "새솔고등학교", label: .org)],
+  listsId: "survey-2026-11 v3")
+let (text, _) = try await redactor.redact("박지훈님께 제주에서 연락".precomposedStringWithCanonicalMapping)
+// text: "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
+  `.block`), also where the model finds nothing and whatever `labels` enables. A Hangul entry also matches before Korean
+  particles (「박지훈님께」 → 「[PERSON]님께」); "Kim" does not match inside "Kimberly", nor in "Kim's" or "Kim-Lee"
+  (apostrophes and hyphens join words, as in `wholeWords`); in scripts written without spaces any occurrence matches. A
+  region with a block match takes the block label and is never allowed.
+- `allow`: a span whose whole text is an entry is not masked; with `label`, only spans of that label family (`.person`
+  covers `.personL2`, `.url` covers `.urlL2`). The test is on the whole span, so it depends on where the model ends a span:
+  a span 「제주도」 is not allowed by "제주"; list both forms when both occur.
+- Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized (unlike Swift's `==`, which treats
+  canonically equivalent strings as equal). Pass NFC text and entries: files exported on macOS or copied from PDFs may hold
+  NFD Hangul, which never matches (`text.precomposedStringWithCanonicalMapping`).
+- Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
+  word that is 김 plus particles (「김은」, 「김도」).
+- In table mode, block entries match inside each cell and do not vote; allowed spans leave before the column vote.
+- Up to 10,000 entries per list, 1 to 64 Unicode scalars each, no line breaks, no leading or trailing white space. Invalid
+  lists throw `PIIListError` (`list`: `.allow`, `.block` or `.meta` for `listsId`; `index`, nil for `listsId`; `reason`, a
+  `PIIListError.Reason` whose raw values are `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`, `unknown_label`,
+  `too_many`, `label_conflict`, `in_both`, `bad_lists_id`) before any model file is downloaded or loaded. The error never
+  holds an entry's text.
+- `info.lists` (`allow`, `block`, `id`) gives the entry counts after merging duplicates and your `listsId`, for audit
+  records; nothing derived from the entries' text. The lists are freed with the redactor (its `deinit`).
 
 ## Tables
 

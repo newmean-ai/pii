@@ -3,7 +3,8 @@ import { loadFile, type Progress } from "./loader.js";
 import { MODEL_FILES, MODEL_VERSION, type FileInfo, type Size, type Variant } from "./models.js";
 import { VERSION } from "./version.js";
 import { regexSpans } from "./regex.js";
-import { detectTableSpans, headerContextCells, parseTable, snapGraphemes, type TableOptions } from "./table.js";
+import { detectTableSpans, finishDetect, headerContextCells, parseTable, type TableOptions } from "./table.js";
+import { checkListsId, Lists, publicSpans, type AllowEntry, type BlockEntry } from "./lists.js";
 import { restoreSpans, stripEmoji } from "./emoji.js";
 import { Tokenizer, type WebTokenizerFile } from "./tokenizer.js";
 import type { Label, Span } from "./types.js";
@@ -62,6 +63,19 @@ export interface RedactorOptions {
    *  evidence to read it as a person's name, so short values such as 「경기」, 「남성」 or 「네이버」 are left alone; a lone
    *  name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are unchanged. Default false. */
   strictShortNames?: boolean;
+  /** Values you know are not PII in your data (survey categories: regions, brands, jobs). A span whose whole text is an
+   *  entry is not masked; with `label`, only spans of that label family (PERSON covers PERSON_L2, URL covers URL_L2).
+   *  ASCII letters are compared case-insensitively, nothing else is normalized: pass NFC text (`text.normalize("NFC")`;
+   *  files exported on macOS may hold NFD Hangul). At most 10,000 entries of 1 to 64 code points. Since 1.4.0. */
+  allow?: readonly AllowEntry[];
+  /** Values you know are PII (an instructor's name): every occurrence that starts and ends on a word boundary is masked with
+   *  the entry's label (source "block"), also where the model misses it and whatever `labels` enables. A Hangul entry
+   *  also matches before Korean particles (「박지훈님께」 → 「[PERSON]님께」); a one-syllable entry such as 「김」 therefore
+   *  masks 「김은」 and 「김도」 too. Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. Since 1.4.0. */
+  block?: readonly BlockEntry[];
+  /** Your name for the lists (1 to 128 code points), shown in `info.lists.id` for audit records; never derived from the
+   *  entries. Since 1.4.0. */
+  listsId?: string;
   /** Keep downloaded model files in the Cache API. Default true. */
   cache?: boolean;
   /** Check every model file against its published SHA-256. Default true. */
@@ -108,6 +122,8 @@ export interface RedactorInfo {
   /** Published size and SHA-256 of the two files; with verify (default) the loaded bytes were checked against them. */
   files: { model: FileInfo & { path: string }; tokenizer: FileInfo & { path: string } };
   verified: boolean;
+  /** Entries of the lists after merging duplicates, and the caller's listsId (null when not given). Since 1.4.0. */
+  lists: { allow: number; block: number; id: string | null };
 }
 
 export interface Redactor {
@@ -203,6 +219,10 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   const variant: Variant = options.variant ?? DEFAULT_VARIANT[size];
   const files = MODEL_FILES[size];
   const base = options.modelUrl ?? `https://huggingface.co/newmean-ai/pii-${size}/resolve/v${MODEL_VERSION}/`;
+  // lists are validated before any model file is loaded (ListError: list, index and reason, never the text)
+  const listsId = checkListsId(options.listsId);
+  const userLists = new Lists(options.allow, options.block);
+  const lists = userLists.allowCount || userLists.blockCount ? userLists : null;
   const load = {
     cache: options.cache ?? true,
     verify: options.verify ?? true,
@@ -261,7 +281,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   }
 
   async function detect(text: string): Promise<Span[]> {
-    return snapGraphemes(text, await detectRaw(text), undefined, wholeWords);
+    return publicSpans(finishDetect(text, await detectRaw(text), lists, wholeWords));
   }
 
   async function detectTable(text: string, table: TableOptions = {}): Promise<Span[]> {
@@ -282,7 +302,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
         }
       }
     }
-    return detectTableSpans(text, raw, table, enabled, extra, wholeWords);
+    return publicSpans(detectTableSpans(text, raw, table, enabled, extra, wholeWords, lists)); // header context ran without lists
   }
 
   return {
@@ -299,6 +319,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
       modelUrl: base,
       files: { model: { path: `onnx/model_${variant}.onnx`, ...files[variant] }, tokenizer: { path: "tokenizer.web.json", ...files.tokenizer } },
       verified: load.verify,
+      lists: { allow: userLists.allowCount, block: userLists.blockCount, id: listsId },
     },
     detect,
     async redact(text, opts) {

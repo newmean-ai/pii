@@ -136,7 +136,7 @@ class TableTest {
             assertEquals(ctx, r.redactTable(text, TableOptions(context = TableContext.HEADER)).spans)
             // a context the core does not know (only reachable through the bridge) is PII_ERR_ARG
             assertThrows(IllegalArgumentException::class.java) {
-                NativeBridge.detectTable(TestEnv.handle(r), Utf8.encode(text), 0.0, PiiLabels.bits(PiiLabels.ALL), null, false, false, false, 0, true, true, 2)
+                NativeBridge.detectTable(TestEnv.handle(r), Utf8.encode(text), 0.0, PiiLabels.bits(PiiLabels.ALL), null, false, false, false, 0L, 0, true, true, 2)
             }
         }
         assertEquals(listOf("none", "header"), TableContext.entries.map { it.id })
@@ -194,7 +194,7 @@ class TableTest {
     fun info() {
         TestEnv.redactor(PiiSize.NANO).use { r ->
             val i = r.info()
-            assertEquals("1.3.0", i.packageVersion)
+            assertEquals("1.4.0", i.packageVersion)
             assertEquals(PiiModels.VERSION, i.modelVersion)
             assertEquals(PiiSize.NANO, i.size)
             assertEquals(PiiModels.modelPin(PiiSize.NANO, r.variant), i.model)

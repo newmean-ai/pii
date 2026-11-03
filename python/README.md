@@ -59,6 +59,9 @@ create_redactor(               # or Redactor(...), same arguments
     keep_emoji=False,          # True: the model also reads emoji (1.0 behaviour); default: emoji are never read or masked
     whole_words=True,          # default True: a span that ends inside a word covers the whole word
     strict_short_names=False,  # True: short texts (<= 8 tokens) need stronger evidence to be read as names
+    allow=None,                # values that are not PII in your data: str or (str, label) (see Lists); since 1.4.0
+    block=None,                # values that are PII in your data: (str, label) (see Lists); since 1.4.0
+    lists_id=None,             # your name for the lists, shown in info()["lists"]["id"]; since 1.4.0
     model_dir=None,            # folder with tokenizer.web.json and onnx/model_<variant>.onnx; never downloads
     cache_dir=None,            # default: $NEWMEAN_PII_CACHE, $XDG_CACHE_HOME/newmean-pii or ~/.cache/newmean-pii
     model_url=None,            # base URL of a mirror of newmean-ai/pii-<size> (https://, http:// or file://)
@@ -72,7 +75,8 @@ redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="n
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
 redactor.set_sensitivity(value)        # no reload
 redactor.tokenize(text)                # -> [Token(id, start, end)]
-redactor.info()                        # package_version, model_version, size, variant, files (path, bytes, sha256), shape, build
+redactor.info()                        # package_version, model_version, size, variant, files (path, bytes, sha256), shape, build,
+                                       # lists (allow, block, id)
 redactor.close()                       # also: with create_redactor() as r: ...
 
 apply_redaction(text, spans, mode="tag", mask_char="*", replace=None)
@@ -82,7 +86,7 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
 
 - **Offsets** are Python `str` indices (code points): `text[span.start:span.end]` is the masked text, emoji included. The
   npm package uses UTF-16 indices for the same spans. Spans are widened to whole grapheme clusters, so an emoji, flag or
-  combining sequence is masked whole or kept whole. `source` is `"model"`, `"regex"`, `"model+regex"` or `"table"`.
+  combining sequence is masked whole or kept whole. `source` is `"model"`, `"regex"`, `"model+regex"`, `"table"` or `"block"`.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
   input, and an emoji inside a span splits it in two. `keep_emoji=True` gives the model the text as given (1.0 behaviour).
 - **Whole words**: by default (since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strict_short_names=True` leaves such values alone. `whole_words=False` gives the 1.2 spans.
@@ -102,8 +106,47 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
 
 - **Speed**: one thread on Apple M5 Pro, about 10 ms for a short text with nano and 15 ms with medium; a 1,000-token text
   takes 0.4 s (nano) to 0.55 s (medium). Long texts are split into overlapping 256-token windows.
-- Errors: `ValueError` for bad options, `ModelFileError` when a file is missing, cannot be downloaded or does not match
-  its pin.
+- Errors: `ValueError` for bad options (`ListError`, a `ValueError`, for bad lists), `ModelFileError` when a file is
+  missing, cannot be downloaded or does not match its pin.
+
+## Lists
+
+Since 1.4.0 you can tell the redactor what you already know about your data:
+
+```python
+import unicodedata
+
+redactor = create_redactor(
+    allow=["제주", "배민", ("경기", "PERSON")],  # a str allows any label
+    block=[("박지훈", "PERSON"), ("새솔고등학교", "ORG")],
+    lists_id="survey-2026-11 v3",
+)
+redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연락")).text  # '[PERSON]님께 제주에서 연락'
+```
+
+- `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
+  `"block"`), also where the model finds nothing and whatever `labels` enables. A Hangul entry also matches before Korean
+  particles (「박지훈님께」 → 「[PERSON]님께」); "Kim" does not match inside "Kimberly", nor in "Kim's" or "Kim-Lee"
+  (apostrophes and hyphens join words, as in `whole_words`); in scripts written without spaces any occurrence matches. A
+  region with a block match takes the block label and is never allowed.
+- `allow`: a span whose whole text is an entry is not masked; with a label, only spans of that label family (PERSON covers
+  PERSON_L2, URL covers URL_L2). The test is on the whole span, so it depends on where the model ends a span: a span
+  「제주도」 is not allowed by "제주"; list both forms when both occur.
+- Entries: `allow` takes `str` or `(str, label)` (label `None`: any label), `block` takes `(str, label)`; either list can be
+  any iterable except `str` and `bytes`. A 2-tuple passed as the list itself (`block=("Kim", "PERSON")`) is read as two
+  entries; write `block=[("Kim", "PERSON")]`.
+- Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized. Pass NFC text and entries: files exported on
+  macOS or copied from PDFs may hold NFD Hangul, which never matches (`unicodedata.normalize("NFC", text)`).
+- Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
+  word that is 김 plus particles (「김은」, 「김도」).
+- In table mode, block entries match inside each cell and do not vote; allowed spans leave before the column vote.
+- Up to 10,000 entries per list, 1 to 64 code points each, no line breaks, no leading or trailing white space. Invalid lists
+  raise `newmean_pii.ListError` (a `ValueError`; `.list`: "allow", "block" or "meta" for `lists_id`; `.index`, `None` for
+  `lists_id` and for the list itself; `.reason`: `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`,
+  `unknown_label`, `too_many`, `label_conflict`, `in_both`, `bad_lists_id`) before any model file is loaded. The error never
+  holds an entry's text.
+- `info()["lists"]` gives the entry counts after merging duplicates and your `lists_id`, for audit records; nothing derived
+  from the entries' text. The lists are freed with the redactor.
 
 ## Tables
 

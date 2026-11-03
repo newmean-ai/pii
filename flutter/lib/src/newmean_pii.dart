@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'ffi.dart';
+import 'lists.dart';
 import 'loader.dart';
 import 'models.dart';
 import 'native.dart';
@@ -35,8 +36,8 @@ final class NewmeanPii implements Finalizable {
   /// Whether short texts need stronger evidence to be read as names (see [create]).
   final bool strictShortNames;
 
-  /// Package and model versions, size, variant and the two model files with the size and SHA-256 the loaded bytes were
-  /// checked against (unless `verify` was false).
+  /// Package and model versions, size, variant, the two model files with the size and SHA-256 the loaded bytes were
+  /// checked against (unless `verify` was false), and the entries of the user lists.
   PiiRedactorInfo get info => PiiRedactorInfo._(
     nativeVersion,
     modelVersion,
@@ -45,14 +46,18 @@ final class NewmeanPii implements Finalizable {
     modelFile(size, variant),
     modelFile(size, 'tokenizer'),
     nativeBuildInfo,
+    _listsInfo,
   );
 
   final int _labels;
+  final PiiListsInfo _listsInfo;
   Pointer<PiiModel>? _model;
+  int _lists; // pii_lists address, 0 when there are no entries
   int _running = 0;
   Completer<void>? _idle, _disposed;
 
   static final _finalizer = NativeFinalizer(piiModelFreePointer);
+  static final _listsFinalizer = NativeFinalizer(piiListsFreePointer);
 
   NewmeanPii._(
     this.size,
@@ -64,8 +69,13 @@ final class NewmeanPii implements Finalizable {
     this.wholeWords,
     this.strictShortNames,
     int model,
-  ) : _model = Pointer<PiiModel>.fromAddress(model) {
+    (int, int, int) lists,
+    String? listsId,
+  ) : _model = Pointer<PiiModel>.fromAddress(model),
+      _lists = lists.$1,
+      _listsInfo = PiiListsInfo(lists.$2, lists.$3, listsId) {
     _finalizer.attach(this, _model!.cast(), detach: this);
+    if (_lists != 0) _listsFinalizer.attach(this, Pointer<Void>.fromAddress(_lists), detach: this);
   }
 
   /// Loads a model. Files come from [modelDir] (a folder with `tokenizer.web.json` and `onnx/model_<variant>.onnx`, as in
@@ -90,6 +100,19 @@ final class NewmeanPii implements Finalizable {
   ///   needs stronger evidence to read it as a person's name, so short values such as "경기", "남성" or "네이버" are left
   ///   alone; a lone name is missed a little more often (large: 98.9% → 96.5% of lone names found). Longer texts are
   ///   unchanged. Default false.
+  /// - [allow]: values you know are not PII in your data (survey categories: regions, brands, jobs). A span whose whole
+  ///   text is an entry is not masked; with a label, only spans of that label family (PERSON covers PERSON_L2, URL covers
+  ///   URL_L2). ASCII letters are compared case-insensitively, nothing else is normalized: pass NFC text (files exported
+  ///   on macOS may hold NFD Hangul). At most 10,000 entries of 1 to 64 code points. Since 1.4.0.
+  /// - [block]: values you know are PII (an instructor's name): every occurrence that starts and ends on a word boundary
+  ///   is masked with the entry's label (source "block"), also where the model misses it and whatever [labels] enables. A
+  ///   Hangul entry also matches before Korean particles ("박지훈님께" → "[PERSON]님께"); a one-syllable entry such as
+  ///   "김" therefore masks "김은" and "김도" too. Exact forms only: "박 지훈" and "박지훈" are separate entries. Since 1.4.0.
+  /// - [listsId]: your name for the lists (1 to 128 code points), shown in `info.lists.id` for audit records; never
+  ///   derived from the entries. Since 1.4.0.
+  ///
+  /// The lists and [listsId] are checked before any model file is read; an invalid one throws [PiiListException] (list,
+  /// index and reason, never the entry's text).
   static Future<NewmeanPii> create({
     String size = defaultSize,
     String? variant,
@@ -99,6 +122,9 @@ final class NewmeanPii implements Finalizable {
     bool keepEmoji = false,
     bool wholeWords = true,
     bool strictShortNames = false,
+    Iterable<PiiAllowEntry>? allow,
+    Iterable<PiiBlockEntry>? block,
+    String? listsId,
     String? modelDir,
     Future<Uint8List> Function(String path)? readFile,
     Uri? modelUrl,
@@ -112,37 +138,48 @@ final class NewmeanPii implements Finalizable {
     final onnxPin = modelFile(size, v);
     final mask = labelMask(labels ?? piiLabels);
 
-    if (readFile != null) {
-      final tok = await readFile(tokPin.path);
-      final onnx = await readFile(onnxPin.path);
-      onProgress?.call(PiiProgress(tokPin.path, tok.length, tok.length, true));
-      onProgress?.call(PiiProgress(onnxPin.path, onnx.length, onnx.length, true));
-      return fromBytes(
-        onnx: onnx,
-        tokenizer: tok,
-        size: size,
-        variant: v,
-        sensitivity: sensitivity,
-        labels: labels,
-        regex: regex,
-        keepEmoji: keepEmoji,
-        wholeWords: wholeWords,
-        strictShortNames: strictShortNames,
-        verify: verify,
-      );
-    }
-
+    final lists = _lists0(allow, block, listsId); // before any model file is read
     ReceivePort? port;
-    if (onProgress != null) {
-      port = ReceivePort()
-        ..listen((m) => onProgress(PiiProgress(m[0] as String, m[1] as int, m[2] as int, m[3] as bool)));
-    }
     try {
-      final model = await _loadInIsolate(tokPin, onnxPin, modelDir, modelUrl, cacheDir, cache, verify, port?.sendPort);
-      return NewmeanPii._(size, v, sensitivity, mask, regex, keepEmoji, wholeWords, strictShortNames, model);
+      final int model;
+      if (readFile != null) {
+        final tok = await readFile(tokPin.path);
+        final onnx = await readFile(onnxPin.path);
+        onProgress?.call(PiiProgress(tokPin.path, tok.length, tok.length, true));
+        onProgress?.call(PiiProgress(onnxPin.path, onnx.length, onnx.length, true));
+        model = await _loadBytes(onnx, tok, size, tokPin, onnxPin, verify);
+      } else {
+        if (onProgress != null) {
+          port = ReceivePort()
+            ..listen((m) => onProgress(PiiProgress(m[0] as String, m[1] as int, m[2] as int, m[3] as bool)));
+        }
+        model = await _loadInIsolate(tokPin, onnxPin, modelDir, modelUrl, cacheDir, cache, verify, port?.sendPort);
+      }
+      return NewmeanPii._(
+        size,
+        v,
+        sensitivity,
+        mask,
+        regex,
+        keepEmoji,
+        wholeWords,
+        strictShortNames,
+        model,
+        lists,
+        listsId,
+      );
+    } catch (_) {
+      freeLists(lists.$1);
+      rethrow;
     } finally {
       port?.close();
     }
+  }
+
+  // listsId first, then the lists: before any model file is read.
+  static (int, int, int) _lists0(Iterable<PiiAllowEntry>? allow, Iterable<PiiBlockEntry>? block, String? listsId) {
+    checkListsId(listsId);
+    return createLists(allow, block);
   }
 
   // A function of its own so that the closure sent to the isolate captures only these values: a closure made inside
@@ -171,7 +208,8 @@ final class NewmeanPii implements Finalizable {
   });
 
   /// Loads a model from the bytes of `onnx/model_<variant>.onnx` and `tokenizer.web.json` of [size] (checked against the
-  /// pins of [size] and [variant] unless [verify] is false). Other options as in [create].
+  /// pins of [size] and [variant] unless [verify] is false). Other options as in [create]; the lists are checked before
+  /// the model is loaded.
   static Future<NewmeanPii> fromBytes({
     required Uint8List onnx,
     required Uint8List tokenizer,
@@ -183,34 +221,55 @@ final class NewmeanPii implements Finalizable {
     bool keepEmoji = false,
     bool wholeWords = true,
     bool strictShortNames = false,
+    Iterable<PiiAllowEntry>? allow,
+    Iterable<PiiBlockEntry>? block,
+    String? listsId,
     bool verify = true,
   }) async {
     final v = _checkVariant(size, variant);
     final tokPin = modelFile(size, 'tokenizer');
     final onnxPin = modelFile(size, v);
-    final model = await Isolate.run(() {
-      if (verify) {
-        if (!matchesPin(tokenizer, tokPin)) {
-          throw StateError('newmean_pii: tokenizer does not match ${tokPin.path} of pii-$size');
-        }
-        if (!matchesPin(onnx, onnxPin)) {
-          throw StateError('newmean_pii: model does not match ${onnxPin.path} of pii-$size');
-        }
-      }
-      return loadModel(onnx, tokenizer);
-    });
-    return NewmeanPii._(
-      size,
-      v,
-      sensitivity,
-      labelMask(labels ?? piiLabels),
-      regex,
-      keepEmoji,
-      wholeWords,
-      strictShortNames,
-      model,
-    );
+    final lists = _lists0(allow, block, listsId); // before the model is loaded
+    try {
+      final model = await _loadBytes(onnx, tokenizer, size, tokPin, onnxPin, verify);
+      return NewmeanPii._(
+        size,
+        v,
+        sensitivity,
+        labelMask(labels ?? piiLabels),
+        regex,
+        keepEmoji,
+        wholeWords,
+        strictShortNames,
+        model,
+        lists,
+        listsId,
+      );
+    } catch (_) {
+      freeLists(lists.$1);
+      rethrow;
+    }
   }
+
+  // Of its own for the same reason as _loadInIsolate.
+  static Future<int> _loadBytes(
+    Uint8List onnx,
+    Uint8List tokenizer,
+    String size,
+    PiiModelFile tokPin,
+    PiiModelFile onnxPin,
+    bool verify,
+  ) => Isolate.run(() {
+    if (verify) {
+      if (!matchesPin(tokenizer, tokPin)) {
+        throw StateError('newmean_pii: tokenizer does not match ${tokPin.path} of pii-$size');
+      }
+      if (!matchesPin(onnx, onnxPin)) {
+        throw StateError('newmean_pii: model does not match ${onnxPin.path} of pii-$size');
+      }
+    }
+    return loadModel(onnx, tokenizer);
+  });
 
   static String _checkVariant(String size, String? variant) {
     if (!modelSizes.contains(size)) {
@@ -282,8 +341,8 @@ final class NewmeanPii implements Finalizable {
   // Only plain values in the closure: it is sent to the background isolate.
   List<PiiSpan> Function() _job(String text, [(int, bool, bool, int)? table]) {
     final model = _address, sens = sensitivity, labels = _labels, rx = regex, keep = keepEmoji, words = wholeWords;
-    final strict = strictShortNames;
-    return () => detectSpans(model, text, sens, labels, rx, keep, words, strict, table);
+    final strict = strictShortNames, lists = _lists;
+    return () => detectSpans(model, text, sens, labels, rx, keep, words, strict, lists, table);
   }
 
   /// [text] with the spans of [detect] replaced: [RedactMode.tag] → "[EMAIL]", [RedactMode.mask] → "*****" (one
@@ -341,7 +400,7 @@ final class NewmeanPii implements Finalizable {
     return PiiRedaction(applyRedaction(text, spans, mode: mode, maskChar: maskChar, replace: replace), spans);
   }
 
-  /// Frees the model after the running calls finish. Later calls throw [StateError].
+  /// Frees the model and the lists after the running calls finish. Later calls throw [StateError].
   Future<void> dispose() async {
     final m = _model;
     if (m == null) return _disposed?.future;
@@ -349,14 +408,17 @@ final class NewmeanPii implements Finalizable {
     final done = _disposed = Completer<void>();
     if (_running > 0) await (_idle = Completer<void>()).future;
     _finalizer.detach(this);
+    _listsFinalizer.detach(this);
     freeModel(m.address);
+    freeLists(_lists);
+    _lists = 0;
     done.complete();
   }
 }
 
 /// What a redactor runs ([NewmeanPii.info]).
 final class PiiRedactorInfo {
-  /// Version of this package and its native core ("1.3.0").
+  /// Version of this package and its native core ("1.4.0").
   final String packageVersion;
 
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
@@ -370,6 +432,9 @@ final class PiiRedactorInfo {
   /// Kernel build of the native core ("neon", "sse", ...).
   final String build;
 
+  /// Entries of the allow and block lists after merging duplicates, and the `listsId` given to `create` (since 1.4.0).
+  final PiiListsInfo lists;
+
   const PiiRedactorInfo._(
     this.packageVersion,
     this.modelVersion,
@@ -378,9 +443,10 @@ final class PiiRedactorInfo {
     this.model,
     this.tokenizer,
     this.build,
+    this.lists,
   );
 
   @override
   String toString() =>
-      'PiiRedactorInfo(package $packageVersion, model $modelVersion, $size $variant, ${model.path} ${model.sha256}, ${tokenizer.path} ${tokenizer.sha256}, $build)';
+      'PiiRedactorInfo(package $packageVersion, model $modelVersion, $size $variant, ${model.path} ${model.sha256}, ${tokenizer.path} ${tokenizer.sha256}, $build, $lists)';
 }

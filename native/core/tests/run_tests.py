@@ -20,12 +20,18 @@
       spans passed as pii_options.extra; skipped without them). Also without a model: the table steps and grapheme snapping
       (pii_cli apply vs js_table.mjs apply, detectTableSpans of js/src/table.ts) on made-up spans over the same
       inputs and over grapheme-heavy texts (ZWJ, flags, tags, keycaps, skin tones, combining marks, Indic conjuncts, jamo)
+  (k) user lists (allow / block, 1.4.0): the same list, index and reason from pii_lists_create and the npm package's Lists on
+      hand-written and random invalid entries; without a model, the list steps (block regions, the precedence rule, the
+      allow filters before the vote and at the end) of pii_cli apply vs js_table.mjs apply on generated lists over every
+      table-step input (entries cut from the texts at and off word boundaries, ASCII case variants, Korean particles,
+      overlapping and nested entries, allow entries from the spans, labels []) in table and detect order; with a model,
+      pii_cli table vs the npm package's detectTable with the same lists (skipped without node, js/dist or the model)
   (i) fuzz (only with --only fuzz): mutated model and tokenizer files and random bytes under ASan + UBSan if built
 
 Fixtures and model copies are private (validation text) and never copied here: they are read from PII_FIXTURES
 (default ../../js/test/fixtures) and PII_MODELS (default ../../js/test/models); every test skips when they are absent.
 PII_SIZES=nano,medium limits the sizes; PII_CLI / PII_ASAN_CLI override the binaries; PII_JS_DIST points at the built
-npm package (default ../../js/dist), PII_JS=0 skips (g). --only pins,selftest,tokenizer,offsets,predict,js,table,threads,asan
+npm package (default ../../js/dist), PII_JS=0 skips (g). --only pins,selftest,tokenizer,offsets,predict,js,table,lists,threads,asan
 picks tests (fuzz runs only when named; PII_FUZZ=N sets its size, default 100); --bench also measures speed. A PII_FMA build (make FMA=1) is compared with the relaxed-SIMD wasm build in (g).
 """
 import json
@@ -704,6 +710,8 @@ def test_table_apply(cli, label="table steps"):
     payload = "".join(json.dumps(r) + "\n" for r in rows).encode()
     p = subprocess.run([str(cli), "apply"], input=payload, capture_output=True)
     q = subprocess.run([node, str(HERE / "js_table.mjs"), "apply", str(ts)], input=payload, capture_output=True)
+    if q.returncode == 3:
+        return skip(q.stderr.decode().strip() + " (the model-free path needs node 22.18+)")
     if p.returncode or q.returncode:
         return check(False, f"apply failed: {p.stderr.decode()[-500:]} {q.stderr.decode()[-500:]}")
     c = [json.loads(l)["spans"] for l in p.stdout.decode().splitlines()]
@@ -821,6 +829,209 @@ def test_table(cli, sizes=(("nano", "q4"), ("medium", "q4e")), label="table", js
                         print(f"    {json.dumps(r)[:100]}\n      js {a['spans'][:6]}\n      c  {[[s[3], s[4], s[2], s[7]] for s in b['spans']][:6]}")
 
 
+# ---------------------------------------------------------------- (k) user lists
+LIST_LABELS = ["PERSON", "PERSON_L2", "ORG", "ADDRESS", "EMAIL", "USERNAME", "ID_NUMBER"]
+WS25 = [chr(c) for c in [*range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029, 0x202F, 0x205F, 0x3000]]
+LIST_TEXTS = [  # particles (chained, at and beyond MAX_PARTICLE_RUN = 12), case, joiners, unspaced scripts, NFD, overlaps
+    "박지훈님께서는 박지훈씨에게 박지훈이었다고 했다. 박지훈님님님님님님님님님님님님 박지훈님님님님님님님님님님님 김박지훈 박지훈A",
+    "KIM said kim, Kimberly and Kim-Lee met O'Kim at kim@x.io; Kim's car, KIM. Ann Lee Kim and Lee Kim Park",
+    "田中太郎さんと山田花子さん、田中さん。คุณสมชายและสมชาย Ana-María ana-maría ANA-MARÍA",
+    "제주 제주도 제주에서 제주시 JEJU jeju 배민 배민에서 경기 경기도 남성 여성 새솔고등학교 새솔고등학교에서",
+    "e\u0301te\u0301 \u00e9t\u00e9 \u1112\u1161\u11ab \ud55c 한국 Zoë Zoe\u0308 \U0001d400\U0001d401c",
+]
+
+
+def list_entry(rng, text, starts_word):
+    """A substring of text (code points), usually starting at a word start, trimmed to a valid entry; None when empty."""
+    n = len(text)
+    if not n:
+        return None
+    for _ in range(6):
+        a = rng.choice(starts_word) if starts_word and rng.random() < 0.7 else rng.randrange(n)
+        e = text[a:a + rng.choice([1, 2, 2, 3, 3, 4, 5, 7, 9, 12])]
+        e = "".join(ch for ch in e if ch not in "\n\r\x85\u2028\u2029\x00").strip("".join(WS25))
+        if e and not any(0xD800 <= ord(ch) <= 0xDFFF for ch in e):
+            return e
+    return None
+
+
+def gen_lists(rng, text, spans):
+    """Valid allow / block lists for a text: block entries cut from it (some case-flipped, some extended or shortened into
+    overlapping and nested entries), allow entries from the texts of its spans (any label, the span's family or another)."""
+    starts = [i for i in range(len(text)) if i == 0 or not text[i - 1].isalnum()]
+    block, allow = [], []
+    for _ in range(rng.choice([0, 1, 2, 3, 4, 6])):
+        e = list_entry(rng, text, starts)
+        if not e:
+            continue
+        if rng.random() < 0.3:
+            e = e.swapcase() if rng.random() < 0.5 else e.upper()
+        block.append([e, rng.choice(LIST_LABELS)])
+        if rng.random() < 0.3 and len(e) > 1:  # nested and overlapping entries
+            block.append([e[: rng.randint(1, len(e) - 1)].rstrip("".join(WS25)) or e, rng.choice(LIST_LABELS)])
+    for s, e, lab, _src in spans:
+        if rng.random() < 0.35:
+            t = text[s:e].strip("".join(WS25))
+            if t and len(t) <= 64 and not any(ch in "\n\r\x85\u2028\u2029\x00" or 0xD800 <= ord(ch) <= 0xDFFF for ch in t):
+                allow.append([t.upper() if rng.random() < 0.2 else t, rng.choice([None, None, lab, rng.choice(LIST_LABELS)])])
+    if rng.random() < 0.3:
+        e = list_entry(rng, text, starts)
+        if e:
+            allow.append([e, None])
+    # keep the lists valid: one label per block form, no form in both lists
+    form = lambda x: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in x)
+    seen = {}
+    block = [b for b in block if seen.setdefault(form(b[0]), b[1]) == b[1]]
+    allow = [a for a in allow if form(a[0]) not in seen]
+    return allow, block
+
+
+def list_rows(rng):
+    rows = []
+    for r in apply_inputs():
+        if rng.random() < 0.5:
+            continue
+        allow, block = gen_lists(rng, r["text"], r.get("spans", []))
+        row = dict(r, allow=allow, block=block)
+        if rng.random() < 0.25:
+            row["plain"] = True
+        if rng.random() < 0.1:
+            row["labels"] = []
+        rows.append(row)
+    for t in LIST_TEXTS + WORD_TEXTS:
+        t = t.encode().decode("unicode_escape") if "\\u" in t or "\\U" in t else t
+        for _ in range(16):
+            spans, pos = [], rng.randint(0, 3)
+            while pos < len(t):
+                e = pos + rng.randint(1, 5)
+                spans.append([pos, min(e, len(t)), rng.choice(FAMILY_LABELS + OTHER_LABELS), rng.choice([1, 2, 3])])
+                pos = e + rng.choice([0, 1, 3, 6])
+            allow, block = gen_lists(rng, t, spans)
+            for name in ["박지훈", "kim", "Ann Lee", "Lee Kim", "田中", "제주", "Ana-María", "\u00e9t\u00e9"]:
+                if name in t and rng.random() < 0.5 and all(b[0] != name for b in block) and all(a[0] != name for a in allow):
+                    block.append([name, rng.choice(LIST_LABELS)])
+            allow, block = gen_lists_fix(allow, block)
+            rows.append({"text": t, "spans": spans, "allow": allow, "block": block, "words": rng.random() < 0.7,
+                         "plain": rng.random() < 0.5})
+    return rows
+
+
+def gen_lists_fix(allow, block):
+    form = lambda x: "".join(chr(ord(c) + 32) if "A" <= c <= "Z" else c for c in x)
+    seen = {}
+    block = [b for b in block if seen.setdefault(form(b[0]), b[1]) == b[1]]
+    return [a for a in allow if form(a[0]) not in seen], block
+
+
+def invalid_list_rows(rng):
+    """Lists with one or more invalid entries (and valid ones around them): every reason, in every position."""
+    bad = ["", " a", "a ", "\u3000x", "x\u00a0", "\u2028", "a\nb", "a\rb", "a\x85b", "a\u2029", "a\x00b", "\ud800", "x\udc00y",
+           "a" * 64, "a" * 65, "가" * 65, "\U0001d400" * 64, "\U0001d400" * 65, "a" * 257, "a" * 256, "\x00" + "a" * 256, "\u200b",
+           "\ufeffx", "x\u180e", "ok"]
+    rows = []
+    for k in range(400):
+        allow, block = [], []
+        for _ in range(rng.randint(0, 4)):
+            allow.append([rng.choice(bad + ["Seoul", "제주"]), rng.choice([None, None, "PERSON", "ORG", "NOPE"])])
+        for _ in range(rng.randint(0, 4)):
+            block.append([rng.choice(bad + ["Kim", "kim", "KIM", "박지훈", "Seoul"]), rng.choice(["PERSON", "ORG", None, "NOPE", "PERSON_L2"])])
+        rows.append({"text": "", "allow": allow, "block": block})
+    many = [[f"v{i}", None] for i in range(10_001)]
+    rows += [{"text": "", "allow": many}, {"text": "", "allow": many[:10_000]}, {"text": "", "block": [[f"v{i}", "ORG"] for i in range(10_002)]},
+             {"text": "", "allow": many[:50] + [[" x", None]] + many[50:]}, {"text": "", "allow": [["Seoul", "PERSON"], ["SEOUL", "ORG"], ["seoul", None]]},
+             {"text": "", "block": [["Kim", "PERSON"], ["kim", "PERSON"], ["KIM", "ORG"], ["x", "ORG"], ["X", "PERSON"]]},
+             {"text": "", "allow": [["Seoul", None], ["Busan", "ORG"]], "block": [["x", "ORG"], ["BUSAN", "ORG"], ["seoul", "PERSON"]]},
+             {"text": "", "allow": [["Seoul", None]], "block": [["SEOUL", "ORG"], ["k", "ORG"], ["K", "PERSON"]]}]
+    return rows
+
+
+def test_lists(cli, label="lists", js=True):
+    """User lists: validation parity, the model-free list steps, and detectTable with lists."""
+    print(f"[{label}] user lists: validation and the list steps, pii_cli vs the npm package (js/src/lists.ts)")
+    import random
+    rng = random.Random(1403)
+    node, ts = shutil.which("node"), REPO / "js" / "src" / "table.ts"
+    if os.environ.get("PII_JS") == "0" or not node or not ts.exists():
+        return skip("node or js/src/table.ts absent")
+
+    def both(cmd, rows):
+        payload = "".join(json.dumps(r) + "\n" for r in rows).encode()
+        p = subprocess.run([str(cli), cmd], input=payload, capture_output=True)
+        q = subprocess.run([node, str(HERE / "js_table.mjs"), cmd, str(ts)], input=payload, capture_output=True)
+        if q.returncode == 3:
+            skip(q.stderr.decode().strip() + f" ({cmd}: the model-free path needs node 22.18+)")
+            return None, None
+        if p.returncode or q.returncode:
+            check(False, f"{cmd} failed: {p.stderr.decode()[-500:]} {q.stderr.decode()[-500:]}")
+            return None, None
+        return [json.loads(l) for l in p.stdout.decode().splitlines()], [json.loads(l) for l in q.stdout.decode().splitlines()]
+
+    rows = invalid_list_rows(rng)
+    c, j = both("lists", rows)
+    if c is not None:
+        same = sum(1 for a, b in zip(c, j) if a == b)
+        reasons = sorted({x["error"][2] for x in c if "error" in x})
+        summary.append((f"{label} validation", f"{same}/{len(rows)} identical"))
+        check(same == len(rows) == len(c) == len(j), f"validation: {same}/{len(rows)} lists give the same list, index and reason ({', '.join(reasons)})")
+        check(len(reasons) == 9, f"validation covers {len(reasons)} of the 9 reasons of pii_lists_create")
+        for r, a, b in [(r, a, b) for r, a, b in zip(rows, c, j) if a != b][:3]:
+            print(f"    {json.dumps(r, ensure_ascii=False)[:160]}\n      c {a}\n      js {b}")
+    rows = list_rows(rng)
+    c, j = both("apply", rows)
+    if c is not None:
+        same = sum(1 for a, b in zip(c, j) if a == b)
+        n_block = sum(1 for x in c for s in x.get("spans", []) if s[3] == 8)
+        n_err = sum(1 for x in c if "error" in x)
+        summary.append((f"{label} steps", f"{same}/{len(rows)} identical ({n_block} block spans)"))
+        check(same == len(rows) == len(c) == len(j), f"list steps: {same}/{len(rows)} inputs identical, spans, labels and sources "
+              f"({n_block} block spans, {sum(1 for r in rows if r.get('plain'))} in detect order, {n_err} invalid lists)")
+        check(n_block > 0 and n_err == 0, f"block entries matched ({n_block}) and every generated list valid ({n_err} invalid)")
+        shown = 0
+        for r, a, b in zip(rows, c, j):
+            if a != b and shown < 3:
+                shown += 1
+                print(f"    {json.dumps({k: v for k, v in r.items() if k != 'spans'}, ensure_ascii=False)[:200]}\n      c  {a}\n      js {b}")
+    # the allow filters removed spans: the same rows with the allow list only, and without lists (C only; parity is above)
+    allow_only = [dict({k: v for k, v in r.items() if k != "block"}, block=[]) for r in rows if r.get("allow")]
+    p0 = subprocess.run([str(cli), "apply"], input="".join(json.dumps({k: v for k, v in r.items() if k not in ("allow", "block")}) + "\n"
+                        for r in allow_only).encode(), capture_output=True)
+    p1 = subprocess.run([str(cli), "apply"], input="".join(json.dumps(r) + "\n" for r in allow_only).encode(), capture_output=True)
+    n0 = sum(len(json.loads(l)["spans"]) for l in p0.stdout.decode().splitlines())
+    n1 = sum(len(json.loads(l)["spans"]) for l in p1.stdout.decode().splitlines())
+    check(n1 < n0, f"allow entries removed spans ({n0} without lists, {n1} with the allow lists of {len(allow_only)} inputs)")
+    # with a model: pii_cli table vs the npm package's detectTable (lists are redactor options: one redactor per list set)
+    if not js:
+        return
+    size, variant = "nano", "q4"
+    onnx, tok = model_paths(size, variant)
+    if not onnx.exists() or not (JS_DIST / "index.js").exists():
+        return skip(f"{size} {variant} with lists: model or js/dist absent")
+    inputs = [r for r, g, _ in table_inputs(60)]
+    mrows = []
+    for k, r in enumerate(inputs[::4] + [{"text": t.encode().decode("unicode_escape") if "\\u" in t else t} for t in LIST_TEXTS]):
+        t = r["text"]
+        words_at = [i for i in range(len(t)) if i == 0 or not t[i - 1].isalnum()]
+        spans = [[a, min(len(t), a + rng.randint(2, 8)), "PERSON", 1] for a in rng.sample(words_at, min(4, len(words_at)))] if words_at else []
+        allow, block = gen_lists(rng, t, sorted(spans))
+        mrows.append(dict(r, allow=allow, block=block, words=k % 3 != 0))
+    jsr, why = js_table(size, variant, mrows, cli_is_fma(CLI))
+    if jsr is None:
+        return skip(f"{size} {variant} with lists: {why}")
+    payload = "".join(json.dumps(dict(r, extra=j.get("extra", []))) + "\n" for r, j in zip(mrows, jsr))
+    p = subprocess.run([str(cli), "table", onnx, tok], input=payload.encode(), capture_output=True)
+    if p.returncode:
+        return check(False, f"pii_cli table with lists failed: {p.stderr.decode()[-500:]}")
+    tab = [json.loads(l) for l in p.stdout.decode().splitlines()]
+    same = sum(1 for a, b in zip(jsr, tab) if ("error" in a and a["error"] == b.get("error")) or
+               ("spans" in a and "spans" in b and a["spans"] == [[x[3], x[4], x[2], x[7]] for x in b["spans"]]))
+    n_block = sum(1 for b in tab for x in b.get("spans", []) if x[7] == 8)
+    summary.append((f"{label} {size} {variant} table", f"{same}/{len(mrows)} identical to detectTable with lists"))
+    check(same == len(mrows) == len(jsr) == len(tab), f"{size} {variant}: {same}/{len(mrows)} inputs identical to the npm package's detectTable "
+          f"with the same lists ({n_block} block spans)")
+    for r, a, b in [(r, a, b) for r, a, b in zip(mrows, jsr, tab) if a.get("spans") != [[x[3], x[4], x[2], x[7]] for x in b.get("spans", [])]][:3]:
+        print(f"    {json.dumps({k: v for k, v in r.items()}, ensure_ascii=False)[:200]}\n      js {a}\n      c  {b}")
+
+
 def test_selftest(cli, label="selftest"):
     print(f"[{label}] API checks")
     m = first_model()
@@ -885,6 +1096,8 @@ def main():
     if want("table"):
         test_table_apply(CLI)
         test_table(CLI)
+    if want("lists"):
+        test_lists(CLI)
     if want("threads"):
         test_threads(CLI)
     if want("asan"):
@@ -896,6 +1109,7 @@ def main():
             saved, SIZES = SIZES, ["nano"]
             test_predict(ASAN_CLI, limit=60, label="asan+ubsan predict (nano, 60 rows)")
             test_table_apply(ASAN_CLI, label="asan+ubsan table steps")
+            test_lists(ASAN_CLI, label="asan+ubsan lists", js=False)
             test_table(ASAN_CLI, sizes=(("nano", "q4"),), label="asan+ubsan table (nano, 40 generated tables)", js=False, n_gen=40)
             test_threads(ASAN_CLI, n_threads=3, limit=40, label="asan+ubsan threads (nano)")
             SIZES = saved

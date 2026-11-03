@@ -8,7 +8,7 @@ options and spans as the npm package [`@newmean-ai/pii`](https://www.npmjs.com/p
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.3.0
+  newmean_pii: ^1.4.0
 ```
 
 ```dart
@@ -82,6 +82,9 @@ NewmeanPii.create({
   bool keepEmoji = false,      // true: the model also reads emoji (1.0 behaviour); default: never read or masked
   bool wholeWords = true,      // true: a span that ends inside a word covers the whole word
   bool strictShortNames = false, // true: short texts (≤ 8 tokens) need stronger evidence to be read as names
+  Iterable<PiiAllowEntry>? allow,  // values that are not PII in your data (see Lists); since 1.4.0
+  Iterable<PiiBlockEntry>? block,  // values that are PII in your data (see Lists); since 1.4.0
+  String? listsId,             // your name for the lists, shown in info.lists.id; since 1.4.0
   String? modelDir,            // local folder: tokenizer.web.json, onnx/model_<variant>.onnx
   Future<Uint8List> Function(String path)? readFile,  // e.g. Flutter assets
   Uri? modelUrl,               // self-hosted model folder (ending with "/"); default Hugging Face
@@ -90,7 +93,7 @@ NewmeanPii.create({
   bool verify = true,          // check size and SHA-256 of every file
   void Function(PiiProgress)? onProgress,
 }) → Future<NewmeanPii>
-NewmeanPii.fromBytes(onnx: ..., tokenizer: ..., size: ..., variant: ...) → Future<NewmeanPii>
+NewmeanPii.fromBytes(onnx: ..., tokenizer: ..., size: ..., variant: ..., allow: ..., block: ..., listsId: ...) → Future<NewmeanPii>
 
 pii.detect(text)              // → Future<List<PiiSpan>> {start, end, label, source}, sorted, non-overlapping
 pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blank → removed; or replace: (span, original) => ...
@@ -98,7 +101,7 @@ pii.redact(text, mode: RedactMode.tag)  // tag → [EMAIL], mask → *****, blan
 pii.detectSync(text), pii.redactSync(text)  // the same on the calling isolate
 pii.detectTable(text), pii.redactTable(text) // table mode (see Tables); detectTableSync, redactTableSync
 pii.sensitivity = 0.3          // or setSensitivity(0.3); no reload
-pii.info                       // packageVersion, modelVersion, size, variant, model and tokenizer pins, build
+pii.info                       // packageVersion, modelVersion, size, variant, model and tokenizer pins, build, lists
 pii.dispose()
 
 regexSpans(text), applyRedaction(text, spans, mode: ...)  // the pattern layer and the redaction modes on their own
@@ -107,7 +110,7 @@ modelFile(size, file)          // published path, size and SHA-256 of 'q4', 'q4e
 
 - **Offsets** are UTF-16 code units, the indices of Dart's `String`: `text.substring(span.start, span.end)`. Spans are
   widened to whole grapheme clusters, so an emoji, flag or combining sequence is masked whole or kept whole. `source` is
-  `"model"`, `"regex"`, `"model+regex"` or `"table"`. `mask` writes one mask character per code point.
+  `"model"`, `"regex"`, `"model+regex"`, `"table"` or `"block"`. `mask` writes one mask character per code point.
 - **Emoji**: by default emoji are taken out of the text the model reads, so the model does not read them as PII; offsets still refer to the
   input, and an emoji inside a span splits it in two. `keepEmoji: true` gives the model the text as given (1.0 behaviour).
 - **Whole words**: by default (since 1.3.0), a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strictShortNames` leaves such values alone. `wholeWords: false` gives the 1.2 spans.
@@ -117,8 +120,43 @@ modelFile(size, file)          // published path, size and SHA-256 of 'q4', 'q4e
 - **Isolates**: `detect` and `redact` run the model in a background isolate (`Isolate.run`), so the UI never blocks; the
   overhead is about 0.5 ms per call. One loaded model is shared by all calls and calls may overlap: several `detect`
   calls at once run in parallel on different cores. Inside your own background isolate, `detectSync` avoids the hop.
-- **Memory**: a loaded model takes about the size of its file plus the tokenizer; `dispose()` frees it after running
-  calls finish (otherwise it is freed when the object is garbage collected).
+- **Memory**: a loaded model takes about the size of its file plus the tokenizer; `dispose()` frees it and the lists after
+  running calls finish (otherwise they are freed when the object is garbage collected).
+
+## Lists
+
+Since 1.4.0 you can tell the redactor what you already know about your data (`create` and `fromBytes` alike):
+
+```dart
+final pii = await NewmeanPii.create(
+  allow: [PiiAllowEntry('제주'), PiiAllowEntry('배민'), PiiAllowEntry('경기', label: 'PERSON')],  // no label: any label
+  block: [PiiBlockEntry('박지훈', 'PERSON'), PiiBlockEntry('새솔고등학교', 'ORG')],
+  listsId: 'survey-2026-11 v3',
+);
+final r = await pii.redact('박지훈님께 제주에서 연락');  // NFC text
+// r.text: "[PERSON]님께 제주에서 연락"
+```
+
+- `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
+  `"block"`), also where the model finds nothing and whatever `labels` enables. A Hangul entry also matches before Korean
+  particles (「박지훈님께」 → 「[PERSON]님께」); "Kim" does not match inside "Kimberly", nor in "Kim's" or "Kim-Lee"
+  (apostrophes and hyphens join words, as in `wholeWords`); in scripts written without spaces any occurrence matches. A
+  region with a block match takes the block label and is never allowed.
+- `allow`: a span whose whole text is an entry is not masked; with `label`, only spans of that label family (PERSON covers
+  PERSON_L2, URL covers URL_L2). The test is on the whole span, so it depends on where the model ends a span: a span
+  「제주도」 is not allowed by "제주"; list both forms when both occur.
+- Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized. Pass NFC text and entries: files exported on
+  macOS or copied from PDFs may hold NFD Hangul, which never matches. Dart has no built-in normalization; normalize to NFC
+  before calling, for example with the package `unorm_dart`.
+- Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
+  word that is 김 plus particles (「김은」, 「김도」).
+- In table mode, block entries match inside each cell and do not vote; allowed spans leave before the column vote.
+- Up to 10,000 entries per list, 1 to 64 code points each, no line breaks, no leading or trailing white space. Invalid lists
+  throw `PiiListException` (`list`: "allow", "block" or "meta" for `listsId`; `index`, null for `listsId`; `reason`:
+  `bad_shape`, `too_long`, `bad_text`, `empty`, `edge_space`, `unknown_label`, `too_many`, `label_conflict`, `in_both`,
+  `bad_lists_id`) before any model file is read. The exception never holds an entry's text.
+- `info.lists` (`PiiListsInfo`: `allow`, `block`, `id`) gives the entry counts after merging duplicates and your `listsId`,
+  for audit records; nothing derived from the entries' text.
 
 ## Tables
 

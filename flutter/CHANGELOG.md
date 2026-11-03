@@ -1,3 +1,27 @@
+## 1.4.0
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.3.0.
+- User lists in `create` / `fromBytes`: `allow` (`PiiAllowEntry(text, {label})`: values you know are not PII, such as
+  survey regions, brands or jobs; a span whose whole text is an entry is not masked, with a label only for that label
+  family) and `block` (`PiiBlockEntry(text, label)`: values you know are PII; every occurrence on word boundaries is
+  masked with the entry's label, also where the model misses it and whatever `labels` enables, and a Hangul entry also
+  before Korean particles: 「박지훈님께」 → `[PERSON]님께`). ASCII letters compare case-insensitively, nothing else is
+  normalized (pass NFC text). At most 10,000 entries of 1 to 64 code points per list.
+- `listsId`: your name for the lists (1 to 128 code points), shown in `info.lists.id`; `info.lists` (`PiiListsInfo`) also
+  holds the number of entries of each list after merging duplicates (never their text).
+- The lists are checked before any model file is read: `PiiListException` with `list` (`"allow"`, `"block"` or `"meta"`
+  for `listsId`), `index` and `reason` (`too_long`, `bad_text`, `empty`, `edge_space`, `unknown_label`, `too_many`,
+  `label_conflict`, `in_both`, `bad_lists_id`), the same as in every package; never the entry's text.
+- Span source `"block"` for a block entry (alone, never combined with another source).
+- The native core's option structs must come from the same release (`struct_size` must equal the library's size; earlier
+  releases accepted a prefix). The package checks its bindings against the core at load and refuses to run on a
+  mismatch.
+- An allocation failure in the native core that would change the result (word widening, block matching) is now an error;
+  1.3.0 skipped the word widening and masked less.
+- The word table of `wholeWords` (letters, digits and marks; Korean particles), also used for block-list word
+  boundaries, is pinned to Unicode 17.0 and generated once for every package (same data as 1.3.0 here; the npm package
+  used its runtime's Unicode data before).
+
 ## 1.3.0
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.2.0.

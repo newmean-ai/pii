@@ -31,8 +31,8 @@ See [js/README.md](js/README.md) for the full API.
 |---|---|---|
 | Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.3.0` |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.3.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.4.0` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 The Python, iOS, Android and Flutter packages run the same models on the device through one C engine
@@ -177,6 +177,18 @@ points). `wholeWords`: a span that ends inside a word covers the whole word ("R2
 where Hangul meets digits or Latin letters, so 「010-1234-5678입니다」 → `[PHONE]입니다`; Korean particles after a Hangul span stay, 「홍길동님께」 → `[PERSON]님께`),
 which lowers misses on every set by 0.1 to 1.4 points (large: public test 1.63% to 1.54%, KDPII 9.61% to 9.08%) and masks
 a little more (large over-masking: public test 0.47% to 0.53%, KDPII 1.70% to 2.09%). Every package also gains `info` with the package and model versions and the checked model files.
+
+What 1.4 adds. SDK 1.4.0, same v1.1 models; user lists in every package. `block`: values you know are PII (an
+instructor's name) are masked wherever they start and end on a word boundary, also before Korean particles
+(「박지훈님께」 → `[PERSON]님께`) and where the model misses them (source `block`). `allow`: a span whose whole text is a
+value you know is not PII (a region or brand in a survey) is not masked. ASCII letters are compared case-insensitively,
+nothing else is normalized (pass NFC text). Lists are checked before any model file is loaded, errors name the list,
+entry and reason but never the text, and `info` gives the entry counts and your `listsId`. On the KDPII dev split (large), a block list holding every name of the set, an upper bound,
+cuts PERSON characters missed from 24.6% to 3.1% at 0.4 points more over-masking; a generic 136-entry allow list changes
+little, as expected (allow is for the values of your own columns). Details:
+[js/README.md](js/README.md#lists). Using the C core directly (not through a package): the C API is source-compatible
+only, so rebuild against each release's `pii.h`; options structs from another release are rejected
+([native/core](native/core/README.md#api)).
 
 ## Repository layout
 

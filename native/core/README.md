@@ -23,6 +23,12 @@ Plain C11, no dependencies, no network, no global state.
 
 ## API
 
+> **Using the C API directly.** The supported way to use the core is through the packages (npm, Python, Swift, Android,
+> Flutter), which bundle the core of their own release and are tested against it. The C API is source-compatible only:
+> compile against the `pii.h` of the core you link, and expect to rebuild on every release. Binaries are not compatible
+> across releases; since 1.4.0 an options struct from another release's header is rejected with `PII_ERR_ARG`
+> (`struct_size` must equal `pii_options_size()` / `pii_table_options_size()`), and no shared library is published.
+
 ```c
 #include "pii.h"
 
@@ -39,6 +45,14 @@ o.keep_emoji = 0;             // default: emoji are never read or masked (npm `k
 o.whole_words = 1;            // default 1: a span that ends inside a word covers the whole word; 0: 1.2 spans (npm `wholeWords`)
 o.strict_short_names = 0;     // 1: short texts (<= 8 tokens) need stronger evidence to be read as names (npm `strictShortNames`)
 
+// user lists (1.4.0): validate once, share the handle across calls and threads, free after the last call
+const pii_term allow[] = {{"제주", strlen("제주"), -1}, {"경기", strlen("경기"), PII_PERSON}};  // -1: any label
+const pii_term block[] = {{"박지훈", strlen("박지훈"), PII_PERSON}};
+pii_lists *lists;
+pii_list_error lerr;          // list, index, reason (PII_LIST_ERR_*); never the text
+if (pii_lists_create(allow, 2, block, 1, &lists, &lerr) != PII_OK) { /* report lerr; do not detect without the lists */ }
+o.lists = lists;
+
 pii_span *spans;
 size_t n;
 if (pii_detect(m, text, strlen(text), &o, &spans, &n) == PII_OK) {
@@ -52,6 +66,7 @@ pii_table_options_init(&t);   // delimiter auto, header row, column vote on
 t.delimiter = ',';            // 0 (auto), ',', '\t', ';' or '|' (markdown pipe table)
 t.context = PII_TABLE_CONTEXT_HEADER;  // also read cells of distinct-valued columns as "<header>: <value>"
 if (pii_detect_table(m, csv, strlen(csv), &o, &t, &spans, &n) == PII_OK) pii_spans_free(spans);
+pii_lists_free(lists);         // after every call that borrowed it
 pii_model_free(m);
 ```
 
@@ -63,7 +78,8 @@ pii_model_free(m);
   JNI `GetStringUTFChars` (modified UTF-8 splits emoji into surrogates and NUL into two bytes, which changes tokens and
   offsets); `str.encode("utf-8", "surrogatepass")` in Python.
 - **Errors**: functions return `PII_OK` or a `PII_ERR_*` code (`pii_strerror` gives the message); `pii_model_load` writes
-  its reason to `err`. Truncated or corrupted model and tokenizer files fail with a message, never crash. Returned arrays
+  its reason to `err`. Since 1.4.0 an allocation failure that would change the result (word widening, block matching)
+  returns `PII_ERR_NOMEM`; 1.3 skipped the word widening and returned fewer masked characters. Truncated or corrupted model and tokenizer files fail with a message, never crash. Returned arrays
   are owned by the caller and freed with `pii_spans_free` / `pii_tokens_free` (not `free`, which may belong to another C
   runtime on Windows). Texts up to `INT32_MAX` bytes; working memory is about 20 bytes per input byte plus one window.
 - **Options** follow the npm package: `sensitivity` (the O logit gets `-sensitivity`), `labels` (bit set; default all 13).
@@ -72,11 +88,23 @@ pii_model_free(m);
   stay in each language. `keep_emoji` (default 0) takes emoji out of the text the model reads, so the model does not read them as PII;
   spans keep the input's offsets, an emoji inside a span splits it, and a keycap is read as its bare character (a span over
   it covers the whole keycap). 1 gives the model the text as given (1.0 behaviour). `whole_words` (default 1 since 1.3.0; 0 gives the 1.2 spans): a span that starts or ends inside a word is widened to the whole word ("R23" → `[ID_NUMBER]`, not `[ID_NUMBER]23`); letters of scripts written without spaces (Chinese, Japanese, Thai, Khmer, …) never extend a span
-  (table mode: inside the cell), and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strict_short_names` leaves such values alone. The word table `src/word_tables.h` is generated from `js/src/table.ts`
-  (`node scripts/gen_words.mjs`), so both packages use the same characters. `strict_short_names` (default 0): with 1, a
+  (table mode: inside the cell), and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strict_short_names` leaves such values alone. The word table `src/word_tables.h` and `js/src/word_tables.ts` are
+  written by `node scripts/gen_words.mjs` (pinned Unicode 17.0 data), so both packages use the same characters. `strict_short_names` (default 0): with 1, a
   text the model reads as at most 8 tokens (a survey answer, a table cell) gets -3 on the PERSON and PERSON_L2 logits, so
   「경기」, 「남성」, 「네이버」 are left alone and 「김민지」 is still found (large: short PII-free survey items masked 7.9% →
   4.3%, lone names found 98.9% → 96.5%); longer texts are unchanged.
+- **User lists** (1.4.0, `pii_options.lists`, the npm options `allow` and `block`): `block` entries are masked wherever they
+  start and end on a word boundary (the `whole_words` rules; a Hangul entry also matches before Korean particles), with the
+  entry's label and source `PII_SOURCE_BLOCK`, also where the model finds nothing and whatever `labels` enables; a region
+  with a block match takes the block label. A span whose whole text is an `allow` entry of its label family is dropped
+  (table mode: also before the column vote). ASCII letters are compared case-insensitively, nothing else is normalized:
+  pass NFC text (NFD Hangul from macOS exports never matches an NFC entry). `pii_lists_create` checks every entry (strict
+  UTF-8, 1 to 64 code points, no NUL or line breaks, no leading or trailing white space, a known label, at most 10,000 per
+  list, no form in both lists, one label per block form) and reports the first problem as list, index and reason.
+- **Struct sizes**: `pii_options` and `pii_table_options` must come from the header of the same release: since 1.4.0 a
+  `struct_size` other than the library's (`pii_options_size()`, `pii_table_options_size()`) is `PII_ERR_ARG` (earlier
+  releases accepted an older prefix; 1.0 and 1.2 layouts can share a size, so they are not decoded). The C API promises
+  source compatibility only; the packages bundle the core, and no shared library is published.
 - **Pins and defaults**: `pii_model_file(size, file)` gives the path, size and SHA-256 of each published file;
   `pii_default_variant(size)` the npm default (`q4e` for large and medium, `q4` for small and nano). Default size:
   `PII_DEFAULT_SIZE` (`medium`).
@@ -91,8 +119,8 @@ pii_model_free(m);
   `table->context = PII_TABLE_CONTEXT_HEADER` (default `PII_TABLE_CONTEXT_NONE`), with a header row, also reads each
   non-empty data cell of a column whose non-empty values are at least 80% distinct on its own as "<header>: <value>" and adds
   those spans: fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell.
-- **Threads**: a `pii_model` is immutable after loading. Any number of threads may call `pii_detect` /
-  `pii_detect_table` / `pii_tokenize` on one model at once; each call allocates its own scratch memory (about 4.5 MB for a full 256-token window, less for short texts).
+- **Threads**: a `pii_model` and a `pii_lists` are immutable after creation. Any number of threads may call `pii_detect` /
+  `pii_detect_table` / `pii_tokenize` on one model (and one lists handle) at once; each call allocates its own scratch memory (about 4.5 MB for a full 256-token window, less for short texts).
 - `pii_tokenize` returns token ids and offsets (without `<s>` and `</s>`); `pii_model_get_info` the model shape;
   `pii_build_info` the kernel build.
 
