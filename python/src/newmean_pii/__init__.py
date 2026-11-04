@@ -24,7 +24,7 @@ from ._redactor import LABELS, LEVEL1_LABELS, TABLE_CONTEXTS, TABLE_DELIMITERS, 
 from ._regex import REGEX_RULES, regex_spans
 from ._types import RedactResult, Span, Token
 
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 
 __all__ = [
     "DEFAULT_SIZE",

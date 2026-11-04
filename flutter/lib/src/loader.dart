@@ -85,7 +85,7 @@ Future<Uint8List> loadModelFile(
 
   final url = (baseUrl ?? Uri.parse('https://huggingface.co/newmean-ai/pii-${pin.size}/resolve/v$modelVersion/'))
       .resolve(pin.path);
-  final client = HttpClient()..userAgent = 'newmean_pii-dart/$modelVersion';
+  final client = HttpClient()..userAgent = 'newmean_pii-dart/$nativeVersion'; // the package version, not the model's
   final Uint8List bytes;
   try {
     final res = await (await client.getUrl(url)).close();

@@ -15,7 +15,7 @@ class NativeTest {
     @Test
     fun corePinsAndVersionMatchKotlin() {
         TestEnv.requireNative()
-        assertEquals("1.4.0", NativeBridge.version())
+        assertEquals("1.4.1", NativeBridge.version())
         for (size in PiiSize.entries) {
             for ((file, pin) in PiiVariant.entries.map { it.id to PiiModels.modelPin(size, it) } + ("tokenizer" to PiiModels.tokenizerPin(size))) {
                 assertEquals("$size $file", "${pin.path}\n${pin.bytes}\n${pin.sha256}", NativeBridge.filePin(size.id, file))
@@ -103,6 +103,30 @@ class NativeTest {
             r.sensitivity = -1.0
             val less = r.detect(text).sumOf { it.end - it.start }
             assertTrue("$less <= $base <= $more", less <= base && base <= more)
+        }
+    }
+
+    @Test
+    fun nonFiniteSensitivityIsRejected() {
+        // NaN would turn model detection off and an infinity mask everything or nothing; the core refuses them too (1.4.1)
+        for (v in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+            try {
+                TestEnv.redactor(PiiSize.NANO, sensitivity = v).close()
+                fail("created with sensitivity $v")
+            } catch (e: IllegalArgumentException) {
+                assertEquals("sensitivity must be a finite number", e.message)
+            }
+        }
+        TestEnv.redactor(PiiSize.NANO, sensitivity = 0.5).use { r ->
+            for (v in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+                try {
+                    r.sensitivity = v
+                    fail("set sensitivity $v")
+                } catch (e: IllegalArgumentException) {
+                    assertEquals("sensitivity must be a finite number", e.message)
+                }
+            }
+            assertEquals(0.5, r.sensitivity, 0.0)
         }
     }
 

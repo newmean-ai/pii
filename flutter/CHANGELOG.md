@@ -1,3 +1,17 @@
+## 1.4.1
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.4.0. Bug and doc fixes only: every valid input gives the 1.4.0 spans.
+- `sensitivity` must be finite: NaN or ±infinity in `create`, `fromBytes`, the `sensitivity` setter or `setSensitivity`
+  throws `ArgumentError` before any model file is read, and the setter keeps the previous value. 1.4.0 accepted them:
+  NaN silently switched the model off, and ±infinity masked everything or nothing. The native core also refuses them now.
+- `create` and `fromBytes` check the bindings against the native core first, before any file is read, as the 1.4.0
+  notes said; 1.4.0 checked only when detecting.
+- The model download sends the package version in its User-Agent (`newmean_pii-dart/1.4.1`; 1.4.0 sent the model
+  version).
+- The native span array is freed even when reading a span fails.
+- Docs: names in `labels` that are not labels are ignored, as in the npm package (the Python and Kotlin packages raise an
+  error).
+
 ## 1.4.0
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.3.0.

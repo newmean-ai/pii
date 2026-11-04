@@ -5,7 +5,7 @@ name: swift
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths: [Package.swift, swift/**, native/core/**, .github/workflows/swift.yml]
   pull_request:
     paths: [Package.swift, swift/**, native/core/**, .github/workflows/swift.yml]
@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   test:
+    # on push only in the public repository; other copies of it run these by hand (workflow_dispatch)
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +30,7 @@ jobs:
           PII_DOWNLOAD: "1"
 
   ios:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     strategy:
       fail-fast: false

@@ -12,7 +12,7 @@ device; nothing is sent anywhere.
 ```kotlin
 // build.gradle.kts of the app module
 dependencies {
-    implementation("ai.newmean:pii:1.4.0")
+    implementation("ai.newmean:pii:1.4.1")
 }
 ```
 
@@ -150,7 +150,8 @@ val redactor = PiiRedactor.create(
     block = listOf(PiiBlockEntry("박지훈", PiiLabels.PERSON), PiiBlockEntry("새솔고등학교", PiiLabels.ORG)),
     listsId = "survey-2026-11 v3",
 )
-redactor.redact(Normalizer.normalize("박지훈님께 제주에서 연락", Normalizer.Form.NFC)).text  // "[PERSON]님께 제주에서 연락"
+redactor.redact(Normalizer.normalize("제주, 박지훈", Normalizer.Form.NFC)).text  // "제주, [PERSON]"
+// without the lists, the medium model gives "[PERSON], [PERSON]"
 ```
 
 - `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source

@@ -167,6 +167,9 @@ int pii_table_apply_lists(const pii_text *tx, const pii_cspan *spans, size_t n, 
 // whole text, widened (words) and snapped, then the allow filter. *out is malloc'ed (NULL when *n_out is 0).
 int pii_detect_finish(const pii_text *tx, const pii_cspan *spans, size_t n, const pii_lists *lists, int words, pii_cspan **out,
                       size_t *n_out);
+// The options of pii_detect and pii_detect_table: *opt (defaults when NULL) checked and copied into *o; PII_ERR_ARG for
+// another struct_size, a sensitivity that is NaN or infinite, or extra NULL with n_extra > 0. Exposed for tests.
+int pii_read_options(const pii_options *opt, pii_options *o);
 // ---------------------------------------------------------------- whole words and user lists (lists.c)
 int pii_word_cp(uint32_t c);  // isWordChar: Unicode L, N, M outside the scripts written without spaces
 int pii_hangul(uint32_t c);

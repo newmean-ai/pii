@@ -5,7 +5,7 @@ name: flutter
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths: [flutter/**, native/core/**, .github/workflows/flutter.yml]
   pull_request:
     paths: [flutter/**, native/core/**, .github/workflows/flutter.yml]
@@ -16,6 +16,8 @@ permissions:
 
 jobs:
   test:
+    # on push only in the public repository; other copies of it run these by hand (workflow_dispatch)
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +43,7 @@ jobs:
           PII_DOWNLOAD: "1"
 
   android:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -62,6 +65,7 @@ jobs:
       - run: flutter build apk --debug
 
   ios:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     defaults:
       run:
@@ -78,6 +82,7 @@ jobs:
       - run: flutter build ios --debug --no-codesign
 
   publish-check:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:

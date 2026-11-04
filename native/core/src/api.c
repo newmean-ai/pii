@@ -1,5 +1,6 @@
 // Public API: loading, detect (windows, best tag per token, BIO spans, merging; port of js/src/decode.ts and the
 // combine step of js/src/redactor.ts), grapheme snapping, table mode and tokenize.
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -205,12 +206,9 @@ size_t pii_combine(pii_cspan *all, size_t n, uint32_t enabled, const size_t *u16
       if (x->source == PII_SOURCE_MODEL) has_model = 1;
       else has_extra = 1;
     }
-    if (first >= 0) {
-      out[nout].start = s;
-      out[nout].end = e;
-      out[nout].label = first;
-      out[nout].source = (has_model ? PII_SOURCE_MODEL : 0) | (has_extra ? PII_SOURCE_REGEX : 0);
-      nout++;
+    if (first >= 0) {  // key fields zero, as in every span that is not a block region
+      out[nout++] = (pii_cspan){.start = s, .end = e, .label = first,
+                                .source = (has_model ? PII_SOURCE_MODEL : 0) | (has_extra ? PII_SOURCE_REGEX : 0)};
     }
     g0 = g1;
   }
@@ -1005,15 +1003,16 @@ done:
   return rc;
 }
 
-// The caller's options (defaults when NULL); PII_ERR_ARG when malformed. struct_size must be this library's: the struct comes
-// from the same release's header (size alone cannot tell older layouts apart, so they are not decoded).
-static int read_options(const pii_options *opt, pii_options *o) {
+// struct_size must be this library's: the struct comes from the same release's header (size alone cannot tell older layouts
+// apart, so they are not decoded). A NaN sensitivity would let the O tag win every token (no model spans) and an infinite
+// one would mask everything or nothing, so both are rejected (1.4.1).
+int pii_read_options(const pii_options *opt, pii_options *o) {
   pii_options_init(o);
   if (opt) {
     if (opt->struct_size != sizeof *o) return PII_ERR_ARG;
     *o = *opt;
   }
-  if (o->n_extra && !o->extra) return PII_ERR_ARG;
+  if (!isfinite(o->sensitivity) || (o->n_extra && !o->extra)) return PII_ERR_ARG;
   return PII_OK;
 }
 
@@ -1166,7 +1165,7 @@ int pii_detect(const pii_model *m, const char *utf8, size_t len, const pii_optio
   *out = NULL;
   *n_out = 0;
   pii_options o;
-  if (read_options(opt, &o) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
+  if (pii_read_options(opt, &o) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
   pii_text tx;
   if (pii_text_init(&tx, utf8 ? utf8 : "", len)) return PII_ERR_NOMEM;
   pii_cspan *comb, *res = NULL;
@@ -1311,7 +1310,7 @@ int pii_detect_table(const pii_model *m, const char *utf8, size_t len, const pii
   *out = NULL;
   *n_out = 0;
   pii_options o;
-  if (read_options(opt, &o) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
+  if (pii_read_options(opt, &o) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
   pii_table_options t;
   pii_table_options_init(&t);
   if (table) {

@@ -1,5 +1,6 @@
 // The part of the redactor that runs the model: token windows in, logits out. Two implementations share the same ONNX
-// file, tokenizer, windows and decoding: the built-in WebAssembly engine (engine/pii.c, ~6 KB) and onnxruntime-web.
+// file, tokenizer, windows and decoding: the built-in WebAssembly engine (engine/pii.c; about 13 KB brotli with its JS,
+// loaded on first use) and onnxruntime-web.
 
 export type EngineName = "builtin" | "onnxruntime";
 

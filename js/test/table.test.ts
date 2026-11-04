@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { combine, createRedactor } from "../src/redactor";
-import { detectDelimiter, detectTableSpans, parseCsv, parseMarkdown, parseTable, snapGraphemes, tableSpans } from "../src/table";
+import { checkDelimiter, detectDelimiter, detectTableSpans, parseCsv, parseMarkdown, parseTable, snapGraphemes, tableSpans } from "../src/table";
 import type { Span } from "../src/types";
 
 const values = (text: string, t: { cells: { row: number; col: number; start: number; end: number }[] }) =>
@@ -30,6 +30,10 @@ describe("delimiter auto-detection", () => {
   });
   it("ties go to the earlier delimiter", () => expect(detectDelimiter("a,b;c\nd,e;f\n")).toBe(","));
   it("rejects an unknown delimiter", () => expect(() => parseTable("a,b\nc,d", "x" as any)).toThrow());
+  it("checkDelimiter accepts exactly the TableDelimiter values", () => {
+    for (const d of ["auto", ",", "\t", ";", "markdown"] as const) expect(() => checkDelimiter(d)).not.toThrow();
+    for (const d of ["|", "x", "", null, undefined, ", "]) expect(() => checkDelimiter(d as any)).toThrow(/unknown table delimiter/);
+  });
 });
 
 describe("CSV parse", () => {
@@ -291,6 +295,20 @@ describe.skipIf(!existsSync(`${MODELS}/pii-nano/onnx/model_q4.onnx`))("table mod
     expect(text.split("\n").length).toBe(csv.split("\n").length);
     const prose = "My name is Kim Minsu 👩‍👩‍👧 and my email is minsu.kim@example.com.";
     expect(await r.detectTable(prose)).toEqual(await r.detect(prose));
+    await r.dispose();
+  }, 120_000);
+
+  it("rejects a bad delimiter before running the model, as the C core does", async () => {
+    const r = await createRedactor({ size: "nano", variant: "q4", modelUrl: `file://${MODELS}/pii-nano/`, fetch: localFetch, cache: false });
+    for (const text of ["name,email\nKim,k@x.io\n", "not a table"]) {
+      await expect(r.detectTable(text, { delimiter: "x" as any })).rejects.toThrow(/unknown table delimiter "x"/);
+      await expect(r.redactTable(text, { delimiter: "|" as any })).rejects.toThrow(/unknown table delimiter "\|"/);
+    }
+    // delimiter first, then context (pii_detect_table's order)
+    await expect(r.detectTable("a,b\nc,d\n", { delimiter: "x" as any, context: "row" as any })).rejects.toThrow(/delimiter/);
+    expect(r.lastRun).toBeNull();
+    await r.detectTable("a,b\nc,d\n", { delimiter: "," });
+    expect(r.lastRun).not.toBeNull();
     await r.dispose();
   }, 120_000);
 });

@@ -82,7 +82,8 @@ pii_model_free(m);
   returns `PII_ERR_NOMEM`; 1.3 skipped the word widening and returned fewer masked characters. Truncated or corrupted model and tokenizer files fail with a message, never crash. Returned arrays
   are owned by the caller and freed with `pii_spans_free` / `pii_tokens_free` (not `free`, which may belong to another C
   runtime on Windows). Texts up to `INT32_MAX` bytes; working memory is about 20 bytes per input byte plus one window.
-- **Options** follow the npm package: `sensitivity` (the O logit gets `-sensitivity`), `labels` (bit set; default all 13).
+- **Options** follow the npm package: `sensitivity` (the O logit gets `-sensitivity`; NaN or infinite is `PII_ERR_ARG` since
+  1.4.1), `labels` (bit set; default all 13).
   `extra` takes spans from a wrapper's pattern layer and merges them exactly like the npm `combine` (the model's label
   wins; a pattern label counts only where no model label of the same family covers the text), so the pattern layer can
   stay in each language. `keep_emoji` (default 0) takes emoji out of the text the model reads, so the model does not read them as PII;

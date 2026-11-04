@@ -7,7 +7,7 @@
 - 54개 언어, 11개 레이블과 간접 식별자를 위한 수준 2 레이블 2개(IP 주소는 `ID_NUMBER`로 학습); 패턴 계층(이메일, URL,
   카드·계좌, 전화, 주민등록번호)은 선택이며 기본은 꺼짐
 - 모델 크기 네 가지: **nano 2.6 MB**, **small 7.1 MB**, **medium 11.3 MB**(기본), **large 15.5 MB**
-- WebAssembly로 실행: SDK 자체 내장 엔진(기본, 약 20 KB) 또는 onnxruntime-web
+- WebAssembly로 실행: SDK 자체 내장 엔진(기본, 약 13 KB) 또는 onnxruntime-web
 - 상업적 사용을 포함해 어떤 용도로도 무료
 - 같은 모델을 Python, iOS, Android, Flutter에서도 씀([설치](#설치))
 
@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.4.0`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.4.1`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.1")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
@@ -180,6 +180,14 @@ KDPII 9.61%→9.08%), 조금 더 가립니다(large 과잉 가림: 공개 테스
 (136개)은 예상대로 거의 바꾸지 않습니다(allow는 자기 열의 값을 넣는 용도). 자세한
 내용: [js/README.ko.md](js/README.ko.md#목록). 패키지 없이 C 코어를 직접 쓰는 경우: C API는 소스 호환만 약속하므로
 릴리스마다 그 릴리스의 `pii.h`로 다시 빌드해야 하며, 다른 릴리스의 옵션 구조체는 거절됩니다([native/core](native/core/README.ko.md#api)).
+
+1.4.1에서 고친 것. SDK 1.4.1이며 모델은 v1.1 그대로입니다. 버그와 문서만 고쳤고, 올바른 입력에는 1.4.0과 같은 구간을 냅니다.
+`sensitivity`가 NaN이나 무한대면 이제 모든 패키지와 C 코어에서 오류입니다(Android는 전에도 거절). 전에는 NaN이면 모델이 아무
+말 없이 꺼졌고, 무한대면 전부 가리거나 하나도 가리지 않았습니다. npm 패키지는 ES 모듈을 require할 수 있는 Node(20.19+,
+22.12+)에서 `require()`로도 불러올 수 있고, `info.verified`는 두 모델 파일의 SHA-256을 실제로 검사했을 때만 true입니다(전에는
+`verify` 옵션 값을 그대로 옮겼습니다). Flutter 패키지는 1.4.0 변경 기록에 적힌 대로, 불러올 때 파일을 읽기 전에 네이티브 코어를
+검사합니다. 작은 수정: npm `detectTable`은 모델을 돌리기 전에 구분자를 검사하고, Flutter는 내려받을 때 User-Agent에 패키지
+버전을 적으며, README 몇 곳을 바로잡았습니다(내장 엔진 크기, 목록 예시, 라벨이 아닌 이름).
 
 ## 저장소 구성
 

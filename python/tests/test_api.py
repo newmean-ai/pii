@@ -14,6 +14,7 @@ from newmean_pii import (
     Redactor,
     Span,
     apply_redaction,
+    create_redactor,
     model_file,
 )
 from newmean_pii import _core
@@ -32,7 +33,7 @@ def test_constants_match_the_npm_package():
     assert LEVEL1_LABELS == [l for l in LABELS if l not in ("PERSON_L2", "URL_L2")]
     assert len(TAGS) == 27 and TAGS[:3] == ["O", "B-PERSON", "I-PERSON"]
     assert MODEL_VERSION == "1.1.0"
-    assert _core.version() == "1.4.0"
+    assert _core.version() == "1.4.1"
     assert re.fullmatch(r"(neon|sse|vector|scalar)(\+fma)?", _core.build_info())
 
 
@@ -61,6 +62,25 @@ def test_invalid_options_fail_before_loading(tmp_path):
     with pytest.raises(ValueError):
         model_file("nano", "q8")
     assert list(tmp_path.iterdir()) == []
+
+
+def test_sensitivity_must_be_finite(tmp_path, capsys):
+    from newmean_pii.__main__ import main
+    from newmean_pii._redactor import _check_sensitivity
+
+    for v in (float("nan"), float("inf"), float("-inf"), "nan", "-Infinity"):
+        with pytest.raises(ValueError, match="^sensitivity must be a finite number$"):
+            Redactor("nano", sensitivity=v, cache_dir=tmp_path)
+        with pytest.raises(ValueError, match="^sensitivity must be a finite number$"):
+            create_redactor("nano", sensitivity=v, cache_dir=tmp_path)
+    with pytest.raises(SystemExit) as e:
+        main(["redact", "--size", "nano", "--sensitivity", "nan", "--cache-dir", str(tmp_path)])
+    assert e.value.code == 2 and "argument --sensitivity: sensitivity must be a finite number" in capsys.readouterr().err
+    assert list(tmp_path.iterdir()) == []
+    # every finite value is coerced as before
+    assert [_check_sensitivity(v) for v in (0, 1, -0.5, "0.25", True, 1e308)] == [0.0, 1.0, -0.5, 0.25, 1.0, 1e308]
+    with pytest.raises(TypeError):
+        _check_sensitivity(None)
 
 
 def test_model_rejects_bad_bytes():

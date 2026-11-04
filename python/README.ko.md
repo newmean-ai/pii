@@ -50,7 +50,7 @@ create_redactor(               # 또는 Redactor(...), 인자 동일
     size="medium",             # "nano" | "small" | "medium" | "large"
     variant=None,              # "q4" | "q4e"; 기본은 large/medium q4e, small/nano q4
     *,
-    sensitivity=0.0,           # > 0 더 많이 가림, < 0 덜 가림 (대략 -1..1)
+    sensitivity=0.0,           # > 0 더 많이 가림, < 0 덜 가림 (대략 -1..1); NaN이나 무한대는 ValueError(1.4.1부터)
     labels=None,               # 가릴 레이블; 기본 전체(LABELS); 모르는 이름은 ValueError
     regex=False,               # 몇 가지 패턴(이메일, URL, 카드/계좌, 전화, 주민등록번호)도 가림;
                                # 기본 꺼짐: 추가 탐지는 거의 없고 과잉 마스킹이 두 배
@@ -71,7 +71,7 @@ redactor.redact(text, mode="tag")      # -> RedactResult(text, spans); "tag" -> 
 redactor.redact(text, mask_char="#", replace=None)  # replace(span, original) -> str 가 mode보다 우선
 redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none")  # 표 모드(아래 '표' 참고)
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
-redactor.set_sensitivity(value)        # 다시 불러오지 않음
+redactor.set_sensitivity(value)        # 다시 불러오지 않음; NaN이나 무한대는 마찬가지로 ValueError
 redactor.tokenize(text)                # -> [Token(id, start, end)]
 redactor.info()                        # package_version, model_version, size, variant, files(path, bytes, sha256), 모델 구조, build,
                                        # lists(allow, block, id)
@@ -119,7 +119,8 @@ redactor = create_redactor(
     block=[("박지훈", "PERSON"), ("새솔고등학교", "ORG")],
     lists_id="survey-2026-11 v3",
 )
-redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연락")).text  # '[PERSON]님께 제주에서 연락'
+redactor.redact(unicodedata.normalize("NFC", "제주, 박지훈")).text  # '제주, [PERSON]'
+# 목록이 없으면 medium 모델은 '[PERSON], [PERSON]'
 ```
 
 - `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `"block"`). 모델이 찾지 못한 곳도,
@@ -130,8 +131,9 @@ redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연�
   PERSON_L2, URL은 URL_L2 포함). 구간 전체를 비교하므로 모델이 구간을 어디서 끝내느냐에 달려 있습니다. 「제주도」 구간은
   "제주"로 허용되지 않으니, 두 형태가 다 나오면 둘 다 넣으세요.
 - 항목: `allow`는 `str`이나 `(str, label)`(label이 `None`이면 모든 레이블), `block`은 `(str, label)`을 받습니다. 두 목록 모두
-  `str`과 `bytes`가 아닌 이터러블이면 됩니다. 2-튜플을 목록 자체로 넘기면(`block=("Kim", "PERSON")`) 항목 두 개로 읽으니
-  `block=[("Kim", "PERSON")]`로 쓰세요.
+  `str`과 `bytes`가 아닌 이터러블이면 됩니다. 2-튜플을 목록 자체로 넘기면 항목 두 개로 읽습니다. `block=("Kim", "PERSON")`은
+  `bad_shape` 오류를 내고, `allow=("경기", "PERSON")`은 오류 없이 "경기"와 "PERSON"을 모든 레이블에 허용합니다. 레이블을
+  붙인 항목 하나는 `block=[("Kim", "PERSON")]`, `allow=[("경기", "PERSON")]`처럼 목록에 담아 쓰세요.
 - ASCII 영문자만 대소문자를 무시하고(`KIM` = `kim`) 그 밖은 정규화하지 않습니다. 글과 항목을 NFC로 넘기세요. macOS에서
   내보낸 파일이나 PDF에서 복사한 글은 NFD 한글일 수 있고, 그러면 맞지 않습니다(`unicodedata.normalize("NFC", text)`).
 - 정확한 형태만 맞습니다. 「박 지훈」과 「박지훈」은 다른 항목입니다. 「김」 같은 한 글자 항목은 김에 조사가 붙은

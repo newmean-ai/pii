@@ -62,7 +62,8 @@ final bool _layout = () {
   return true;
 }();
 
-/// Throws [StateError] when the native core's option structs differ in size from this package's bindings.
+/// Throws [StateError] when the native core's option structs differ in size from this package's bindings. Run once per
+/// isolate: by `NewmeanPii.create` and `fromBytes` before anything is loaded, and by [detectSpans].
 void checkLayout() => _layout;
 
 /// pii_table_options.delimiter of a `NewmeanPii.detectTable` delimiter ("auto", ",", "\t", ";" or "markdown").
@@ -142,11 +143,13 @@ List<PiiSpan> detectSpans(
     rc = piiDetectTable(m, text8, bytes.length, opts, t, out, n);
   }
   if (rc != piiOk) throw StateError('newmean_pii: detect failed: ${_error(rc)}');
-  final spans = <PiiSpan>[];
-  for (var i = 0; i < n.value; i++) {
-    final s = out.value[i];
-    spans.add(PiiSpan(s.u16Start, s.u16End, piiLabels[s.label], _source(s.source)));
+  final spans = out.value;
+  try {
+    return [
+      for (var i = 0; i < n.value; i++)
+        PiiSpan(spans[i].u16Start, spans[i].u16End, piiLabels[spans[i].label], _source(spans[i].source)),
+    ];
+  } finally {
+    if (spans.address != 0) piiSpansFree(spans); // also when _source throws
   }
-  if (out.value.address != 0) piiSpansFree(out.value);
-  return spans;
 });

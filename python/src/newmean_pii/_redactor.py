@@ -1,3 +1,4 @@
+import math
 from typing import Callable, Iterable, List, Optional, Tuple
 
 from . import _core
@@ -37,6 +38,15 @@ def _source(bits: int) -> str:
 
 def _family(label: str) -> str:
     return label[:-3] if label.endswith("_L2") else label
+
+
+def _check_sensitivity(value: float) -> float:
+    """float(value), which must be finite: NaN would turn model detection off and an infinity would mask everything or
+    nothing (the core also rejects them, with PII_ERR_ARG)."""
+    s = float(value)
+    if not math.isfinite(s):
+        raise ValueError("sensitivity must be a finite number")
+    return s
 
 
 def apply_redaction(
@@ -114,6 +124,7 @@ class Redactor:
         # reason, never the text).
         lists_id = check_lists_id(lists_id)
         lists, n_allow, n_block = make_lists(allow, block)
+        sensitivity = _check_sensitivity(sensitivity)  # after the lists, as in every package
 
         where = dict(model_dir=model_dir, cache_dir=cache_dir, model_url=model_url, on_progress=on_progress)
         tok, tok_path = load_file(size, "tokenizer", **where)
@@ -123,7 +134,7 @@ class Redactor:
         self._lists = lists  # kept for the redactor's lifetime; each call also holds it while the core borrows it
         self._lists_info = {"allow": n_allow, "block": n_block, "id": lists_id}
         self._mask = mask
-        self._sensitivity = float(sensitivity)
+        self._sensitivity = sensitivity
         self.size: str = size
         self.variant: str = variant
         self.version: str = MODEL_VERSION
@@ -146,12 +157,13 @@ class Redactor:
 
     @property
     def sensitivity(self) -> float:
-        """> 0 masks more (fewer misses, more over-masking), < 0 masks less; about -1..1. The O logit gets -sensitivity."""
+        """> 0 masks more (fewer misses, more over-masking), < 0 masks less; about -1..1. The O logit gets -sensitivity.
+        Always finite: NaN and infinities raise ValueError (since 1.4.1)."""
         return self._sensitivity
 
     def set_sensitivity(self, value: float) -> None:
-        """Changes the threshold without reloading the model."""
-        self._sensitivity = float(value)
+        """Changes the threshold without reloading the model (ValueError for NaN or an infinity; the old value stays)."""
+        self._sensitivity = _check_sensitivity(value)
 
     def _core_model(self) -> "_core.Model":
         m = self._model

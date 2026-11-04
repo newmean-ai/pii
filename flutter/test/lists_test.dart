@@ -13,12 +13,18 @@ const b = PiiBlockEntry.new;
 
 /// The outcome of creating a redactor with these lists on bytes that are not a model: the PiiListException as
 /// "list index reason", or "ok" when the lists passed (and the model check failed after them).
-Future<String> outcome({List<PiiAllowEntry>? allow, List<PiiBlockEntry>? block, String? listsId}) async {
+Future<String> outcome({
+  List<PiiAllowEntry>? allow,
+  List<PiiBlockEntry>? block,
+  String? listsId,
+  double sensitivity = 0,
+}) async {
   try {
     await NewmeanPii.fromBytes(
       onnx: Uint8List(1),
       tokenizer: Uint8List(1),
       size: 'nano',
+      sensitivity: sensitivity,
       allow: allow,
       block: block,
       listsId: listsId,
@@ -98,6 +104,9 @@ void main() {
         await outcome(allow: [a('x')], block: [b('x', 'ORG'), b('y', 'ORG'), b('y', 'PERSON')]),
         'block 2 label_conflict',
       );
+      // a list error before a sensitivity error (as in npm, Swift, Kotlin and Python)
+      expect(await outcome(block: [b('', 'PERSON')], sensitivity: double.nan), 'block 0 empty');
+      expect(await outcome(listsId: '', sensitivity: double.infinity), 'meta null bad_lists_id');
     });
 
     test('too_many after 10,000 entries', () async {
@@ -116,6 +125,7 @@ void main() {
           size: 'nano',
           readFile: (p) async => (read..add(p), Uint8List(0)).$2,
           block: [b('박지훈 ', 'PERSON')],
+          sensitivity: double.nan, // the list error comes first
         ),
         throwsA(
           isA<PiiListException>()
@@ -156,7 +166,7 @@ void main() {
       );
       final l = p.info.lists;
       expect((l.allow, l.block, l.id), (3, 2, 'survey-2026-11 v3'));
-      expect(p.info.packageVersion, '1.4.0');
+      expect(p.info.packageVersion, '1.4.1');
       await p.dispose();
     });
 

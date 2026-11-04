@@ -8,7 +8,7 @@ Flutter·Dart 앱에서 텍스트 속 개인정보를 **기기 안에서** 찾�
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.4.0
+  newmean_pii: ^1.4.1
 ```
 
 ```dart
@@ -67,7 +67,8 @@ SHA-256으로 검사합니다.
 
 `PERSON`, `EMAIL`, `PHONE`, `ADDRESS`, `ID_NUMBER`, `FINANCIAL`, `ORG`, `USERNAME`, `URL`, `DATE_OF_BIRTH`, `SECRET`, 그리고
 간접 식별자를 위한 2단계 레이블 두 개: `PERSON_L2`(직함을 붙인 성, 별명, 이니셜)와 `URL_L2`(공개 프로필·페이지 URL).
-2단계를 가리지 않으려면 `labels: level1Labels`를 넘기세요.
+2단계를 가리지 않으려면 `labels: level1Labels`를 넘기세요. `labels`에 레이블이 아닌 이름이 있으면 npm 패키지처럼
+무시합니다(Python·Kotlin 패키지는 오류를 냅니다).
 
 ## API
 
@@ -75,7 +76,7 @@ SHA-256으로 검사합니다.
 NewmeanPii.create({
   String size = 'medium',      // nano, small, medium, large
   String? variant,             // 'q4' 또는 'q4e'; 기본 large/medium은 q4e, small/nano는 q4
-  double sensitivity = 0,      // > 0이면 더 가리고, < 0이면 덜 가림 (대략 −1..1)
+  double sensitivity = 0,      // > 0이면 더 가리고, < 0이면 덜 가림 (대략 −1..1); NaN·±무한대는 오류
   Iterable<String>? labels,    // 가릴 레이블; 기본 전체 (piiLabels)
   bool regex = false,          // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림;
                                // 기본 false(모델만): 더 찾는 것은 거의 없고 과잉 마스킹은 두 배
@@ -133,8 +134,8 @@ final pii = await NewmeanPii.create(
   block: [PiiBlockEntry('박지훈', 'PERSON'), PiiBlockEntry('새솔고등학교', 'ORG')],
   listsId: 'survey-2026-11 v3',
 );
-final r = await pii.redact('박지훈님께 제주에서 연락');  // NFC 텍스트
-// r.text: "[PERSON]님께 제주에서 연락"
+final r = await pii.redact('제주, 박지훈');  // NFC 텍스트
+// r.text: "제주, [PERSON]" (목록이 없으면 medium 모델은 "[PERSON], [PERSON]")
 ```
 
 - `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `"block"`). 모델이 찾지 못한 곳도,

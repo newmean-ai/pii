@@ -39,13 +39,13 @@ extern "C" {
 #define PII_API
 #endif
 
-#define PII_VERSION "1.4.0"       /* this library */
+#define PII_VERSION "1.4.1"       /* this library */
 #define PII_MODEL_VERSION "1.1.0" /* model release (Hugging Face tag v1.1.0) */
 #define PII_DEFAULT_SIZE "medium"
 
 /* Return codes */
 #define PII_OK 0
-#define PII_ERR_ARG (-1)    /* invalid argument (NULL pointer, extra span out of range, unknown label) */
+#define PII_ERR_ARG (-1)    /* invalid argument (NULL pointer, extra span out of range, unknown label, non-finite sensitivity) */
 #define PII_ERR_NOMEM (-2)  /* out of memory */
 #define PII_ERR_MODEL (-3)  /* the model failed (window longer than the model allows) */
 
@@ -144,7 +144,9 @@ typedef struct {
    * prefix). */
   size_t struct_size;
   /* Moves the decision threshold: > 0 masks more (fewer misses, more over-masking), < 0 masks less. Range about -1..1.
-   * Same as the npm option `sensitivity`: the O logit gets the bias -sensitivity. Default 0. */
+   * Same as the npm option `sensitivity`: the O logit gets the bias -sensitivity. Default 0. Must be finite: NaN or
+   * +/-infinity is PII_ERR_ARG (1.4.1; earlier releases dropped every model span with NaN and masked everything or
+   * nothing with an infinity). */
   double sensitivity;
   /* Labels to report: PII_LABEL_BIT(label) per label. Default PII_LABELS_ALL; 0 reports nothing. */
   uint32_t labels;
@@ -188,7 +190,7 @@ typedef struct {
 #define PII_TABLE_CONTEXT_NONE 0
 #define PII_TABLE_CONTEXT_HEADER 1
 
-/* Library version ("1.4.0"). */
+/* Library version ("1.4.1"). */
 PII_API const char *pii_version(void);
 /* Message of a return code ("invalid argument", ...); static, never NULL. */
 PII_API const char *pii_strerror(int code);
@@ -218,8 +220,9 @@ PII_API void pii_model_get_info(const pii_model *model, pii_model_info *info);
 /* Spans to mask in utf8[0, len), sorted and non-overlapping and widened to whole grapheme clusters (the npm package's
  * detect() with regex: false, plus options->extra when given, and options->lists: block entries added, allowed spans
  * dropped). options may be NULL (defaults). On success *out holds *n_out spans (NULL when none);
- * free with pii_spans_free. Returns PII_OK or a PII_ERR_* code (pii_strerror). Texts longer than INT32_MAX bytes are
- * PII_ERR_ARG; working memory is about 20 bytes per input byte plus one 256-token window. */
+ * free with pii_spans_free. Returns PII_OK or a PII_ERR_* code (pii_strerror). Texts longer than INT32_MAX bytes and
+ * malformed options (another struct_size, a NaN or infinite sensitivity, an extra span out of range or with an unknown
+ * label or unit) are PII_ERR_ARG; working memory is about 20 bytes per input byte plus one 256-token window. */
 PII_API int pii_detect(const pii_model *model, const char *utf8, size_t len, const pii_options *options, pii_span **out,
                        size_t *n_out);
 PII_API void pii_spans_free(pii_span *spans);
@@ -245,8 +248,9 @@ PII_API int pii_detect_table(const pii_model *model, const char *utf8, size_t le
 /* Validates and copies the lists (an empty list may be NULL with count 0) into an immutable handle for pii_options.lists.
  * PII_OK: *out holds the handle (free with pii_lists_free after every call that borrows it has returned). PII_ERR_ARG with
  * *err set: an invalid entry (the first in list order: allow, then block; err never holds the entry's text); PII_ERR_ARG
- * with *err unset: a NULL out or err, or a NULL list with a nonzero count. Equal entries (same form and label) merge;
- * allow entries that differ only in label merge into one entry allowing all their families. */
+ * with *err unset: a NULL out or err, or a NULL list with a nonzero count. Every error leaves *out NULL (when out is not
+ * NULL). Equal entries (same form and label) merge; allow entries that differ only in label merge into one entry allowing
+ * all their families. */
 PII_API int pii_lists_create(const pii_term *allow, size_t n_allow, const pii_term *block, size_t n_block, pii_lists **out,
                              pii_list_error *err);
 PII_API void pii_lists_free(pii_lists *lists);

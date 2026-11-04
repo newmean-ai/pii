@@ -201,8 +201,8 @@ void pii_lists_free(pii_lists *l) {
 
 int pii_lists_create(const pii_term *allow, size_t n_allow, const pii_term *block, size_t n_block, pii_lists **out,
                      pii_list_error *err) {
+  if (out) *out = NULL;  // before the argument checks: every error leaves *out NULL
   if (!out || !err || (!allow && n_allow) || (!block && n_block)) return PII_ERR_ARG;
-  *out = NULL;
   entry *ea = NULL, *eb = NULL;
   uint32_t *ba = NULL, *bb = NULL;
   pii_lists *l = NULL;

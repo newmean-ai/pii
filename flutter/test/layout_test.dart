@@ -7,6 +7,7 @@ import 'dart:io';
 
 import 'package:ffi/ffi.dart';
 import 'package:newmean_pii/src/ffi.dart';
+import 'package:newmean_pii/src/native.dart' show checkLayout;
 import 'package:test/test.dart';
 
 const core = '../native/core';
@@ -100,6 +101,9 @@ void main() {
     }
     expect(cFields(header, 'pii_options').last, ('Pointer', 'lists'));
   });
+
+  // NewmeanPii.create and fromBytes run it before anything is loaded
+  test('the bundled core passes the load-time size check', () => expect(checkLayout, returnsNormally));
 
   group('offsets on this host', () {
     late DynamicLibrary lib;

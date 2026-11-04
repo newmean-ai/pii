@@ -13,7 +13,7 @@ Swift Package Manager: in Xcode, File › Add Package Dependencies… › `https
 `NewmeanPII`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.4.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.4.1"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -76,7 +76,7 @@ profile or page URLs). Pass `labels: PIILabel.level1` to leave level 2 visible.
 try await PIIRedactor(
   size: PIISize = .medium,          // .nano, .small, .medium, .large
   variant: PIIVariant? = nil,       // .q4 or .q4e; default q4e for large/medium, q4 for small/nano
-  sensitivity: Double = 0,          // > 0 masks more, < 0 masks less (about -1...1)
+  sensitivity: Double = 0,          // > 0 masks more, < 0 masks less (about -1...1); NaN or ±infinity throws
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                     // default false (model only): almost no extra coverage, double the over-masking
@@ -93,7 +93,8 @@ try await redactor.redact(text, mode: .tag)      // (text, spans); .tag → [EMA
                                                  // .blank → removed, .custom { span, original in ... }
 try await redactor.detectTable(text)             // table mode (see Tables)
 try await redactor.redactTable(text, mode: .tag) // (text, spans)
-redactor.sensitivity = 0.3                       // changes the threshold without reloading
+redactor.sensitivity = 0.3                       // changes the threshold without reloading; after NaN or ±infinity,
+                                                 // detecting calls throw until a finite value is set
 PIIRedactor.applyRedaction(to: text, spans: spans, mode: .tag)
 PIIRegex.spans(in: text)                         // the pattern layer on its own
 ```
@@ -129,8 +130,8 @@ let redactor = try await PIIRedactor(
   allow: ["제주", "배민", PIIAllowEntry(text: "경기", label: .person)],  // a string literal allows any label
   block: [PIIBlockEntry(text: "박지훈", label: .person), PIIBlockEntry(text: "새솔고등학교", label: .org)],
   listsId: "survey-2026-11 v3")
-let (text, _) = try await redactor.redact("박지훈님께 제주에서 연락".precomposedStringWithCanonicalMapping)
-// text: "[PERSON]님께 제주에서 연락"
+let (text, _) = try await redactor.redact("제주, 박지훈".precomposedStringWithCanonicalMapping)
+// text: "제주, [PERSON]" (without the lists, the medium model gives "[PERSON], [PERSON]")
 ```
 
 - `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source

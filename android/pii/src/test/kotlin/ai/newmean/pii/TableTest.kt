@@ -194,7 +194,7 @@ class TableTest {
     fun info() {
         TestEnv.redactor(PiiSize.NANO).use { r ->
             val i = r.info()
-            assertEquals("1.4.0", i.packageVersion)
+            assertEquals("1.4.1", i.packageVersion)
             assertEquals(PiiModels.VERSION, i.modelVersion)
             assertEquals(PiiSize.NANO, i.size)
             assertEquals(PiiModels.modelPin(PiiSize.NANO, r.variant), i.model)

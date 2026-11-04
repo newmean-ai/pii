@@ -13,15 +13,18 @@ void main() {
   late HttpServer server;
   late Directory cache;
   final requests = <String>[];
+  final agents = <String?>{};
   var tamper = false;
 
   setUp(() async {
     cache = await Directory.systemTemp.createTemp('newmean_pii_test');
     requests.clear();
+    agents.clear();
     tamper = false;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((req) async {
       requests.add(req.uri.path);
+      agents.add(req.headers.value(HttpHeaders.userAgentHeader));
       final f = File('${modelDir('nano')}${req.uri.path}');
       if (!f.existsSync()) {
         req.response.statusCode = 404;
@@ -50,6 +53,7 @@ void main() {
       'onnx/model_q4.onnx',
     });
     expect(File('${cache.path}/v1.1.0/pii-nano/onnx/model_q4.onnx').lengthSync(), modelFile('nano', 'q4').bytes);
+    expect(agents, {'newmean_pii-dart/$nativeVersion'}); // the package version, not the model's
     final spans = await a.detect('kim@example.com');
     await a.dispose();
 

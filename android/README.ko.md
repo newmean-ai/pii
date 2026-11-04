@@ -11,7 +11,7 @@
 ```kotlin
 // 앱 모듈의 build.gradle.kts
 dependencies {
-    implementation("ai.newmean:pii:1.4.0")
+    implementation("ai.newmean:pii:1.4.1")
 }
 ```
 
@@ -146,7 +146,8 @@ val redactor = PiiRedactor.create(
     block = listOf(PiiBlockEntry("박지훈", PiiLabels.PERSON), PiiBlockEntry("새솔고등학교", PiiLabels.ORG)),
     listsId = "survey-2026-11 v3",
 )
-redactor.redact(Normalizer.normalize("박지훈님께 제주에서 연락", Normalizer.Form.NFC)).text  // "[PERSON]님께 제주에서 연락"
+redactor.redact(Normalizer.normalize("제주, 박지훈", Normalizer.Form.NFC)).text  // "제주, [PERSON]"
+// 목록이 없으면 medium 모델은 "[PERSON], [PERSON]"
 ```
 
 - `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 레이블로 가립니다(출처 `BLOCK`). 모델이 찾지 못한 곳도,

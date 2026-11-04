@@ -279,13 +279,16 @@ export function detectDelimiter(text: string): Table["delimiter"] | null {
   return bestScore >= 2 ? best : null;
 }
 
+/** Throws on a delimiter option that is not one of TableDelimiter. */
+export function checkDelimiter(delimiter: TableDelimiter): void {
+  if (delimiter !== "auto" && delimiter !== "markdown" && delimiter !== "," && delimiter !== "\t" && delimiter !== ";")
+    throw new Error(`[@newmean-ai/pii] unknown table delimiter ${JSON.stringify(delimiter)} ("auto", ",", "\\t", ";", "markdown")`);
+}
+
 /** Parsed table, or null when the text is not a table (no delimiter found, or fewer than 2 rows). */
 export function parseTable(text: string, delimiter: TableDelimiter = "auto"): Table | null {
-  let d: Table["delimiter"] | null;
-  if (delimiter === "auto") d = detectDelimiter(text);
-  else if (delimiter === "markdown") d = "|";
-  else if (delimiter === "," || delimiter === "\t" || delimiter === ";") d = delimiter;
-  else throw new Error(`[@newmean-ai/pii] unknown table delimiter ${JSON.stringify(delimiter)} ("auto", ",", "\\t", ";", "markdown")`);
+  checkDelimiter(delimiter);
+  const d: Table["delimiter"] | null = delimiter === "auto" ? detectDelimiter(text) : delimiter === "markdown" ? "|" : delimiter;
   if (!d) return null;
   const t = d === "|" ? parseMarkdown(text) : parseCsv(text, d);
   return t.rows >= 2 ? t : null;

@@ -20,6 +20,7 @@ permissions:
 
 jobs:
   build:
+    if: github.repository == 'newmean-ai/pii'  # publishing only from the public repository
     uses: ./.github/workflows/python-wheels.yml
 
   publish:

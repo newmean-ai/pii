@@ -62,7 +62,7 @@ final class NewmeanPii implements Finalizable {
   NewmeanPii._(
     this.size,
     this.variant,
-    this.sensitivity,
+    this._sensitivity,
     this._labels,
     this.regex,
     this.keepEmoji,
@@ -85,8 +85,10 @@ final class NewmeanPii implements Finalizable {
   ///
   /// - [size]: "nano" (≈2.6 MB), "small" (≈7.1 MB), "medium" (≈11.3 MB, default), "large" (≈15.5 MB).
   /// - [variant]: "q4" or "q4e"; default q4e for large and medium, q4 for small and nano ([defaultVariant]).
-  /// - [sensitivity]: > 0 masks more (fewer misses, more over-masking), < 0 masks less; about −1..1, default 0.
-  /// - [labels]: labels to mask, default all ([piiLabels]); [level1Labels] leaves level 2 identifiers visible.
+  /// - [sensitivity]: > 0 masks more (fewer misses, more over-masking), < 0 masks less; about −1..1, default 0. NaN and
+  ///   ±infinity throw [ArgumentError].
+  /// - [labels]: labels to mask, default all ([piiLabels]); [level1Labels] leaves level 2 identifiers visible. Names that
+  ///   are not labels are ignored, as in the npm package.
   /// - [regex]: also mask a few patterns (email, URL, card/account, phone, Korean resident number). Default false: they
   ///   add almost no coverage on the public test and double over-masking.
   /// - [keepEmoji]: false (default): emoji are taken out of the text the model reads, so the model does not read them as PII; spans keep the
@@ -133,6 +135,7 @@ final class NewmeanPii implements Finalizable {
     bool verify = true,
     void Function(PiiProgress progress)? onProgress,
   }) async {
+    checkLayout(); // a core of another release fails here, before any file is read
     final v = _checkVariant(size, variant);
     final tokPin = modelFile(size, 'tokenizer');
     final onnxPin = modelFile(size, v);
@@ -141,6 +144,7 @@ final class NewmeanPii implements Finalizable {
     final lists = _lists0(allow, block, listsId); // before any model file is read
     ReceivePort? port;
     try {
+      _checkSensitivity(sensitivity); // after the lists, as in every package
       final int model;
       if (readFile != null) {
         final tok = await readFile(tokPin.path);
@@ -226,11 +230,13 @@ final class NewmeanPii implements Finalizable {
     String? listsId,
     bool verify = true,
   }) async {
+    checkLayout();
     final v = _checkVariant(size, variant);
     final tokPin = modelFile(size, 'tokenizer');
     final onnxPin = modelFile(size, v);
     final lists = _lists0(allow, block, listsId); // before the model is loaded
     try {
+      _checkSensitivity(sensitivity);
       final model = await _loadBytes(onnx, tokenizer, size, tokPin, onnxPin, verify);
       return NewmeanPii._(
         size,
@@ -280,8 +286,18 @@ final class NewmeanPii implements Finalizable {
     return v;
   }
 
-  /// Decision threshold (see [create]); changing it needs no reload and applies to later calls.
-  double sensitivity;
+  // NaN would switch the model off and ±infinity would mask everything or nothing (the core also refuses them).
+  static double _checkSensitivity(double value) {
+    if (!value.isFinite) throw ArgumentError.value(value, 'sensitivity', 'sensitivity must be a finite number');
+    return value;
+  }
+
+  double _sensitivity;
+
+  /// Decision threshold (see [create]); changing it needs no reload and applies to later calls. NaN and ±infinity throw
+  /// [ArgumentError] and keep the previous value.
+  double get sensitivity => _sensitivity;
+  set sensitivity(double value) => _sensitivity = _checkSensitivity(value);
 
   /// Same as setting [sensitivity] (the npm package's `setSensitivity`).
   void setSensitivity(double value) => sensitivity = value;
@@ -418,7 +434,7 @@ final class NewmeanPii implements Finalizable {
 
 /// What a redactor runs ([NewmeanPii.info]).
 final class PiiRedactorInfo {
-  /// Version of this package and its native core ("1.4.0").
+  /// Version of this package and its native core ("1.4.1").
   final String packageVersion;
 
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).

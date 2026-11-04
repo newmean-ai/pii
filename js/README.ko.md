@@ -36,7 +36,7 @@ const { text, spans } = await redactor.redact("제 메일은 kim@example.com, �
 
 | `engine` | 실행기 내려받기 | 비고 |
 |---|---|---|
-| `"builtin"` (기본) | 약 20 KB(brotli, JS와 WebAssembly 합계) | 이 모델 전용 내장 엔진. 시작이 빠르고, 측정한 휴대폰에서 짧은 텍스트는 약 1.9배, 긴 텍스트는 약 24% 빠름(휴대폰 네 대 평균). 브라우저가 relaxed SIMD를 지원하면(Chrome, Edge, Firefox) 융합 곱셈-덧셈 사용 |
+| `"builtin"` (기본) | 약 13 KB(brotli, JS와 WebAssembly 합계) | 이 모델 전용 내장 엔진. 시작이 빠르고, 측정한 휴대폰에서 짧은 텍스트는 약 1.9배, 긴 텍스트는 약 24% 빠름(휴대폰 네 대 평균). 브라우저가 relaxed SIMD를 지원하면(Chrome, Edge, Firefox) 융합 곱셈-덧셈 사용 |
 | `"onnxruntime"` | onnxruntime-web, 약 2.4 MB(brotli) | 범용 ONNX 실행기, 교차 출처 격리 페이지에서 멀티스레드 |
 
 엔진은 각각 따로 나뉜 청크로, 처음 쓸 때 불러옵니다. 앱은 고른 엔진만 내려받습니다.
@@ -54,7 +54,8 @@ newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정�
 
 `PERSON`, `EMAIL`, `PHONE`, `ADDRESS`, `ID_NUMBER`, `FINANCIAL`, `ORG`, `USERNAME`, `URL`, `DATE_OF_BIRTH`, `SECRET`, 그리고 간접
 식별자를 위한 수준 2 라벨 두 개: `PERSON_L2`(성+직함, 별명, 이니셜)와 `URL_L2`(공개 프로필·페이지 URL). 수준 2를 가리지 않으려면
-`labels: LEVEL1_LABELS`를 넘기세요.
+`labels: LEVEL1_LABELS`를 넘기세요. `labels`에 라벨이 아닌 이름이 있으면 이 패키지는 그 이름을 무시합니다(Python과 Kotlin
+패키지는 오류를 냅니다).
 
 ## API
 
@@ -67,7 +68,9 @@ newmean-pii-dataset (공개 테스트, 54개 언어)에서 모델은 개인정�
 잇습니다. 띄어쓰기 없이 쓰는 문자(중국어, 일본어, 태국어, 크메르어 등)는 구간을 넓히지 않으며, 한글과 숫자·라틴 문자가 만나는 곳에서 낱말이 끝납니다(「010-1234-5678입니다」 → `[PHONE]입니다`), 한글 구간 뒤에 붙은 조사는 그대로 둡니다(「홍길동님께」 → `[PERSON]님께`). 구간이 끝나는 곳만 바꿀 뿐 무엇을 가릴지는 바꾸지 않습니다. 모델이 이름으로 잘못 읽은 짧은 값(「경기도」 등)은 `[PERSON]기도`가 아니라 `[PERSON]`이 되며, 이런 값을 그대로 두려면 `strictShortNames`를 씁니다. 조금 더 가릴 뿐 덜 가리지는 않으며,
 표 모드에서는 칸 안에서만 넓힙니다. `wholeWords: false`면 1.2와 같은 구간을 받습니다. `strictShortNames: true`면 모델이 8토큰 이하로 읽는 글(설문 응답, 표 칸)은 근거가 더 있어야 사람 이름으로 봅니다. 「경기」, 「남성」, 「네이버」는 그대로 두고 「김민지」, "Maria Lopez"는 여전히 찾습니다. large에서 개인정보 없는 짧은 설문 항목을 가린 비율은 7.9%에서 4.3%로 줄고, 단독 이름을 찾은 비율은 98.9%에서 96.5%로 줄어듭니다. 긴 글은 그대로입니다. `redactor.version`은 모델 버전(1.1.0)이고, 패키지 버전은 `VERSION` 또는
 `redactor.info.packageVersion`입니다. `info`에는 감사 기록용으로 패키지·모델 버전, 크기, 종류, 실행기, 두 모델 파일의 크기와
-SHA-256이 들어 있습니다(`verify`가 켜져 있으면 검사한 값). `fetch` 옵션으로 모델 파일을 받을 함수를 넘길 수 있습니다(기본
+SHA-256이 들어 있습니다. `info.verified`는 불러온 두 파일의 SHA-256을 실제로 계산해 맞았을 때만 true입니다. `verify: false`면(검사 없이
+사용) false이고, 일반 HTTP처럼 보안 컨텍스트가 아니어서 `crypto.subtle`을 쓸 수 없는 페이지에서도(크기만 확인) false입니다.
+`fetch` 옵션으로 모델 파일을 받을 함수를 넘길 수 있습니다(기본
 `globalThis.fetch`, Node나 테스트에서 사용). 추론은 호출한 스레드에서 실행되므로, 긴 텍스트는 Web Worker 안에서 redactor를
 만드는 것을 권합니다.
 
@@ -81,7 +84,8 @@ const redactor = await createRedactor({
   block: [{ text: "박지훈", label: "PERSON" }, { text: "새솔고등학교", label: "ORG" }],
   listsId: "survey-2026-11 v3",
 });
-await redactor.redact("박지훈님께 제주에서 연락".normalize("NFC")); // "[PERSON]님께 제주에서 연락"
+const { text } = await redactor.redact("제주, 박지훈".normalize("NFC"));
+// text: "제주, [PERSON]" (목록이 없으면 medium 모델은 "[PERSON], [PERSON]")
 ```
 
 - `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 라벨로 가립니다(출처 `"block"`). 모델이 찾지 못한 곳도,

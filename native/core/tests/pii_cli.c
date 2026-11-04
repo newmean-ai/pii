@@ -24,6 +24,8 @@
 //                                                         with a model, malformed and truncated model files); "ok" or the
 //                                                         failures
 //   pii_cli fuzz MODEL.onnx TOKENIZER.json N             N mutated model files, N / 2 tokenizer files, 2N random byte strings
+#include <float.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -315,6 +317,11 @@ static void selftest_combine(void) {
   in[0] = cs(0, 3, PII_PERSON, PII_SOURCE_MODEL);
   in[1] = cs(2, 6, PII_ADDRESS, PII_SOURCE_MODEL);
   EXPECT(pii_combine(in, 2, PII_LABELS_ALL, NULL, out) == 1 && out[0].label == PII_ADDRESS);
+  // every field of a region is written (the block key fields zero), whatever out held before
+  memset(out, 0xff, sizeof out);
+  in[0] = cs(5, 12, PII_PHONE, PII_SOURCE_MODEL);
+  in[1] = cs(3, 14, PII_FINANCIAL, PII_SOURCE_REGEX);
+  EXPECT(pii_combine(in, 2, PII_LABELS_ALL, NULL, out) == 1 && out[0].key_start == 0 && out[0].key_len == 0 && out[0].key_index == 0);
 }
 
 // More than 32 spans (merge sort) in reverse order; the result must equal the one of the sorted input.
@@ -352,6 +359,24 @@ static void selftest_static(void) {
   size_t n;
   EXPECT(pii_detect(NULL, "a", 1, NULL, &s, &n) == PII_ERR_ARG);
   EXPECT(pii_detect_table(NULL, "a", 1, NULL, NULL, &s, &n) == PII_ERR_ARG);
+  // the options of pii_detect and pii_detect_table: a NaN or infinite sensitivity is rejected (1.4.1), finite ones are kept
+  pii_options o, got;
+  EXPECT(pii_read_options(NULL, &got) == PII_OK && got.sensitivity == 0 && got.labels == PII_LABELS_ALL);
+  const double bad_sens[] = {NAN, -NAN, INFINITY, -INFINITY};
+  for (size_t i = 0; i < sizeof bad_sens / sizeof bad_sens[0]; i++) {
+    pii_options_init(&o);
+    o.sensitivity = bad_sens[i];
+    EXPECT(pii_read_options(&o, &got) == PII_ERR_ARG);
+  }
+  const double good_sens[] = {0.0, -0.0, 0.3, -1.0, 1.0, 25.0, DBL_MIN / 2, DBL_MAX, -DBL_MAX};
+  for (size_t i = 0; i < sizeof good_sens / sizeof good_sens[0]; i++) {
+    pii_options_init(&o);
+    o.sensitivity = good_sens[i];
+    EXPECT(pii_read_options(&o, &got) == PII_OK && got.sensitivity == good_sens[i]);
+  }
+  pii_options_init(&o);
+  o.n_extra = 1;  // extra NULL
+  EXPECT(pii_read_options(&o, &got) == PII_ERR_ARG);
   pii_table_options t;
   pii_table_options_init(&t);
   pii_table_options_init(NULL);
@@ -808,6 +833,17 @@ static void selftest_lists(void) {
   pii_list_error e = {-1, 7, 7};
   const pii_term ok = term("Kim", PII_PERSON);
   EXPECT(pii_lists_create(NULL, 1, NULL, 0, &l, &e) == PII_ERR_ARG && !l && e.list == -1 && e.index == 7);  // err unset
+  // every error leaves *out NULL, also an argument error caught before anything is read
+  pii_lists *const stale = (pii_lists *)&e;
+  l = stale;
+  EXPECT(pii_lists_create(NULL, 1, NULL, 0, &l, &e) == PII_ERR_ARG && !l);
+  l = stale;
+  EXPECT(pii_lists_create(&ok, 1, NULL, 1, &l, &e) == PII_ERR_ARG && !l);
+  l = stale;
+  EXPECT(pii_lists_create(&ok, 1, NULL, 0, &l, NULL) == PII_ERR_ARG && !l);
+  const pii_term edge = term(" Kim", -1);
+  l = stale;
+  EXPECT(pii_lists_create(&edge, 1, NULL, 0, &l, &e) == PII_ERR_ARG && !l && e.reason == PII_LIST_ERR_EDGE_SPACE);
   EXPECT(pii_lists_create(&ok, 1, NULL, 0, NULL, &e) == PII_ERR_ARG && pii_lists_create(&ok, 1, NULL, 0, &l, NULL) == PII_ERR_ARG);
   EXPECT(pii_lists_create(NULL, 0, NULL, 0, &l, &e) == PII_OK && l);
   size_t na = 9, nb = 9;
@@ -998,6 +1034,25 @@ static void selftest_model(const char *onnx, const char *tok) {
   EXPECT(pii_detect(m, t2, strlen(t2), &o, &s, &n) == PII_ERR_ARG);
   o.struct_size = 8;
   EXPECT(pii_detect(m, t2, strlen(t2), &o, &s, &n) == PII_ERR_ARG);
+  // a NaN or infinite sensitivity fails in detect and table mode (1.4.1) with no spans; a large finite one still works
+  const double bad_sens[] = {NAN, INFINITY, -INFINITY};
+  for (size_t i = 0; i < sizeof bad_sens / sizeof bad_sens[0]; i++) {
+    pii_options_init(&o);
+    o.sensitivity = bad_sens[i];
+    s = (pii_span *)&o;
+    n = 9;
+    EXPECT(pii_detect(m, text, strlen(text), &o, &s, &n) == PII_ERR_ARG && !s && n == 0);
+    s = (pii_span *)&o;
+    n = 9;
+    EXPECT(pii_detect_table(m, text, strlen(text), &o, NULL, &s, &n) == PII_ERR_ARG && !s && n == 0);
+  }
+  pii_options_init(&o);
+  o.sensitivity = 1e6;  // every token is read as PII: the whole text is one or more spans
+  EXPECT(pii_detect(m, text, strlen(text), &o, &s, &n) == PII_OK && n > 0 && s[0].byte_start == 0);
+  pii_spans_free(s);
+  o.sensitivity = -1e6;  // no model spans
+  EXPECT(pii_detect(m, text, strlen(text), &o, &s, &n) == PII_OK && n == 0);
+  EXPECT(pii_detect_table(m, text, strlen(text), &o, NULL, &s, &n) == PII_OK && n == 0);
   // invalid UTF-8 and WTF-8 surrogates: one code point per bad byte, offsets stay inside the input
   const char bad[] = "\xff\xfe Kim \xc3 \xed\xa0\x80 kim@example.com \xe2\x82";
   EXPECT(pii_detect(m, bad, sizeof bad - 1, NULL, &s, &n) == PII_OK);

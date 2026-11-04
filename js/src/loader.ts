@@ -46,26 +46,35 @@ async function readBody(res: Response, name: string, total: number, opts: LoadOp
   return out;
 }
 
-export async function loadFile(url: string, name: string, info: FileInfo | undefined, opts: LoadOptions): Promise<Uint8Array> {
+export interface Loaded {
+  bytes: Uint8Array;
+  /** The file's SHA-256 was computed and matched the pinned value. false when `verify` is off, no value is pinned for the
+   *  file, or crypto.subtle is unavailable (only the size was checked then). */
+  verified: boolean;
+}
+
+export async function loadFile(url: string, name: string, info: FileInfo | undefined, opts: LoadOptions): Promise<Loaded> {
   const cache = opts.cache && typeof caches !== "undefined" ? await caches.open(CACHE_NAME).catch(() => null) : null;
-  const check = async (bytes: Uint8Array) => {
-    if (!opts.verify || !info) return true;
-    if (bytes.length !== info.bytes) return false;
+  // "bad": size or SHA-256 differs; "unchecked": accepted without a SHA-256 check; "ok": SHA-256 matches
+  const check = async (bytes: Uint8Array): Promise<"ok" | "unchecked" | "bad"> => {
+    if (!opts.verify || !info) return "unchecked";
+    if (bytes.length !== info.bytes) return "bad";
     const h = await sha256(bytes);
     if (h === null) {
       console.warn("[@newmean-ai/pii] crypto.subtle is unavailable (insecure context); model files are not verified");
-      return true;
+      return "unchecked";
     }
-    return h === info.sha256;
+    return h === info.sha256 ? "ok" : "bad";
   };
 
   if (cache) {
     const hit = await cache.match(url).catch(() => undefined);
     if (hit) {
       const bytes = new Uint8Array(await hit.arrayBuffer());
-      if (await check(bytes)) {
+      const c = await check(bytes);
+      if (c !== "bad") {
         opts.onProgress?.({ file: name, loaded: bytes.length, total: bytes.length, cached: true });
-        return bytes;
+        return { bytes, verified: c === "ok" };
       }
       await cache.delete(url);
     }
@@ -75,7 +84,8 @@ export async function loadFile(url: string, name: string, info: FileInfo | undef
   if (!res.ok) throw new Error(`[@newmean-ai/pii] failed to download ${url}: HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || info?.bytes || 0;
   const bytes = await readBody(res, name, total, opts);
-  if (!(await check(bytes))) {
+  const c = await check(bytes);
+  if (c === "bad") {
     throw new Error(`[@newmean-ai/pii] ${url} does not match the published model file (size or SHA-256 differs)`);
   }
   if (cache) {
@@ -83,5 +93,5 @@ export async function loadFile(url: string, name: string, info: FileInfo | undef
       .put(url, new Response(bytes as BodyInit, { headers: { "content-type": "application/octet-stream" } }))
       .catch(() => undefined); // quota or private mode: keep working without the cache
   }
-  return bytes;
+  return { bytes, verified: c === "ok" };
 }

@@ -71,6 +71,21 @@ def test_labels_and_sensitivity(nano):
     assert sum(len(nano.detect(t)) for t in texts) == sum(len(base.detect(t)) for t in texts)
 
 
+def test_sensitivity_must_be_finite(nano):
+    r = Redactor("nano", "q4", model_dir=model_dir("nano"), sensitivity=0.5)
+    for v in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="^sensitivity must be a finite number$"):
+            r.set_sensitivity(v)
+    assert r.sensitivity == 0.5 and r.detect(TEXT)
+    # the core rejects them too (PII_ERR_ARG), from both calls that read the options
+    m, mask = r._core_model(), r._mask
+    for v in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="^invalid argument$"):
+            m.detect(TEXT, v, mask)
+        with pytest.raises(ValueError, match="^invalid argument$"):
+            m.detect_table("name,phone\nKim,010-1234-5678\n", v, mask)
+
+
 def test_regex_layer_merges_like_npm(nano):
     """regex=True: the C core merges the pattern spans exactly like the npm combine(); checked against a Python port."""
     # whole_words off: widening runs after the merge, so the port compares the spans before it

@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from . import DEFAULT_SIZE, SIZES, VARIANTS, create_redactor, fetch_model
+from ._redactor import _check_sensitivity
 
 
 def main(argv=None) -> int:
@@ -23,6 +24,10 @@ def main(argv=None) -> int:
     if args.cmd == "download":
         print(fetch_model(args.size, args.variant, cache_dir=args.cache_dir))
         return 0
+    try:  # argparse's float accepts "nan" and "inf": a usage error (exit 2) before any model file is loaded
+        _check_sensitivity(args.sensitivity)
+    except ValueError as e:
+        r.error(f"argument --sensitivity: {e}")
     redactor = create_redactor(
         args.size, args.variant, sensitivity=args.sensitivity, regex=args.regex, model_dir=args.model_dir, cache_dir=args.cache_dir
     )

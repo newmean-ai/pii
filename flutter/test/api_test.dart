@@ -131,6 +131,22 @@ void main() {
       expect(high.length, greaterThan(low.length));
     });
 
+    // NaN would switch the model off and ±infinity would mask everything or nothing
+    test('sensitivity: NaN and ±infinity are refused by the setter, which keeps the previous value', () async {
+      final p = await NewmeanPii.create(size: 'nano', modelDir: modelDir('nano'), sensitivity: 0.5);
+      for (final v in [double.nan, double.infinity, double.negativeInfinity]) {
+        expect(
+          () => p.sensitivity = v,
+          throwsA(isA<ArgumentError>().having((e) => e.message, 'message', 'sensitivity must be a finite number')),
+        );
+        expect(() => p.setSensitivity(v), throwsArgumentError);
+        expect(p.sensitivity, 0.5);
+      }
+      p.sensitivity = -double.maxFinite; // finite values are taken as they are
+      expect(p.sensitivity, -double.maxFinite);
+      await p.dispose();
+    });
+
     test('detectSync, and concurrent calls give the sequential results', () async {
       final texts = [for (var i = 0; i < 24; i++) '${hard[i % hard.length]} #$i ${'Kim Minjun ' * (i % 5)}'];
       final seq = [for (final t in texts) pii.detectSync(t)];
@@ -206,6 +222,30 @@ void main() {
   test('argument checks', () async {
     await expectLater(NewmeanPii.create(size: 'huge'), throwsArgumentError);
     await expectLater(NewmeanPii.create(size: 'nano', variant: 'fp32'), throwsArgumentError);
+    // a non-finite sensitivity is refused before any model file is read (no model needed)
+    final notFinite = throwsA(
+      isA<ArgumentError>().having((e) => e.message, 'message', 'sensitivity must be a finite number'),
+    );
+    for (final v in [double.nan, double.infinity, double.negativeInfinity]) {
+      final read = <String>[];
+      await expectLater(
+        NewmeanPii.create(size: 'nano', sensitivity: v, readFile: (p) async => (read..add(p), Uint8List(0)).$2),
+        notFinite,
+      );
+      expect(read, isEmpty);
+      await expectLater(NewmeanPii.create(size: 'nano', sensitivity: v, modelDir: '/nonexistent'), notFinite);
+      await expectLater(
+        NewmeanPii.fromBytes(onnx: Uint8List(0), tokenizer: Uint8List(0), size: 'nano', sensitivity: v),
+        notFinite,
+      );
+    }
+    // finite values of any size pass the check (and fail later on the empty model bytes)
+    for (final v in [-double.maxFinite, double.maxFinite, double.minPositive]) {
+      await expectLater(
+        NewmeanPii.fromBytes(onnx: Uint8List(0), tokenizer: Uint8List(0), size: 'nano', sensitivity: v),
+        throwsStateError,
+      );
+    }
     expect(modelFile('medium', 'q4e').path, 'onnx/model_q4e.onnx');
     expect(modelFile('nano', 'tokenizer').bytes, 810589);
     expect(

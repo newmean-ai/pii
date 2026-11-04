@@ -7,7 +7,7 @@ English | [한국어](README.ko.md)
 - 54 languages, 11 labels plus 2 level-2 labels for indirect identifiers (IP addresses are learned as `ID_NUMBER`); an optional
   pattern layer (e-mail, URL, card/account, phone, Korean resident number) is off by default
 - Four model sizes: **nano 2.6 MB**, **small 7.1 MB**, **medium 11.3 MB** (default), **large 15.5 MB**
-- Runs in WebAssembly: the SDK's own built-in engine (default, about 20 KB) or onnxruntime-web
+- Runs in WebAssembly: the SDK's own built-in engine (default, about 13 KB) or onnxruntime-web
 - Free for any use, including commercial use
 - The same models for Python, iOS, Android and Flutter ([Install](#install))
 
@@ -31,8 +31,8 @@ See [js/README.md](js/README.md) for the full API.
 |---|---|---|
 | Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.4.0` |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.0")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.4.1` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.1")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 The Python, iOS, Android and Flutter packages run the same models on the device through one C engine
@@ -189,6 +189,15 @@ little, as expected (allow is for the values of your own columns). Details:
 [js/README.md](js/README.md#lists). Using the C core directly (not through a package): the C API is source-compatible
 only, so rebuild against each release's `pii.h`; options structs from another release are rejected
 ([native/core](native/core/README.md#api)).
+
+What 1.4.1 fixes. SDK 1.4.1, same v1.1 models; bug and doc fixes only, and every valid input gives the 1.4.0 spans. A
+`sensitivity` that is NaN or infinite is now an error in every package and in the C core (Android already refused it);
+before, NaN silently turned the model off and an infinity masked everything or nothing. The npm package also loads with
+`require()` on Node versions that can require ES modules (20.19+, 22.12+), and its `info.verified` is true only when the
+SHA-256 of both model files was actually checked (it used to copy the `verify` option). The Flutter package checks its
+native core at load, before any file is read, as its 1.4.0 notes said. Smaller fixes: npm `detectTable` checks the
+delimiter before running the model, the Flutter download names the package version in its User-Agent, and a few README
+passages were corrected (built-in engine size, the lists example, label names that are not labels).
 
 ## Repository layout
 

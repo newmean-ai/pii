@@ -10,7 +10,7 @@ import pytest
 
 from newmean_pii import ListError, ModelFileError, Redactor, Span
 from newmean_pii import _core
-from newmean_pii._lists import REASONS, make_lists
+from newmean_pii._lists import REASONS, _read_list, make_lists
 from newmean_pii._redactor import _source
 
 from conftest import model_dir
@@ -36,6 +36,9 @@ def test_list_shapes(tmp_path):
     assert fail(tmp_path, allow=5) == ("allow", None, "bad_shape")
     assert fail(tmp_path, block="Kim") == ("block", None, "bad_shape")
     assert fail(tmp_path, block=("Kim", "PERSON")) == ("block", 0, "bad_shape")  # a tuple of two str is a list of two
+    # no error for allow: "경기" and "PERSON", each for any label (-1); one labelled entry needs the list
+    assert _read_list(("경기", "PERSON"), "allow") == [("경기".encode(), -1), (b"PERSON", -1)]
+    assert _read_list([("경기", "PERSON")], "allow") == [("경기".encode(), 0)]
     assert counts(allow={"제주"}, block=iter([("Kim", "PERSON")])) == (1, 1)  # any iterable
     assert counts(allow=(x for x in ["a", ("b", None), ("c", "ORG")])) == (3, 0)
     assert make_lists(None, None) == (None, 0, 0) and make_lists([], ()) == (None, 0, 0)
@@ -91,6 +94,9 @@ def test_order(tmp_path):
     assert fail(tmp_path, allow=many[:50] + [" x"] + many[50:]) == ("allow", 50, "edge_space")
     assert fail(tmp_path, block=[(t, "ORG") for t in many]) == ("block", 10_000, "too_many")
     assert counts(allow=many[:10_000]) == (10_000, 0)
+    # a list error comes before a sensitivity error (as in npm, Swift, Kotlin and Flutter)
+    assert fail(tmp_path, block=[("", "PERSON")], sensitivity=float("nan")) == ("block", 0, "empty")
+    assert fail(tmp_path, lists_id="", sensitivity=float("inf")) == ("meta", None, "bad_lists_id")
 
 
 def test_unbounded_iterable_stops_at_10001(tmp_path):

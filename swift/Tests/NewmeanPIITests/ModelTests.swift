@@ -116,6 +116,59 @@ final class ModelTests: XCTestCase {
     XCTAssertEqual(again, spans)
   }
 
+  func testNonFiniteSensitivityIsRejected() async throws {
+    // checked before any model file is read: a finite value ends in fileNotFound for the missing folder
+    let missing = URL(fileURLWithPath: "/nonexistent/pii-nano")
+    for sensitivity in [Double.nan, .infinity, -.infinity, 0.5] {
+      do {
+        _ = try await PIIRedactor(size: .nano, sensitivity: sensitivity, modelDirectory: missing)
+        XCTFail("loaded without a model")
+      } catch PIIError.core(let code, let message) {
+        XCTAssertFalse(sensitivity.isFinite, "\(sensitivity)")
+        XCTAssertEqual(code, -1)  // PII_ERR_ARG
+        XCTAssertEqual(message, "sensitivity must be a finite number")
+      } catch PIIError.fileNotFound {
+        XCTAssertTrue(sensitivity.isFinite, "\(sensitivity)")
+      }
+    }
+    // a list error comes before a sensitivity error (as in every package)
+    do {
+      _ = try await PIIRedactor(size: .nano, sensitivity: .nan, block: [PIIBlockEntry(text: "", label: .person)],
+                                modelDirectory: missing)
+      XCTFail("loaded without a model")
+    } catch let e as PIIListError {
+      XCTAssertEqual(e, PIIListError(list: .block, index: 0, reason: .empty))
+    }
+  }
+
+  func testNonFiniteSensitivitySetterFailsDetect() async throws {
+    // a setter cannot throw: the value is stored and every detecting call throws until a finite value is set
+    let r = try await redactor(.nano)
+    let text = "kim@example.com", table = "name,email\nKim,kim@example.com"
+    let want = try await r.detect(text)
+    let blocking: (String) throws -> [PIISpan] = r.detect  // the overload that blocks the calling thread
+    let calls: [(String, () async throws -> Void)] = [
+      ("detect", { _ = try await r.detect(text) }), ("redact", { _ = try await r.redact(text) }),
+      ("detectTable", { _ = try await r.detectTable(table) }), ("redactTable", { _ = try await r.redactTable(table) }),
+      ("blocking detect", { _ = try blocking(text) }),
+    ]
+    for sensitivity in [Double.nan, .infinity, -.infinity] {
+      r.sensitivity = sensitivity
+      XCTAssertTrue(sensitivity.isNaN ? r.sensitivity.isNaN : r.sensitivity == sensitivity)  // stored as given
+      for (name, call) in calls {
+        do {
+          try await call()
+          XCTFail("\(name) with sensitivity \(sensitivity)")
+        } catch {
+          XCTAssertEqual(error.localizedDescription, "[NewmeanPII] sensitivity must be a finite number (-1)", name)
+        }
+      }
+    }
+    r.sensitivity = 0
+    let again = try await r.detect(text)
+    XCTAssertEqual(again, want)
+  }
+
   func testRegexLayer() async throws {
     // regex: true merges pattern matches through the core's combine step (the model's label wins)
     let text = "주민 900101-1234567, 메일 kim.minjun@example.co.kr, 주문번호 2024-1105-889"

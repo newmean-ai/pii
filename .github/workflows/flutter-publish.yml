@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   publish:
+    if: github.repository == 'newmean-ai/pii'  # publishing only from the public repository
     runs-on: ubuntu-latest
     environment: pub.dev
     permissions:

@@ -12,7 +12,7 @@ Swift Package Manager: Xcode에서 File › Add Package Dependencies… › `htt
 `NewmeanPII`. 또는 `Package.swift`에:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.4.0"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.4.1"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -73,7 +73,7 @@ let redactor = try await PIIRedactor(size: .medium, modelDirectory: dir)
 try await PIIRedactor(
   size: PIISize = .medium,          // .nano, .small, .medium, .large
   variant: PIIVariant? = nil,       // .q4 또는 .q4e; 기본 large/medium은 q4e, small/nano는 q4
-  sensitivity: Double = 0,          // > 0 더 많이 가림, < 0 덜 가림 (약 -1...1)
+  sensitivity: Double = 0,          // > 0 더 많이 가림, < 0 덜 가림 (약 -1...1); NaN이나 ±무한대면 오류
   labels: Set<PIILabel> = PIILabel.all,
   regex: Bool = false,              // 몇 가지 패턴(이메일, URL, 카드·계좌, 전화, 주민등록번호)도 가림;
                                     // 기본 false(모델만): 추가로 찾는 것은 거의 없고 과잉 가림이 두 배
@@ -90,7 +90,8 @@ try await redactor.redact(text, mode: .tag)      // (text, spans); .tag → [EMA
                                                  // .blank → 삭제, .custom { span, original in ... }
 try await redactor.detectTable(text)             // 표 모드(아래 '표' 참고)
 try await redactor.redactTable(text, mode: .tag) // (text, spans)
-redactor.sensitivity = 0.3                       // 모델을 다시 불러오지 않고 임계값 변경
+redactor.sensitivity = 0.3                       // 모델을 다시 불러오지 않고 임계값 변경; NaN이나 ±무한대를 넣으면
+                                                 // 유한한 값으로 바꿀 때까지 탐지 호출이 오류를 던짐
 PIIRedactor.applyRedaction(to: text, spans: spans, mode: .tag)
 PIIRegex.spans(in: text)                         // 패턴 층만 따로
 ```
@@ -124,8 +125,8 @@ let redactor = try await PIIRedactor(
   allow: ["제주", "배민", PIIAllowEntry(text: "경기", label: .person)],  // 문자열 리터럴은 모든 라벨을 허용
   block: [PIIBlockEntry(text: "박지훈", label: .person), PIIBlockEntry(text: "새솔고등학교", label: .org)],
   listsId: "survey-2026-11 v3")
-let (text, _) = try await redactor.redact("박지훈님께 제주에서 연락".precomposedStringWithCanonicalMapping)
-// text: "[PERSON]님께 제주에서 연락"
+let (text, _) = try await redactor.redact("제주, 박지훈".precomposedStringWithCanonicalMapping)
+// text: "제주, [PERSON]" (목록이 없으면 medium 모델은 "[PERSON], [PERSON]")
 ```
 
 - `block`: 낱말 경계에서 시작하고 끝나는 항목은 모두 그 항목의 라벨로 가립니다(출처 `.block`). 모델이 찾지 못한 곳도,

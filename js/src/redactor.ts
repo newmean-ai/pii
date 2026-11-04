@@ -3,7 +3,7 @@ import { loadFile, type Progress } from "./loader.js";
 import { MODEL_FILES, MODEL_VERSION, type FileInfo, type Size, type Variant } from "./models.js";
 import { VERSION } from "./version.js";
 import { regexSpans } from "./regex.js";
-import { detectTableSpans, finishDetect, headerContextCells, parseTable, type TableOptions } from "./table.js";
+import { checkDelimiter, detectTableSpans, finishDetect, headerContextCells, parseTable, type TableOptions } from "./table.js";
 import { checkListsId, Lists, publicSpans, type AllowEntry, type BlockEntry } from "./lists.js";
 import { restoreSpans, stripEmoji } from "./emoji.js";
 import { Tokenizer, type WebTokenizerFile } from "./tokenizer.js";
@@ -31,10 +31,10 @@ const SHORT_TOKENS = 8;
 const SHORT_PERSON_BIAS = -3;
 
 export interface RedactorOptions {
-  /** What runs the model. "builtin": the package's own WebAssembly engine (about 6 KB, no extra download; fused
-   *  multiply-add where the browser supports relaxed SIMD). "onnxruntime": onnxruntime-web (about 2.4 MB of WebAssembly,
-   *  loaded on first use). Both read the same model file and give the same spans. Default "builtin" (faster on the phones and
-   *  laptops measured, Appendix P of the technical report). */
+  /** What runs the model. "builtin": the package's own WebAssembly engine (about 13 KB brotli, JS and WebAssembly together,
+   *  loaded on first use; fused multiply-add where the browser supports relaxed SIMD). "onnxruntime": onnxruntime-web (about
+   *  2.4 MB of WebAssembly, loaded on first use). Both read the same model file and give the same spans. Default "builtin"
+   *  (faster on the phones and laptops measured, Appendix P of the technical report). */
   engine?: EngineName;
   /** Model size: nano (≈2.6 MB), small (≈7 MB), medium (≈11 MB), large (≈15 MB). Default "medium". */
   size?: Size;
@@ -43,9 +43,11 @@ export interface RedactorOptions {
   /** Base URL of the model folder (must end with "/"). Default: the Hugging Face repository newmean-ai/pii-<size> at the model version tag.
    *  Self-hosted copies are checked against the same SHA-256 values. */
   modelUrl?: string;
-  /** Moves the decision threshold: > 0 masks more (fewer misses, more over-masking), < 0 masks less. Range about −1..1. Default 0. */
+  /** Moves the decision threshold: > 0 masks more (fewer misses, more over-masking), < 0 masks less. Range about −1..1. Default 0.
+   *  NaN and ±Infinity throw ("sensitivity must be a finite number"). */
   sensitivity?: number;
-  /** Labels to mask. Default: all (LABELS). Use LEVEL1_LABELS to leave level 2 identifiers visible. */
+  /** Labels to mask. Default: all (LABELS). Use LEVEL1_LABELS to leave level 2 identifiers visible. Names that are not
+   *  labels are ignored (the Python and Kotlin packages raise). */
   labels?: readonly string[];
   /** Also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default false: on the
    *  public test of newmean-pii-dataset they add almost no coverage and double over-masking (dates and timestamps match the account pattern). */
@@ -119,8 +121,11 @@ export interface RedactorInfo {
   engine: EngineName;
   /** Where the files were read from (modelUrl or the Hugging Face URL). */
   modelUrl: string;
-  /** Published size and SHA-256 of the two files; with verify (default) the loaded bytes were checked against them. */
+  /** Published size and SHA-256 of the two files. */
   files: { model: FileInfo & { path: string }; tokenizer: FileInfo & { path: string } };
+  /** true when the SHA-256 of both loaded files (downloaded or from the cache) was computed and matched `files`. false with
+   *  `verify: false`, and where crypto.subtle is unavailable (insecure context): the files were then used unchecked, or
+   *  checked by size only. */
   verified: boolean;
   /** Entries of the lists after merging duplicates, and the caller's listsId (null when not given). Since 1.4.0. */
   lists: { allow: number; block: number; id: string | null };
@@ -146,13 +151,21 @@ export interface Redactor {
   /** `detectTable` + redaction. Spans never cross cells, so delimiters, quotes and line breaks are kept and the output stays
    *  a valid table, as long as a custom `replace` does not insert the delimiter, a quote or a line break. */
   redactTable(text: string, table?: TableOptions, options?: RedactOptions): Promise<{ text: string; spans: Span[] }>;
-  /** Changes the threshold without reloading the model. */
+  /** Changes the threshold without reloading the model. NaN and ±Infinity throw, as in `RedactorOptions.sensitivity`. */
   setSensitivity(value: number): void;
   readonly lastRun: RunStats | null;
   dispose(): Promise<void>;
 }
 
 const family = (l: string) => l.replace(/_L2$/, "");
+
+/** The O-logit bias for a sensitivity: −value, coerced as by unary minus (null → 0). Throws when it is not finite (NaN would
+ *  turn off model detection, ±Infinity mask everything or nothing); same message as the Kotlin package. */
+function oBiasFor(sensitivity: number): number {
+  const b = -sensitivity;
+  if (!Number.isFinite(b)) throw new Error("[@newmean-ai/pii] sensitivity must be a finite number");
+  return b;
+}
 
 /** Model and regex spans → masking regions. Overlapping spans become one region; the model's label wins, and a regex
  *  label is used only where no model label of the same family (URL / URL_L2) covers the text. */
@@ -219,10 +232,11 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   const variant: Variant = options.variant ?? DEFAULT_VARIANT[size];
   const files = MODEL_FILES[size];
   const base = options.modelUrl ?? `https://huggingface.co/newmean-ai/pii-${size}/resolve/v${MODEL_VERSION}/`;
-  // lists are validated before any model file is loaded (ListError: list, index and reason, never the text)
+  // lists and sensitivity are validated before any model file is loaded (ListError: list, index and reason, never the text)
   const listsId = checkListsId(options.listsId);
   const userLists = new Lists(options.allow, options.block);
   const lists = userLists.allowCount || userLists.blockCount ? userLists : null;
+  let oBias = oBiasFor(options.sensitivity ?? 0);
   const load = {
     cache: options.cache ?? true,
     verify: options.verify ?? true,
@@ -232,17 +246,16 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   const engineName: EngineName = options.engine ?? "builtin";
   if (engineName !== "builtin" && engineName !== "onnxruntime") throw new Error(`[@newmean-ai/pii] unknown engine "${engineName}" (builtin, onnxruntime)`);
 
-  const [tokBytes, modelBytes] = await Promise.all([
+  const [tokFile, modelFile] = await Promise.all([
     loadFile(base + "tokenizer.web.json", "tokenizer.web.json", files.tokenizer, load),
     loadFile(base + `onnx/model_${variant}.onnx`, `model_${variant}.onnx`, files[variant], load),
   ]);
-  const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokBytes)) as WebTokenizerFile);
+  const tokenizer = new Tokenizer(JSON.parse(new TextDecoder().decode(tokFile.bytes)) as WebTokenizerFile);
   const engine: Engine =
     engineName === "builtin"
-      ? await (await import("./engines/builtin.js")).createBuiltinEngine(modelBytes, TAGS.length, options)
-      : await (await import("./engines/onnxruntime.js")).createOrtEngine(modelBytes, tokenizer.padId, TAGS.length, options);
+      ? await (await import("./engines/builtin.js")).createBuiltinEngine(modelFile.bytes, TAGS.length, options)
+      : await (await import("./engines/onnxruntime.js")).createOrtEngine(modelFile.bytes, tokenizer.padId, TAGS.length, options);
 
-  let oBias = -(options.sensitivity ?? 0);
   const enabled = new Set<string>(options.labels ?? LABELS);
   const useRegex = options.regex ?? false;
   const keepEmoji = options.keepEmoji ?? false;
@@ -285,6 +298,8 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
   }
 
   async function detectTable(text: string, table: TableOptions = {}): Promise<Span[]> {
+    // options are checked before the model runs, in the C core's order: delimiter, then context
+    checkDelimiter(table.delimiter ?? "auto");
     const context = table.context ?? "none";
     if (context !== "none" && context !== "header") throw new Error(`[@newmean-ai/pii] unknown table context ${JSON.stringify(context)} ("none", "header")`);
     const raw = await detectRaw(text);
@@ -318,7 +333,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
       engine: engineName,
       modelUrl: base,
       files: { model: { path: `onnx/model_${variant}.onnx`, ...files[variant] }, tokenizer: { path: "tokenizer.web.json", ...files.tokenizer } },
-      verified: load.verify,
+      verified: tokFile.verified && modelFile.verified,
       lists: { allow: userLists.allowCount, block: userLists.blockCount, id: listsId },
     },
     detect,
@@ -332,7 +347,7 @@ export async function createRedactor(options: RedactorOptions = {}): Promise<Red
       return { text: applyRedaction(text, spans, opts), spans };
     },
     setSensitivity(value: number) {
-      oBias = -value;
+      oBias = oBiasFor(value);
     },
     get lastRun() {
       return lastRun;

@@ -8,7 +8,7 @@ options and spans as the npm package [`@newmean-ai/pii`](https://www.npmjs.com/p
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.4.0
+  newmean_pii: ^1.4.1
 ```
 
 ```dart
@@ -67,7 +67,8 @@ and dataset; treat the output as a strong first pass, not a guarantee.
 
 `PERSON`, `EMAIL`, `PHONE`, `ADDRESS`, `ID_NUMBER`, `FINANCIAL`, `ORG`, `USERNAME`, `URL`, `DATE_OF_BIRTH`, `SECRET`, and two
 level 2 labels for indirect identifiers: `PERSON_L2` (a surname with a title, a nickname, initials) and `URL_L2` (public
-profile or page URLs). Pass `labels: level1Labels` to leave level 2 visible.
+profile or page URLs). Pass `labels: level1Labels` to leave level 2 visible. Names in `labels` that are not labels are
+ignored, as in the npm package (the Python and Kotlin packages raise an error).
 
 ## API
 
@@ -75,7 +76,7 @@ profile or page URLs). Pass `labels: level1Labels` to leave level 2 visible.
 NewmeanPii.create({
   String size = 'medium',      // nano, small, medium, large
   String? variant,             // 'q4' or 'q4e'; default q4e for large/medium, q4 for small/nano
-  double sensitivity = 0,      // > 0 masks more, < 0 masks less (about −1..1)
+  double sensitivity = 0,      // > 0 masks more, < 0 masks less (about −1..1); NaN or ±infinity throws
   Iterable<String>? labels,    // labels to mask; default all (piiLabels)
   bool regex = false,          // also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                // default false (model only): almost no extra coverage, double the over-masking
@@ -133,8 +134,8 @@ final pii = await NewmeanPii.create(
   block: [PiiBlockEntry('박지훈', 'PERSON'), PiiBlockEntry('새솔고등학교', 'ORG')],
   listsId: 'survey-2026-11 v3',
 );
-final r = await pii.redact('박지훈님께 제주에서 연락');  // NFC text
-// r.text: "[PERSON]님께 제주에서 연락"
+final r = await pii.redact('제주, 박지훈');  // NFC text
+// r.text: "제주, [PERSON]" (without the lists, the medium model gives "[PERSON], [PERSON]")
 ```
 
 - `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source

@@ -19,6 +19,8 @@ permissions:
 
 jobs:
   sdist:
+    # on push only in the public repository; other copies of it run these by hand (workflow_dispatch)
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

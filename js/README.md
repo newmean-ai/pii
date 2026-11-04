@@ -36,7 +36,7 @@ Two engines run the same model file and give the same spans; pick one with `engi
 
 | `engine` | runtime download | notes |
 |---|---|---|
-| `"builtin"` (default) | about 20 KB (brotli, JS and WebAssembly together) | this package's own engine for these models; starts faster, and on the phones we measured runs about 1.9× faster on short texts and about 24% faster on long ones (mean of four phones); uses fused multiply-add where the browser supports relaxed SIMD (Chrome, Edge, Firefox) |
+| `"builtin"` (default) | about 13 KB (brotli, JS and WebAssembly together) | this package's own engine for these models; starts faster, and on the phones we measured runs about 1.9× faster on short texts and about 24% faster on long ones (mean of four phones); uses fused multiply-add where the browser supports relaxed SIMD (Chrome, Edge, Firefox) |
 | `"onnxruntime"` | onnxruntime-web, about 2.4 MB (brotli) | general ONNX runtime, multi-threading on cross-origin isolated pages |
 
 Each engine is a separate chunk loaded on first use, so an app downloads only the engine it picks.
@@ -55,7 +55,8 @@ public detectors we compared misses 19.6%. Scores on four external datasets, the
 
 `PERSON`, `EMAIL`, `PHONE`, `ADDRESS`, `ID_NUMBER`, `FINANCIAL`, `ORG`, `USERNAME`, `URL`, `DATE_OF_BIRTH`, `SECRET`, and two
 level 2 labels for indirect identifiers: `PERSON_L2` (a surname with a title, a nickname, initials) and `URL_L2` (public
-profile or page URLs). Pass `labels: LEVEL1_LABELS` to leave level 2 visible.
+profile or page URLs). Pass `labels: LEVEL1_LABELS` to leave level 2 visible. Names in `labels` that are not labels are
+ignored by this package (the Python and Kotlin packages raise an error).
 
 ## API
 
@@ -109,8 +110,10 @@ joined by apostrophes and hyphens; letters of scripts written without spaces (Ch
 extend a span, and a word ends where Hangul meets digits or Latin letters (「010-1234-5678입니다」 → `[PHONE]입니다`), and Korean particles after a Hangul span are left as they are (「홍길동님께」 → `[PERSON]님께`). It changes where a span ends, not what is masked: a short value the model misreads as a name, such as 「경기도」, becomes `[PERSON]` rather than `[PERSON]기도`; `strictShortNames` leaves such values alone. It masks a little more text and nothing less; in table mode it stays inside the cell. `wholeWords: false` gives the 1.2 spans.
 
 With `strictShortNames: true`, a text the model reads as at most 8 tokens (a survey answer, a table cell) needs stronger evidence to be read as a person's name: 「경기」, 「남성」 and 「네이버」 are left alone, while 「김민지」 and "Maria Lopez" are still found. With large, short survey items without personal information are masked 4.3% of the time instead of 7.9%, and 96.5% of lone names are found instead of 98.9%. Longer texts are unchanged.
-`info` names what ran, for audit records: the package and model versions and the size and SHA-256 of the two model files
-(checked when `verify` is on).
+`info` names what ran, for audit records: the package and model versions and the size and SHA-256 of the two model files.
+`info.verified` is true only when the SHA-256 of both loaded files was computed and matched. It is false with
+`verify: false` (files used unchecked) and where `crypto.subtle` is unavailable, on a page that is not a secure context such
+as plain HTTP (files checked by size only).
 Inference runs on the calling thread; for long texts, create the redactor inside a Web Worker.
 
 ## Lists
@@ -123,7 +126,8 @@ const redactor = await createRedactor({
   block: [{ text: "박지훈", label: "PERSON" }, { text: "새솔고등학교", label: "ORG" }],
   listsId: "survey-2026-11 v3",
 });
-await redactor.redact("박지훈님께 제주에서 연락".normalize("NFC")); // "[PERSON]님께 제주에서 연락"
+const { text } = await redactor.redact("제주, 박지훈".normalize("NFC"));
+// text: "제주, [PERSON]" (without the lists, the medium model gives "[PERSON], [PERSON]")
 ```
 
 - `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source

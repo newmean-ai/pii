@@ -28,7 +28,7 @@ public final class PIIRedactor: @unchecked Sendable {
   }
   /// Kernel build of the C core ("neon", "sse", ...).
   public static var buildInfo: String { String(cString: pii_build_info()) }
-  /// Version of this package and its C core ("1.4.0").
+  /// Version of this package and its C core ("1.4.1").
   public static var packageVersion: String { String(cString: pii_version()) }
 
   private let model: OpaquePointer
@@ -45,7 +45,8 @@ public final class PIIRedactor: @unchecked Sendable {
   ///   - size: nano (≈2.6 MB), small (≈7 MB), medium (≈11 MB, default) or large (≈15 MB).
   ///   - variant: weight file; default q4e for large and medium, q4 for small and nano.
   ///   - sensitivity: moves the decision threshold: > 0 masks more (fewer misses, more over-masking), < 0 masks less.
-  ///     Range about -1...1. Default 0.
+  ///     Range about -1...1. Default 0. NaN or ±infinity throws `PIIError.core` ("sensitivity must be a finite number")
+  ///     before any model file is downloaded or loaded.
   ///   - labels: labels to mask. Default all; `PIILabel.level1` leaves level 2 identifiers visible.
   ///   - regex: also mask matches of a few patterns (email, URL, card/account, phone, Korean resident number). Default
   ///     false: on the public test of newmean-pii-dataset they add almost no coverage and double over-masking.
@@ -78,6 +79,7 @@ public final class PIIRedactor: @unchecked Sendable {
     try PIIUserLists.checkID(listsId)
     self.lists = try PIIUserLists(allow: allow, block: block)
     self.listsId = listsId
+    try Self.checkSensitivity(sensitivity)
     let variant = variant ?? size.defaultVariant
     let dir: URL
     if let modelDirectory {
@@ -101,7 +103,9 @@ public final class PIIRedactor: @unchecked Sendable {
     pii_model_free(model)
   }
 
-  /// Changes the threshold without reloading the model (npm `setSensitivity`).
+  /// Changes the threshold without reloading the model (npm `setSensitivity`). A setter cannot throw: NaN or ±infinity
+  /// is stored, and `detect`, `redact`, `detectTable` and `redactTable` throw `PIIError.core` ("sensitivity must be a
+  /// finite number") until a finite value is set.
   public var sensitivity: Double {
     get {
       lock.lock()
@@ -170,6 +174,8 @@ public final class PIIRedactor: @unchecked Sendable {
 
   /// pii_detect, or pii_detect_table with `table`.
   private func spans(_ text: String, table: pii_table_options?) throws -> [PIISpan] {
+    let sensitivity = self.sensitivity
+    try Self.checkSensitivity(sensitivity)  // the core would refuse it too, as "invalid argument"
     let extra = regex ? PIIRegex.utf16Matches(in: text).map { pii_extra_span(start: $0.range.lowerBound, end: $0.range.upperBound, label: $0.label.id) } : []
     var options = pii_options()
     pii_options_init(&options)
@@ -233,6 +239,12 @@ public final class PIIRedactor: @unchecked Sendable {
     return tokens.enumerated().map { i, t in
       PIIToken(id: Int(t.id), range: idx[2 * i]..<idx[2 * i + 1], utf16Range: t.u16_start..<t.u16_end, scalarRange: t.cp_start..<t.cp_end)
     }
+  }
+
+  /// NaN or ±infinity would turn model detection off, or mask everything or nothing; PII_ERR_ARG with the message of
+  /// the Android package.
+  private static func checkSensitivity(_ value: Double) throws {
+    if !value.isFinite { throw PIIError.core(code: Int(PII_ERR_ARG), message: "sensitivity must be a finite number") }
   }
 
   // MARK: - Loading

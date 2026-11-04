@@ -1,6 +1,9 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import * as ort from "onnxruntime-web/wasm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ListError } from "../src/lists";
+import { loadFile, type LoadOptions } from "../src/loader";
 import { createRedactor } from "../src/redactor";
 import type { Size, Variant } from "../src/models";
 import type { EngineName } from "../src/engines/engine";
@@ -49,3 +52,104 @@ for (const [size, variant, bias] of RUNS.filter(([s]) => !SIZES || SIZES.include
     }, 600_000);
   });
 }
+
+// Option checks and model file verification; the first two blocks need no model.
+const SENSITIVITY_ERROR = "[@newmean-ai/pii] sensitivity must be a finite number";
+
+describe("sensitivity is checked before any model file is loaded", () => {
+  let fetched = 0;
+  const notFound = (async () => (fetched++, new Response(null, { status: 404 }))) as unknown as typeof fetch;
+
+  it("rejects NaN and ±Infinity, also when they come from coercion", async () => {
+    for (const sensitivity of [NaN, Infinity, -Infinity, "x", {}])
+      await expect(createRedactor({ sensitivity: sensitivity as number, fetch: notFound, cache: false })).rejects.toThrow(SENSITIVITY_ERROR);
+    expect(fetched).toBe(0);
+  });
+
+  it("comes after the list checks (as in every package)", async () => {
+    const block = [{ text: "", label: "PERSON" as const }];
+    await expect(createRedactor({ sensitivity: NaN, block, fetch: notFound, cache: false })).rejects.toBeInstanceOf(ListError);
+    await expect(createRedactor({ sensitivity: Infinity, listsId: "", fetch: notFound, cache: false })).rejects.toBeInstanceOf(ListError);
+    expect(fetched).toBe(0);
+  });
+
+  it("keeps coercing finite values as before (they reach the download)", async () => {
+    for (const sensitivity of [0, -0.5, 1e300, "0.5", "", null, true, undefined])
+      await expect(createRedactor({ sensitivity: sensitivity as number, fetch: notFound, cache: false })).rejects.toThrow(/HTTP 404/);
+    expect(fetched).toBeGreaterThan(0);
+  });
+});
+
+describe("loadFile reports whether the SHA-256 was checked", () => {
+  const bytes = new TextEncoder().encode("model bytes");
+  const info = { bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex") };
+  const fetchBytes = (async () => new Response(bytes as BodyInit)) as unknown as typeof fetch;
+  const opts: LoadOptions = { cache: false, verify: true, fetch: fetchBytes };
+  const load = (o: Partial<LoadOptions> = {}, i = info) => loadFile("https://x.test/f", "f", i, { ...opts, ...o });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("true only when the hash was computed and matched", async () => {
+    expect(await load()).toEqual({ bytes, verified: true });
+    expect((await load({ verify: false })).verified).toBe(false);
+    expect((await loadFile("https://x.test/f", "f", undefined, opts)).verified).toBe(false); // no pinned value
+    await expect(load({}, { ...info, sha256: "0".repeat(64) })).rejects.toThrow(/does not match/);
+    await expect(load({}, { ...info, bytes: info.bytes + 1 })).rejects.toThrow(/does not match/);
+  });
+
+  it("false without crypto.subtle (insecure context), which only checks the size", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("crypto", undefined);
+    expect(await load()).toEqual({ bytes, verified: false });
+    expect(warn).toHaveBeenCalledOnce();
+    await expect(load({}, { ...info, sha256: "0".repeat(64) })).resolves.toMatchObject({ verified: false });
+    await expect(load({}, { ...info, bytes: info.bytes + 1 })).rejects.toThrow(/does not match/);
+  });
+
+  it("files from the Cache API are checked the same way", async () => {
+    const store = new Map<string, Uint8Array>();
+    vi.stubGlobal("caches", {
+      open: async () => ({
+        match: async (u: string) => (store.has(u) ? new Response(store.get(u) as BodyInit) : undefined),
+        put: async (u: string, r: Response) => void store.set(u, new Uint8Array(await r.arrayBuffer())),
+        delete: async (u: string) => store.delete(u),
+      }),
+    });
+    const cached: boolean[] = [];
+    const onProgress = (p: { cached: boolean }) => void cached.push(p.cached);
+    expect((await load({ cache: true })).verified).toBe(true);
+    expect(store.size).toBe(1);
+    expect((await load({ cache: true, onProgress })).verified).toBe(true);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("crypto", undefined);
+    expect((await load({ cache: true, onProgress })).verified).toBe(false);
+    expect(cached).toEqual([true, true]);
+  });
+});
+
+describe.skipIf(!existsSync(`${MODELS}/pii-nano/onnx/model_q4.onnx`))("sensitivity and verification on a redactor (nano)", () => {
+  const opts = { size: "nano" as const, modelUrl: `file://${MODELS}/pii-nano/`, fetch: localFetch, cache: false };
+
+  it("setSensitivity rejects NaN and ±Infinity and keeps the previous value", async () => {
+    const r = await createRedactor({ ...opts, sensitivity: 1 });
+    const text = "Call Anna Kim at 010-1234-5678 or write to anna.kim@example.com.";
+    const before = await r.detect(text);
+    for (const v of [NaN, Infinity, -Infinity]) expect(() => r.setSensitivity(v)).toThrow(SENSITIVITY_ERROR);
+    expect(await r.detect(text)).toEqual(before);
+    r.setSensitivity(null as unknown as number); // coerced to 0, as before
+    r.setSensitivity(1);
+    expect(await r.detect(text)).toEqual(before);
+    await r.dispose();
+  });
+
+  it("info.verified is false when verification is off", async () => {
+    const on = await createRedactor(opts);
+    const off = await createRedactor({ ...opts, verify: false });
+    expect(on.info.verified).toBe(true);
+    expect(off.info.verified).toBe(false);
+    await on.dispose();
+    await off.dispose();
+  });
+});

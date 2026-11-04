@@ -63,7 +63,8 @@ public class PiiRedactor private constructor(
 
     /**
      * Moves the decision threshold without reloading the model: > 0 masks more (fewer misses, more over-masking), < 0
-     * masks less. Range about -1..1. Same as the npm option `sensitivity`.
+     * masks less. Range about -1..1. Same as the npm option `sensitivity`. NaN or an infinity throws
+     * [IllegalArgumentException].
      */
     @Volatile
     public var sensitivity: Double = checkSensitivity(sensitivity)
@@ -185,7 +186,7 @@ public class PiiRedactor private constructor(
          *
          * @param size nano, small, medium (default) or large.
          * @param variant weight file; default q4e for large and medium, q4 for small and nano.
-         * @param sensitivity > 0 masks more, < 0 masks less (about -1..1); default 0.
+         * @param sensitivity > 0 masks more, < 0 masks less (about -1..1); default 0. Must be finite.
          * @param labels labels to mask; default all ([PiiLabels.ALL]). [PiiLabels.LEVEL1] leaves level 2 visible.
          * @param regex also mask a few patterns (email, URL, card/account, phone, Korean resident number); default false.
          * @param keepEmoji true: the model reads emoji too (1.0 behaviour); default false: emoji are never read or masked.

@@ -52,7 +52,7 @@ create_redactor(               # or Redactor(...), same arguments
     size="medium",             # "nano" | "small" | "medium" | "large"
     variant=None,              # "q4" | "q4e"; default q4e for large/medium, q4 for small/nano
     *,
-    sensitivity=0.0,           # > 0 masks more, < 0 masks less (about -1..1)
+    sensitivity=0.0,           # > 0 masks more, < 0 masks less (about -1..1); NaN or infinity raises ValueError since 1.4.1
     labels=None,               # labels to mask; default all (LABELS); unknown names raise ValueError
     regex=False,               # also mask a few patterns (email, URL, card/account, phone, Korean resident number);
                                # off by default: almost no extra coverage, double the over-masking
@@ -73,7 +73,7 @@ redactor.redact(text, mode="tag")      # -> RedactResult(text, spans); "tag" -> 
 redactor.redact(text, mask_char="#", replace=None)  # replace(span, original) -> str overrides mode
 redactor.detect_table(text, delimiter="auto", header=True, vote=True, context="none")  # table mode (see Tables)
 redactor.redact_table(text, mode="tag", *, delimiter="auto", header=True, vote=True, context="none", mask_char="*", replace=None)
-redactor.set_sensitivity(value)        # no reload
+redactor.set_sensitivity(value)        # no reload; same ValueError for NaN or infinity
 redactor.tokenize(text)                # -> [Token(id, start, end)]
 redactor.info()                        # package_version, model_version, size, variant, files (path, bytes, sha256), shape, build,
                                        # lists (allow, block, id)
@@ -121,7 +121,8 @@ redactor = create_redactor(
     block=[("박지훈", "PERSON"), ("새솔고등학교", "ORG")],
     lists_id="survey-2026-11 v3",
 )
-redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연락")).text  # '[PERSON]님께 제주에서 연락'
+redactor.redact(unicodedata.normalize("NFC", "제주, 박지훈")).text  # '제주, [PERSON]'
+# without the lists, the medium model gives '[PERSON], [PERSON]'
 ```
 
 - `block`: every occurrence of an entry that starts and ends on a word boundary is masked with the entry's label (source
@@ -133,8 +134,9 @@ redactor.redact(unicodedata.normalize("NFC", "박지훈님께 제주에서 연�
   PERSON_L2, URL covers URL_L2). The test is on the whole span, so it depends on where the model ends a span: a span
   「제주도」 is not allowed by "제주"; list both forms when both occur.
 - Entries: `allow` takes `str` or `(str, label)` (label `None`: any label), `block` takes `(str, label)`; either list can be
-  any iterable except `str` and `bytes`. A 2-tuple passed as the list itself (`block=("Kim", "PERSON")`) is read as two
-  entries; write `block=[("Kim", "PERSON")]`.
+  any iterable except `str` and `bytes`. A 2-tuple passed as the list itself is read as two entries: `block=("Kim", "PERSON")`
+  raises `bad_shape`, and `allow=("경기", "PERSON")` silently allows "경기" and "PERSON" for any label. Write
+  `block=[("Kim", "PERSON")]` and `allow=[("경기", "PERSON")]` for one labelled entry.
 - Matching folds ASCII letters only (`KIM` = `kim`); nothing else is normalized. Pass NFC text and entries: files exported on
   macOS or copied from PDFs may hold NFD Hangul, which never matches (`unicodedata.normalize("NFC", text)`).
 - Exact forms only: 「박 지훈」 and 「박지훈」 are separate entries. A one-syllable entry such as 「김」 also masks every
