@@ -1,4 +1,4 @@
-[English](README.md) | 한국어
+[English](README.md) | 한국어 | [繁體中文](README.zh-Hant.md)
 
 # @newmean-ai/pii
 
