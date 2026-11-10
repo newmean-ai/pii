@@ -434,7 +434,7 @@ final class NewmeanPii implements Finalizable {
 
 /// What a redactor runs ([NewmeanPii.info]).
 final class PiiRedactorInfo {
-  /// Version of this package and its native core ("1.4.1").
+  /// Version of this package and its native core ("1.5.0").
   final String packageVersion;
 
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).

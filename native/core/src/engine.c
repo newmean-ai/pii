@@ -1,6 +1,7 @@
 // Inference engine: a native port of js/engine/pii.c (the npm package's WebAssembly engine). Same architecture, same
 // .piiw layout, same kernels and the same order of floating-point operations, so logits are bit-identical to the
-// baseline wasm build (built with -ffp-contract=off). Differences from pii.c: wasm SIMD128 intrinsics -> simd.h, the
+// baseline wasm build (built with -ffp-contract=off), or to its relaxed-SIMD build where the kernel fuses multiply and
+// add (arm64 by default, see below). Differences from pii.c: wasm SIMD128 intrinsics -> simd.h, the
 // bump allocator -> malloc, global model state -> an immutable pii_engine plus per-call scratch (pii_ws), so one model
 // can serve several threads.
 #include <stdlib.h>
@@ -18,11 +19,24 @@
 #include <math.h>
 #define PII_SQRTF sqrtf
 #endif
-#ifndef TILE_M  // rows per register tile; does not change results (each output still sums k in order)
-#ifdef PII_FMA
-#define TILE_M 6  // 12 accumulators hide the fused multiply-add latency (fastest on Apple M5)
+// arm64: fused multiply-add (always there with NEON) and 16-column tiles (32 vector registers) are the default kernel,
+// about 1.5x as fast as the plain one (Apple M5). -DPII_NO_FMA gives the plain kernel,
+// whose results are bit-identical on every CPU; -DPII_WIDE=0 the 8-column tiles (same results, slower on arm64).
+#if PII_VEC && defined(__aarch64__) && !defined(PII_FMA) && !defined(PII_NO_FMA)
+#define PII_FMA
+#endif
+#ifndef PII_WIDE
+#if PII_VEC && defined(__aarch64__)
+#define PII_WIDE 1
 #else
-#define TILE_M 4
+#define PII_WIDE 0  // x86-64 has 16 vector registers; a 4 x 16 tile needs 21
+#endif
+#endif
+#ifndef TILE_M  // rows per register tile; does not change results (each output still sums k in order)
+#if defined(PII_FMA) && !PII_WIDE
+#define TILE_M 6  // 12 accumulators hide the fused multiply-add latency
+#else
+#define TILE_M 4  // with 16 columns: 16 accumulators (fastest on Apple M5 with and without FMA)
 #endif
 #endif
 
@@ -186,7 +200,7 @@ int pii_ws_init(pii_ws *w, const pii_engine *m, int L) {
   memset(w, 0, sizeof *w);
   size_t c = (size_t)L, H = (size_t)m->H, I = (size_t)m->I, kmax = (size_t)(m->I > m->H ? m->I : m->H);
   size_t sz[13] = {c * H, c * H, c * H, c * H, c * H, c * H, c * I, c * (size_t)m->E, HEAD * (c + 8), c * (c + 8),
-                   kmax * 8, c * (size_t)m->cls.Np, c * 8};
+                   kmax * 16, c * (size_t)m->cls.Np, c * 8};
   size_t total = 0;
   for (int i = 0; i < 13; i++) total += up64(sz[i] * 4);
   uint8_t *p = pii_aligned_alloc(total);
@@ -296,7 +310,7 @@ static VI f4 vexp(f4 x) {
 
 // Multiply-add of the gemm kernel: separate mul and add by default (bit-identical to the baseline wasm build on every
 // CPU); with PII_FMA one fused multiply-add, as f32x4.relaxed_madd in the relaxed-SIMD wasm build (identical to it where
-// that build runs FMA, e.g. Chrome on arm64), about twice as fast. Needs NEON (arm64) or FMA3 (x86-64 with -mfma).
+// that build runs FMA, e.g. Chrome on arm64). Default on arm64 (NEON); x86-64 needs FMA3 (-mfma) and stays opt-in.
 #if defined(PII_FMA) && PII_VEC && defined(__aarch64__)
 #include <arm_neon.h>
 #define MADD(c, a, b) ((f4)vfmaq_f32((float32x4_t)(c), (float32x4_t)(a), (float32x4_t)(b)))
@@ -353,9 +367,56 @@ static void gemm(float *C, int ldc, const float *A, int lda, const float *B, int
   }
 }
 
+// Two 8-column panels at once: TILE_M rows x 16 columns (4 x TILE_M accumulators); each output still sums k in order.
+static void gemm16(float *C, int ldc, const float *A, int lda, const float *P0, const float *P1, int Mr, int K) {
+  int r = 0;
+  for (; r + TILE_M <= Mr; r += TILE_M) {
+    const float *a = A + (size_t)r * lda;
+    f4 c0[TILE_M], c1[TILE_M], c2[TILE_M], c3[TILE_M];
+    UNROLL for (int i = 0; i < TILE_M; i++) c0[i] = c1[i] = c2[i] = c3[i] = v_splat(0);
+    for (int k = 0; k < K; k++) {
+      f4 w0 = v_load(P0 + (size_t)k * 8), w1 = v_load(P0 + (size_t)k * 8 + 4);
+      f4 w2 = v_load(P1 + (size_t)k * 8), w3 = v_load(P1 + (size_t)k * 8 + 4);
+      UNROLL for (int i = 0; i < TILE_M; i++) {
+        f4 x = v_splat(a[(size_t)i * lda + k]);
+        c0[i] = MADD(c0[i], x, w0);
+        c1[i] = MADD(c1[i], x, w1);
+        c2[i] = MADD(c2[i], x, w2);
+        c3[i] = MADD(c3[i], x, w3);
+      }
+    }
+    UNROLL for (int i = 0; i < TILE_M; i++) {
+      float *o = C + (size_t)(r + i) * ldc;
+      v_store(o, c0[i]); v_store(o + 4, c1[i]); v_store(o + 8, c2[i]); v_store(o + 12, c3[i]);
+    }
+  }
+  if (r < Mr) {
+    gemm(C + (size_t)r * ldc, ldc, A + (size_t)r * lda, lda, P0, 8, Mr - r, 8, K);
+    gemm(C + (size_t)r * ldc + 8, ldc, A + (size_t)r * lda, lda, P1, 8, Mr - r, 8, K);
+  }
+}
+
 // out[L, ldo] (columns 0..N-1) = A[L, lda] (columns 0..K-1) x W + bias, one dequantized 8-column panel at a time.
 static void matmul(pii_ws *ws, float *out, int ldo, const float *A, int lda, int L, const pii_q4 *w, const float *bias) {
-  for (int p = 0; p < w->Np / 8; p++) {
+  int p = 0;
+#if PII_WIDE
+  float *panel2 = ws->panel + (size_t)w->K * 8;
+  for (; (p + 2) * 8 <= w->N; p += 2) {
+    const int n0 = p * 8;
+    dequant_panel(w, p, ws->panel);
+    dequant_panel(w, p + 1, panel2);
+    gemm16(out + n0, ldo, A, lda, ws->panel, panel2, L, w->K);
+    if (bias) {
+      f4 b0 = v_load(bias + n0), b1 = v_load(bias + n0 + 4), b2 = v_load(bias + n0 + 8), b3 = v_load(bias + n0 + 12);
+      for (int r = 0; r < L; r++) {
+        float *o = out + (size_t)r * ldo + n0;
+        v_store(o, v_add(v_load(o), b0)); v_store(o + 4, v_add(v_load(o + 4), b1));
+        v_store(o + 8, v_add(v_load(o + 8), b2)); v_store(o + 12, v_add(v_load(o + 12), b3));
+      }
+    }
+  }
+#endif
+  for (; p < w->Np / 8; p++) {
     const int n0 = p * 8;
     dequant_panel(w, p, ws->panel);
     if (n0 + 8 <= w->N) {

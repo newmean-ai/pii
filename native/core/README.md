@@ -133,11 +133,12 @@ mask character per code point; `blank`).
 
 ```bash
 make                 # build/libpii.a, build/libpii.{dylib,so}, build/pii_cli
-make FMA=1           # fused multiply-add kernel (see below)
+make FMA=1           # x86-64: fused multiply-add kernel (see below; arm64 has it by default)
+make NOFMA=1         # arm64: the plain kernel
 make asan            # build/asan/pii_cli with AddressSanitizer + UndefinedBehaviorSanitizer
 
 cmake -S native/core -B build && cmake --build build      # targets newmean::pii (static), newmean::pii_shared
-#   -DPII_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
+#   -DPII_FMA=ON  -DPII_NO_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
 ```
 
 C11 with `-O3 -Wall -Wextra -Wshadow`. The SIMD layer (`src/simd.h`) uses GCC/Clang vector extensions, which compile to
@@ -145,11 +146,12 @@ NEON on arm64 and SSE on x86-64; other compilers (MSVC) get a scalar path with t
 (`-DPII_SCALAR` forces it). `-ffp-contract=off` (MSVC: `/fp:precise`) is part of the build: it keeps every multiply and
 add separate, as in the WebAssembly engine. Little-endian targets only (the model files are little-endian).
 
-**FMA build.** By default the kernel multiplies and adds separately, so logits are bit-identical on every CPU and equal to
-the npm package's baseline (SIMD128) WebAssembly build. `PII_FMA` fuses the matrix multiply-add, like the npm
-package's relaxed-SIMD build (which Chrome, Edge and Firefox run); it is about 25% faster on Apple M5 and needs NEON
-(arm64) or FMA3 (x86-64, `-mfma`). Its logits differ from the default build in the last bits; spans were identical on
-every fixture row checked.
+**Kernel.** On arm64 the matrix kernel fuses multiply and add (NEON always has it) and works on 16 output columns at a
+time (`pii_build_info()`: `neon+fma`), like the npm package's relaxed-SIMD build, which Chrome, Edge and Firefox run;
+since 1.5.0 this is the default there, about 1.5× as fast as the plain kernel on Apple M5. Elsewhere the kernel multiplies and adds separately, so
+logits are bit-identical on every such CPU and equal to the npm package's baseline (SIMD128) WebAssembly build;
+`PII_NO_FMA` gives that kernel on arm64 too, and `PII_FMA` the fused one on x86-64 with FMA3 (`-mfma`). Logits of the two
+kernels differ in the last bits; spans were identical on every fixture row checked.
 
 ## Tests
 
@@ -182,7 +184,7 @@ Results on Apple M5 Pro (macOS, Apple clang 21, default build), 2026-10-31:
 | tokenizer | ids 3,273/3,273, offsets 3,273/3,273 |
 | predict large q4e, large q4, medium q4e, medium q4, small q4, small q4e, nano q4e, medium q4e bias −0.5 | 412/412 each (100%) |
 | predict nano q4, nano q4 bias 1 | 410/412 each (99.51%) |
-| js (nano q4, nano q4 bias 1, medium q4e, medium q4e bias −0.5) | 412/412 each; the FMA build against the relaxed-SIMD build: 412/412 each |
+| js (nano q4, nano q4 bias 1, medium q4e, medium q4e bias −0.5) | 412/412 each: the default arm64 build (`neon+fma`) against the relaxed-SIMD build, and the `NOFMA=1` build against the SIMD128 build |
 | threads | nano and medium, 203 texts × 4 threads: 0 differences; 153 texts × 8 threads (medium q4e, nano q4 at sensitivity 0.5): 0 differences |
 | asan | no reports |
 | offsets | 24 hard texts (up to 13,996 tokens): every UTF-8, code point and UTF-16 offset equal to Python's |
@@ -194,17 +196,17 @@ Rows that differ from the Python evaluator differ in the npm package as well: th
 overlapping spans with different labels (for example `20-21:ADDRESS 20-22:ORG`), and `detect()` merges overlapping spans
 into one region (`combine`), as both packages do.
 
-Speed, one thread, default build (`--bench`; `make FMA=1` in brackets):
+Speed, one thread on Apple M5 Pro, default build (`neon+fma`, `--bench`; the plain kernel, `make NOFMA=1`, in brackets;
+the faster of two runs, with other programs running on the machine):
 
 | Model | Short text (≤ 64 tokens, 36 on average) | Fixture text (131 tokens on average) | 1,062-token text |
 |---|---|---|---|
-| nano q4 | 9.9 ms (7.8 ms) | 39.6 ms (29.6 ms) | 364 ms (269 ms) |
-| small q4 | 9.9 ms | 39.7 ms | 366 ms |
-| medium q4e (default) | 14.9 ms (11.9 ms) | 59.7 ms (45.0 ms) | 550 ms (412 ms) |
-| large q4e | 14.8 ms | 59.3 ms | 547 ms |
+| nano q4 | 6.5 ms (9.6 ms) | 24.5 ms (38.1 ms) | 216 ms (352 ms) |
+| small q4 | 6.4 ms (9.6 ms) | 24.7 ms (38.1 ms) | 223 ms (347 ms) |
+| medium q4e (default) | 10.2 ms (14.4 ms) | 38.9 ms (57.7 ms) | 349 ms (523 ms) |
+| large q4e | 10.0 ms (14.3 ms) | 38.2 ms (56.8 ms) | 346 ms (521 ms) |
 
-The matrix kernel runs at about 78% of the separate multiply and add peak of one core, so the default build is only about
-15% faster than the npm package's wasm engine in Node on the same rows (nano: 16.4 s against 19.2 s for 412 rows).
+Before 1.5.0 every build used the plain kernel with 8-column tiles (medium: 14.9 / 59.7 / 550 ms).
 
 ## Relation to `js/engine/pii.c`
 

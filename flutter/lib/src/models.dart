@@ -48,5 +48,6 @@ PiiModelFile modelFile(String size, String file) {
 /// Version of the native core library.
 String get nativeVersion => piiVersion().toDartString();
 
-/// Kernel build of the native core: "neon", "sse" or "scalar" (bit-identical results on every CPU).
+/// Kernel build of the native core: "neon+fma" on arm64 (fused multiply-add), else "neon", "sse" or "scalar"
+/// (bit-identical results on every CPU without "+fma").
 String get nativeBuildInfo => piiBuildInfo().toDartString();

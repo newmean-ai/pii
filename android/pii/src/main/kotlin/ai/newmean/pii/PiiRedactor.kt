@@ -338,7 +338,8 @@ public class PiiRedactor private constructor(
             replace: ((span: PiiSpan, original: String) -> String)? = null,
         ): String = ai.newmean.pii.applyRedaction(text, spans, mode, maskChar, replace)
 
-        /** Kernel of the native library ("neon", "sse", "scalar"); results are bit-identical across them. */
+        /** Kernel of the native library ("neon+fma" on arm64, "neon", "sse", "scalar"); results are bit-identical across the
+         *  kernels without "+fma", and "+fma" (fused multiply-add) differs from them in the last bits of the logits. */
         @JvmStatic
         public fun buildInfo(): String = NativeBridge.buildInfo()
 

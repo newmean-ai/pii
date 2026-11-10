@@ -28,7 +28,7 @@ public final class PIIRedactor: @unchecked Sendable {
   }
   /// Kernel build of the C core ("neon", "sse", ...).
   public static var buildInfo: String { String(cString: pii_build_info()) }
-  /// Version of this package and its C core ("1.4.1").
+  /// Version of this package and its C core ("1.5.0").
   public static var packageVersion: String { String(cString: pii_version()) }
 
   private let model: OpaquePointer

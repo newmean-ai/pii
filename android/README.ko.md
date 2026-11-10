@@ -11,7 +11,7 @@
 ```kotlin
 // 앱 모듈의 build.gradle.kts
 dependencies {
-    implementation("ai.newmean:pii:1.4.1")
+    implementation("ai.newmean:pii:1.5.0")
 }
 ```
 

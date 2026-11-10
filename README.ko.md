@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.4.1`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.1")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.5.0`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.5.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python, iOS, Android, Flutter 패키지는 같은 모델을 기기에서 C 엔진 하나([`native/core`](native/core))로 실행하며, 토큰 id·오프셋·
@@ -188,6 +188,14 @@ KDPII 9.61%→9.08%), 조금 더 가립니다(large 과잉 가림: 공개 테스
 `verify` 옵션 값을 그대로 옮겼습니다). Flutter 패키지는 1.4.0 변경 기록에 적힌 대로, 불러올 때 파일을 읽기 전에 네이티브 코어를
 검사합니다. 작은 수정: npm `detectTable`은 모델을 돌리기 전에 구분자를 검사하고, Flutter는 내려받을 때 User-Agent에 패키지
 버전을 적으며, README 몇 곳을 바로잡았습니다(내장 엔진 크기, 목록 예시, 라벨이 아닌 이름).
+
+1.5에서 바뀐 것. SDK 1.5.0이며 모델은 v1.1 그대로이고, 속도만 바뀝니다. arm64(Apple 실리콘, iPhone, 64비트 Android)에서 Python,
+Swift, Android, Flutter 패키지의 네이티브 코어가 행렬 커널의 곱셈과 덧셈을 융합하고 출력 16열씩 계산합니다. npm 패키지의
+relaxed-SIMD 빌드와 같은 방식이며 약 1.5배 빠릅니다(medium, Apple M5 Pro 스레드 1개: 짧은 글 14.9 → 10.2 ms, 1,000토큰
+550 → 349 ms). 로짓이 1.4.1과 마지막 비트에서 달라 드물게 구간이 달라질 수 있습니다. 개발용 텍스트 18,692건과 네 크기에서
+74,768개 결과 중 1개가 달랐습니다. arm64의 결과는 이제 npm 패키지의 relaxed-SIMD 빌드(Chrome, Edge, Firefox)와 같고, 바뀐 것이
+없는 x86-64와는 더 이상 비트 단위로 같지 않습니다. 코어를 `PII_NO_FMA`로 빌드하면 1.4의 커널을 씁니다
+([native/core](native/core/README.ko.md)). npm 패키지는 1.4.1과 같은 구간을 냅니다.
 
 ## 저장소 구성
 

@@ -102,8 +102,8 @@ fetch_model(size, variant=None, cache_dir=None)  # 미리 내려받고 검증; �
       results = list(pool.map(redactor.redact, texts))
   ```
 
-- **속도**: Apple M5 Pro 한 스레드에서 짧은 텍스트 하나에 nano 약 10 ms, medium 약 15 ms, 1,000토큰 텍스트는 0.4초(nano)
-  ~0.55초(medium). 긴 텍스트는 256토큰 창으로 겹쳐 나눠 처리합니다.
+- **속도**: Apple M5 Pro 한 스레드에서 짧은 텍스트 하나에 nano 약 6.5 ms, medium 약 10 ms, 1,000토큰 텍스트는 0.22초(nano)
+  ~0.35초(medium)(arm64, 1.5.0부터). 긴 텍스트는 256토큰 창으로 겹쳐 나눠 처리합니다.
 - 오류: 잘못된 옵션은 `ValueError`(잘못된 목록은 `ValueError`의 하위 클래스인 `ListError`), 파일이 없거나 내려받지 못하거나
   고정값과 다르면 `ModelFileError`.
 
@@ -205,7 +205,8 @@ pytest -q                     # 픽스처 패리티 테스트는 픽스처와 �
 ```
 
 C 확장은 `native/core`(모든 네이티브 패키지가 공유하는 코어)를 그 Makefile과 같은 플래그로 컴파일하므로, 로짓이 npm
-패키지의 기본 WebAssembly 엔진과 비트 단위로 같습니다. 테스트: Python 기준 구현과의 정규식 패리티, 마스킹 모드,
+패키지의 WebAssembly 엔진과 비트 단위로 같습니다(arm64에서는 1.5.0부터 커널이 곱셈과 덧셈을 융합하므로 relaxed-SIMD
+빌드와, 그 밖에서는 기본 빌드와 같음). 테스트: Python 기준 구현과의 정규식 패리티, 마스킹 모드,
 이모지 텍스트의 오프셋, 스레드, 로컬 HTTP 서버와 `file://`를 쓰는 다운로드(네트워크 불필요), 그리고 비공개 픽스처와
 모델 사본이 있으면(`PII_FIXTURES`, 기본 `js/test/fixtures`; `PII_MODELS`, 기본 `js/test/models`) Hugging Face와의
 토크나이저 패리티, npm 테스트의 모든 실행에 대한 Python 평가기와의 구간 패리티(`PII_SIZES=nano,medium`으로 제한).

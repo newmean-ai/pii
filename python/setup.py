@@ -28,7 +28,8 @@ def rel(p: Path) -> str:
 
 class BuildExt(build_ext):
     # Same flags as native/core/Makefile and CMakeLists.txt: -ffp-contract=off (MSVC /fp:precise) keeps every multiply
-    # and add separate, as in the npm package's WebAssembly engine; required for its bit-identical logits.
+    # and add separate, as in the npm package's WebAssembly engine; required for its bit-identical logits (on arm64 the matrix kernel
+    # fuses multiply and add itself, like the relaxed-SIMD build).
     def build_extensions(self):
         if self.compiler.compiler_type == "msvc":
             args = ["/std:c11", "/O2", "/fp:precise"]

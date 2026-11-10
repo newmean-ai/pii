@@ -1,0 +1,32 @@
+<!doctype html>
+<!-- Source of og-image.png, the link-preview image (KakaoTalk, Slack, X, …). 1200x630, language-neutral: the same line
+     before and after masking. Regenerate from js/playground:
+     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --hide-scrollbars --force-device-scale-factor=1 \
+       --window-size=1200,630 --screenshot=og-image.png og-image.html && pngquant -f --ext .png --quality 80-95 og-image.png -->
+<html lang="ko">
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body { background: #f3f5f4; color: #1b2420; font-family: "Apple SD Gothic Neo", system-ui, sans-serif;
+    display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 34px; }
+  .brand { display: flex; align-items: center; gap: 18px; font-size: 44px; font-weight: 800; letter-spacing: -0.5px; }
+  .logo { width: 76px; height: 76px; border-radius: 20px; background: #1f7a5c; color: #fff; display: grid; place-items: center; }
+  .logo svg { width: 46px; height: 46px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .card { width: 1040px; background: #fff; border: 2px solid #d5dcd8; border-radius: 26px; padding: 30px 38px;
+    font-size: 40px; font-weight: 600; display: flex; gap: 16px; align-items: center; justify-content: center; white-space: nowrap; }
+  .e { padding: 2px 12px; border-radius: 10px; }
+  .a { background: #ffd9cc; color: #8a3517; } .b { background: #d7e8ff; color: #1d4f91; } .c { background: #fff0c2; color: #7a5a00; }
+  .m { display: inline-block; height: 44px; border-radius: 9px; background: #24302b; vertical-align: middle; }
+  .arrow { width: 60px; height: 60px; color: #1f7a5c; }
+  .arrow svg { width: 60px; height: 60px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+  .after { border-color: #1f7a5c; box-shadow: 0 10px 30px rgba(31, 122, 92, 0.15); }
+</style>
+<div class="brand">
+  <div class="logo"><svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+  newmean-pii
+</div>
+<div class="card"><span class="e a">홍길동</span><span class="e b">010-1234-5678</span><span class="e c">hong@mail.com</span></div>
+<div class="arrow"><svg viewBox="0 0 24 24"><path d="M12 4v16M5 13l7 7 7-7"/></svg></div>
+<div class="card after"><span class="m" style="width:130px"></span><span class="m" style="width:300px"></span><span class="m" style="width:300px"></span></div>
+</html>

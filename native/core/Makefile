@@ -1,6 +1,8 @@
 # Plain build of the core: static and shared library, the test CLI, and a sanitizer build of the CLI.
 #   make            build/libpii.a, build/libpii.{so,dylib}, build/pii_cli
-#   make FMA=1      the same with fused multiply-add in the matrix kernel (like the relaxed-SIMD wasm build; x86-64 needs FMA3)
+#   make FMA=1      the same with fused multiply-add in the matrix kernel (like the relaxed-SIMD wasm build; x86-64 needs FMA3;
+#                   arm64 has it by default)
+#   make NOFMA=1    arm64: the plain kernel (bit-identical to the baseline wasm build); B=<dir> picks the build folder
 #   make asan       build/asan/pii_cli (AddressSanitizer + UndefinedBehaviorSanitizer)
 #   make test       python3 tests/run_tests.py (fixture parity; skips without fixtures)
 # -ffp-contract=off keeps every other multiply and add separate, as in the WebAssembly engine; required for identical results.
@@ -12,9 +14,12 @@ BASE = -std=c11 -Wall -Wextra -Wshadow -Wstrict-prototypes -ffp-contract=off -fn
 ifeq ($(FMA),1)
 BASE += -DPII_FMA $(if $(filter x86_64 amd64,$(shell uname -m)),-mfma)
 endif
+ifeq ($(NOFMA),1)
+BASE += -DPII_NO_FMA
+endif
 SRC = src/api.c src/engine.c src/onnx.c src/tokenizer.c src/util.c src/sha256.c src/models.c src/lists.c
 HDR = pii.h src/internal.h src/simd.h src/unicode_tables.h src/word_tables.h
-B = build
+B ?= build
 UNAME := $(shell uname -s)
 SHLIB = $(B)/libpii.$(if $(filter Darwin,$(UNAME)),dylib,so)
 CLI_DEFS = -D_POSIX_C_SOURCE=200809L

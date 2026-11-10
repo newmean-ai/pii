@@ -128,11 +128,12 @@ pii_model_free(m);
 
 ```bash
 make                 # build/libpii.a, build/libpii.{dylib,so}, build/pii_cli
-make FMA=1           # 융합 곱셈-덧셈 커널 (아래 참고)
+make FMA=1           # x86-64: 융합 곱셈-덧셈 커널 (아래 참고; arm64는 기본)
+make NOFMA=1         # arm64: 융합하지 않는 커널
 make asan            # AddressSanitizer + UndefinedBehaviorSanitizer로 build/asan/pii_cli
 
 cmake -S native/core -B build && cmake --build build      # 타깃 newmean::pii (정적), newmean::pii_shared
-#   -DPII_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
+#   -DPII_FMA=ON  -DPII_NO_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
 ```
 
 C11, `-O3 -Wall -Wextra -Wshadow`. SIMD 계층(`src/simd.h`)은 GCC/Clang 벡터 확장을 써서 arm64에서는 NEON, x86-64에서는
@@ -140,10 +141,12 @@ SSE로 컴파일됩니다. 그 밖의 컴파일러(MSVC)는 같은 IEEE 연산�
 `-ffp-contract=off`(MSVC는 `/fp:precise`)는 빌드의 일부입니다. WebAssembly 엔진처럼 곱셈과 덧셈을 따로 계산하게 합니다.
 리틀 엔디언 대상만 지원합니다(모델 파일이 리틀 엔디언).
 
-**FMA 빌드.** 기본 빌드는 곱셈과 덧셈을 따로 하므로 어떤 CPU에서도 로짓이 비트 단위로 같고, npm 패키지의 기본(SIMD128)
-WebAssembly 빌드와도 같습니다. `PII_FMA`는 행렬 곱셈-덧셈을 융합합니다. npm 패키지의 relaxed-SIMD 빌드(Chrome, Edge,
-Firefox에서 쓰임)와 같은 방식이며, Apple M5에서 약 25% 빠르고 NEON(arm64)이나 FMA3(x86-64, `-mfma`)가 필요합니다. 로짓은
-기본 빌드와 마지막 비트에서 다르지만, 확인한 모든 픽스처 행에서 구간은 같았습니다.
+**커널.** arm64에서는 행렬 커널이 곱셈과 덧셈을 융합하고(NEON에 항상 있음) 출력 16열씩 계산합니다(`pii_build_info()`:
+`neon+fma`). npm 패키지의 relaxed-SIMD 빌드(Chrome, Edge, Firefox에서 쓰임)와 같은 방식이며, 1.5.0부터 arm64의 기본이고
+Apple M5에서 융합하지 않는 커널보다 약 1.5배 빠릅니다. 그 밖의
+CPU에서는 곱셈과 덧셈을 따로 하므로 그런 CPU끼리는 로짓이 비트 단위로 같고, npm 패키지의 기본(SIMD128) WebAssembly 빌드와도
+같습니다. `PII_NO_FMA`는 arm64에서도 그 커널을 쓰고, `PII_FMA`는 FMA3가 있는 x86-64(`-mfma`)에서 융합 커널을 씁니다. 두
+커널의 로짓은 마지막 비트에서 다르지만, 확인한 모든 픽스처 행에서 구간은 같았습니다.
 
 ## 테스트
 
@@ -176,7 +179,7 @@ Apple M5 Pro(macOS, Apple clang 21, 기본 빌드) 결과, 2026-10-31:
 | tokenizer | ids 3,273/3,273, offsets 3,273/3,273 |
 | predict large q4e, large q4, medium q4e, medium q4, small q4, small q4e, nano q4e, medium q4e bias −0.5 | 각 412/412 (100%) |
 | predict nano q4, nano q4 bias 1 | 각 410/412 (99.51%) |
-| js (nano q4, nano q4 bias 1, medium q4e, medium q4e bias −0.5) | 각 412/412; FMA 빌드와 relaxed-SIMD 빌드 비교도 각 412/412 |
+| js (nano q4, nano q4 bias 1, medium q4e, medium q4e bias −0.5) | 각 412/412: arm64 기본 빌드(`neon+fma`)는 relaxed-SIMD 빌드와, `NOFMA=1` 빌드는 SIMD128 빌드와 비교 |
 | threads | nano, medium, 203개 글 × 4개 스레드: 차이 0; 153개 글 × 8개 스레드(medium q4e, 민감도 0.5의 nano q4): 차이 0 |
 | asan | 보고 없음 |
 | offsets | 까다로운 글 24개(최대 13,996토큰): UTF-8·코드 포인트·UTF-16 오프셋이 모두 Python과 같음 |
@@ -187,17 +190,17 @@ Apple M5 Pro(macOS, Apple clang 21, 기본 빌드) 결과, 2026-10-31:
 Python 평가기와 다른 행은 npm 패키지에서도 다릅니다. 평가기는 라벨이 다른 두 구간을 겹친 채 내놓고(예:
 `20-21:ADDRESS 20-22:ORG`), `detect()`는 두 패키지 모두 겹친 구간을 한 영역으로 병합(`combine`)하기 때문입니다.
 
-속도, 단일 스레드, 기본 빌드(`--bench`; 괄호 안은 `make FMA=1`):
+속도, Apple M5 Pro 단일 스레드, 기본 빌드(`neon+fma`, `--bench`; 괄호 안은 융합하지 않는 커널 `make NOFMA=1`; 다른 프로그램이
+돌고 있는 상태에서 2회 중 빠른 값):
 
 | 모델 | 짧은 글 (64토큰 이하, 평균 36) | 픽스처 글 (평균 131토큰) | 1,062토큰 글 |
 |---|---|---|---|
-| nano q4 | 9.9 ms (7.8 ms) | 39.6 ms (29.6 ms) | 364 ms (269 ms) |
-| small q4 | 9.9 ms | 39.7 ms | 366 ms |
-| medium q4e (기본) | 14.9 ms (11.9 ms) | 59.7 ms (45.0 ms) | 550 ms (412 ms) |
-| large q4e | 14.8 ms | 59.3 ms | 547 ms |
+| nano q4 | 6.5 ms (9.6 ms) | 24.5 ms (38.1 ms) | 216 ms (352 ms) |
+| small q4 | 6.4 ms (9.6 ms) | 24.7 ms (38.1 ms) | 223 ms (347 ms) |
+| medium q4e (기본) | 10.2 ms (14.4 ms) | 38.9 ms (57.7 ms) | 349 ms (523 ms) |
+| large q4e | 10.0 ms (14.3 ms) | 38.2 ms (56.8 ms) | 346 ms (521 ms) |
 
-행렬 커널이 코어 하나에서 곱셈·덧셈 분리 시 최대 성능의 약 78%로 돌기 때문에, 기본 빌드는 같은 행에서 Node의 npm wasm
-엔진보다 약 15%만 빠릅니다(nano 412행: 16.4초 대 19.2초).
+1.5.0 전에는 모든 빌드가 8열 타일의 융합하지 않는 커널을 썼습니다(medium: 14.9 / 59.7 / 550 ms).
 
 ## `js/engine/pii.c`와의 관계
 

@@ -8,7 +8,7 @@ Flutter·Dart 앱에서 텍스트 속 개인정보를 **기기 안에서** 찾�
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.4.1
+  newmean_pii: ^1.5.0
 ```
 
 ```dart
@@ -213,8 +213,9 @@ isolate가 약 0.5 ms를 더함). 폴더에서 로드(SHA-256 검사 포함): na
 이 패키지는 저장소의 `native/core`를 컴파일합니다. Python·Android·iOS·Flutter 패키지가 함께 쓰는 C 라이브러리
 하나입니다. 공개된 ONNX 파일을 직접 읽고(ONNX Runtime 없음), npm 패키지와 똑같이 토큰화하며(토큰 id와 오프셋이 같음), 로짓은 npm
 패키지의 WebAssembly 엔진과 비트 단위로 같습니다. 패턴 레이어(`regexSpans`, npm 패키지 `regex.ts`의 포팅)와 마스킹
-방식은 Dart로 되어 있고, 패턴 스팬은 npm 패키지의 `combine`과 같은 규칙으로 C 코어에서 모델 스팬과 합쳐집니다. 곱셈과
-덧셈을 합치지(fuse) 않게 빌드하므로 모든 CPU에서 결과가 같고, 같은 이유로 32비트 ARM은 엔진의 스칼라 경로를 씁니다.
+방식은 Dart로 되어 있고, 패턴 스팬은 npm 패키지의 `combine`과 같은 규칙으로 C 코어에서 모델 스팬과 합쳐집니다. arm64에서는
+행렬 커널이 곱셈과 덧셈을 합칩니다(fuse; 1.5.0부터, 약 1.5배 빠르고 npm 패키지의 relaxed-SIMD 빌드와 같음). 그 밖의 빌드는
+합치지 않으므로 그런 CPU끼리는 결과가 같고, 같은 이유로 32비트 ARM은 엔진의 스칼라 경로를 씁니다.
 
 ## 개발
 

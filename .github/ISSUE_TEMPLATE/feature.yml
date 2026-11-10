@@ -1,0 +1,25 @@
+name: Feature request
+description: A new option, language, label or platform
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The scope is kept small on purpose; a request may be closed as out of scope with a short reason.
+        First answer within one week. 한국어로 써도 됩니다.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The use case, not only the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior or API
+  - type: input
+    id: package
+    attributes:
+      label: Package(s)
+      placeholder: "npm, PyPI, Swift, Android, Flutter"

@@ -2,7 +2,7 @@ name: newmean_pii
 description: >-
   Detect and mask personal information (PII) in text on the device, in 54 languages, with the newmean-pii models
   (dart:ffi over a small C engine; nothing is sent anywhere).
-version: 1.4.1
+version: 1.5.0
 homepage: https://newmean.ai
 repository: https://github.com/newmean-ai/pii
 issue_tracker: https://github.com/newmean-ai/pii/issues

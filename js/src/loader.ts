@@ -80,13 +80,32 @@ export async function loadFile(url: string, name: string, info: FileInfo | undef
     }
   }
 
-  const res = await opts.fetch(url);
-  if (!res.ok) throw new Error(`[@newmean-ai/pii] failed to download ${url}: HTTP ${res.status}`);
-  const total = Number(res.headers.get("content-length")) || info?.bytes || 0;
-  const bytes = await readBody(res, name, total, opts);
-  const c = await check(bytes);
-  if (c === "bad") {
-    throw new Error(`[@newmean-ai/pii] ${url} does not match the published model file (size or SHA-256 differs)`);
+  // A gzip copy (<url>.gz, 15-20% smaller) is tried first where one is published and the browser can decompress it. The
+  // decompressed bytes are checked against the same size and SHA-256 and cached under `url`; on any failure the plain
+  // file is downloaded instead.
+  let bytes: Uint8Array | null = null;
+  let c: "ok" | "unchecked" | "bad" = "bad";
+  if (info?.gzBytes && typeof DecompressionStream !== "undefined") {
+    try {
+      const res = await opts.fetch(url + ".gz");
+      if (res.ok) {
+        const gz = await readBody(res, name, info.gzBytes, opts);
+        const plain = new Uint8Array(await new Response(new Blob([gz as BlobPart]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+        if (plain.length === info.bytes && (c = await check(plain)) !== "bad") bytes = plain;
+      }
+    } catch {
+      bytes = null; // network error, truncated or invalid gzip data: fall back to the plain file
+    }
+  }
+  if (!bytes) {
+    const res = await opts.fetch(url);
+    if (!res.ok) throw new Error(`[@newmean-ai/pii] failed to download ${url}: HTTP ${res.status}`);
+    const total = Number(res.headers.get("content-length")) || info?.bytes || 0;
+    bytes = await readBody(res, name, total, opts);
+    c = await check(bytes);
+    if (c === "bad") {
+      throw new Error(`[@newmean-ai/pii] ${url} does not match the published model file (size or SHA-256 differs)`);
+    }
   }
   if (cache) {
     await cache

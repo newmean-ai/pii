@@ -13,7 +13,7 @@ Swift Package Manager: in Xcode, File › Add Package Dependencies… › `https
 `NewmeanPII`. Or in `Package.swift`:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.4.1"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.5.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -215,7 +215,7 @@ The parity tests read the private fixtures and model copies in place (`PII_FIXTU
 | regex | `PIIRegex` vs the Python baseline on `regex.jsonl` (3,273 rows); JavaScript `\s` cases |
 | redaction, offsets | modes of `js/test/combine.test.ts`; emoji, ZWJ sequences, flags and combining marks; bridged NSString |
 | options, threads, files | labels, sensitivity, regex merging; 4 × 48 concurrent calls; damaged and missing model files |
-| package | a shim for every `native/core/src/*.c`; the default (non-FMA) kernel build; all 12 pins equal `js/src/models.ts` |
+| package | a shim for every `native/core/src/*.c`; the default kernel build (`neon+fma` on arm64); all 12 pins equal `js/src/models.ts` |
 
 ## License
 

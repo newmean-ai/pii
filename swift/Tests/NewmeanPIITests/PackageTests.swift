@@ -18,9 +18,14 @@ final class PackageTests: XCTestCase {
   }
 
   func testBuildInfo() {
-    // the default build: no fused multiply-add, results bit-identical to the npm package's baseline WebAssembly build
+    // the default build: fused multiply-add on arm64 (results equal to the npm package's relaxed-SIMD WebAssembly build),
+    // none elsewhere (bit-identical to its baseline build)
     let info = PIIRedactor.buildInfo
+    #if arch(arm64)
+    XCTAssertEqual(info, "neon+fma")
+    #else
     XCTAssertFalse(info.contains("fma"), info)
-    XCTAssertTrue(["neon", "sse", "vector", "scalar"].contains(info), info)
+    XCTAssertTrue(["sse", "vector", "scalar"].contains(info), info)
+    #endif
   }
 }

@@ -39,7 +39,7 @@ extern "C" {
 #define PII_API
 #endif
 
-#define PII_VERSION "1.4.1"       /* this library */
+#define PII_VERSION "1.5.0"       /* this library */
 #define PII_MODEL_VERSION "1.1.0" /* model release (Hugging Face tag v1.1.0) */
 #define PII_DEFAULT_SIZE "medium"
 
@@ -190,13 +190,15 @@ typedef struct {
 #define PII_TABLE_CONTEXT_NONE 0
 #define PII_TABLE_CONTEXT_HEADER 1
 
-/* Library version ("1.4.1"). */
+/* Library version ("1.5.0"). */
 PII_API const char *pii_version(void);
 /* Message of a return code ("invalid argument", ...); static, never NULL. */
 PII_API const char *pii_strerror(int code);
-/* Kernel build: "neon", "sse", "vector" or "scalar", with "+fma" for a PII_FMA build. The default build (no "+fma") gives
- * bit-identical results on every CPU and equals the npm package's baseline WebAssembly build; "+fma" fuses the matrix
- * multiply-add like its relaxed-SIMD build (about 25% faster, spans equal on the fixtures, logits differ in the last bits). */
+/* Kernel build: "neon", "sse", "vector" or "scalar", with "+fma" where the matrix kernel fuses multiply and add: always on
+ * arm64 (unless built with PII_NO_FMA), elsewhere only in a PII_FMA build. A build without "+fma" gives bit-identical
+ * results on every CPU and equals the npm package's baseline WebAssembly build; "+fma" equals its relaxed-SIMD build
+ * (which Chrome, Edge and Firefox run) and is about 1.5x as fast on arm64: spans equal on the fixtures, logits differ in
+ * the last bits. */
 PII_API const char *pii_build_info(void);
 
 /* Label name ("PERSON", ...) or NULL; label id of a name, or -1. */

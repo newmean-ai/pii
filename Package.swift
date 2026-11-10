@@ -12,8 +12,9 @@ let package = Package(
   targets: [
     // The C core in native/core, compiled through one-line shims (swift/Sources/CNewmeanPII/*.c include
     // native/core/src/*.c) and imported through a module map that exposes pii.h only. src/simd.h carries
-    // `#pragma STDC FP_CONTRACT OFF`, so Clang keeps every multiply and add separate (results bit-identical to the npm
-    // package's baseline WebAssembly build) without extra flags.
+    // `#pragma STDC FP_CONTRACT OFF`, so Clang keeps every multiply and add separate outside the matrix kernel, which
+    // fuses them on arm64 (results bit-identical to the npm package's relaxed-SIMD WebAssembly build there, and to its
+    // baseline build elsewhere) without extra flags.
     .target(
       name: "CNewmeanPII",
       path: "swift/Sources/CNewmeanPII"

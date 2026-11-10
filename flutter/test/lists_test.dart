@@ -166,7 +166,7 @@ void main() {
       );
       final l = p.info.lists;
       expect((l.allow, l.block, l.id), (3, 2, 'survey-2026-11 v3'));
-      expect(p.info.packageVersion, '1.4.1');
+      expect(p.info.packageVersion, '1.5.0');
       await p.dispose();
     });
 

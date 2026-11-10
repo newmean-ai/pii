@@ -191,7 +191,7 @@ final class TableTests: XCTestCase {
     let r = try await redactor()
     let i = r.info
     XCTAssertEqual(i.packageVersion, PIIRedactor.packageVersion)
-    XCTAssertEqual(i.packageVersion, "1.4.1")
+    XCTAssertEqual(i.packageVersion, "1.5.0")
     XCTAssertEqual(i.modelVersion, r.version)
     XCTAssertEqual(i.model, PIIModelFile.model(r.size, r.variant))
     XCTAssertEqual(i.tokenizer, PIIModelFile.tokenizer(r.size))

@@ -252,6 +252,8 @@ void main() {
       modelFile('large', 'q4').url.toString(),
       'https://huggingface.co/newmean-ai/pii-large/resolve/v1.1.0/onnx/model_q4.onnx',
     );
-    expect(nativeBuildInfo, isNot(contains('fma')));
+    // arm64: fused multiply-add kernel (1.5.0); elsewhere the plain one
+    final arm64 = RegExp(r'arm64|aarch64').hasMatch(Platform.version);
+    expect(nativeBuildInfo, arm64 ? 'neon+fma' : isNot(contains('fma')));
   });
 }

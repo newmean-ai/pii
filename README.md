@@ -31,8 +31,8 @@ See [js/README.md](js/README.md) for the full API.
 |---|---|---|
 | Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.4.1` |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.1")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.5.0` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.5.0")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 The Python, iOS, Android and Flutter packages run the same models on the device through one C engine
@@ -198,6 +198,15 @@ SHA-256 of both model files was actually checked (it used to copy the `verify` o
 native core at load, before any file is read, as its 1.4.0 notes said. Smaller fixes: npm `detectTable` checks the
 delimiter before running the model, the Flutter download names the package version in its User-Agent, and a few README
 passages were corrected (built-in engine size, the lists example, label names that are not labels).
+
+What 1.5 changes. SDK 1.5.0, same v1.1 models; speed only. On arm64 (Apple silicon, iPhone, 64-bit Android) the native core
+of the Python, Swift, Android and Flutter packages now fuses multiply and add in its matrix kernel and works on 16 output
+columns at a time, like the npm package's relaxed-SIMD build: about 1.5 times as fast (medium on Apple M5 Pro, one thread:
+a short text 14.9 → 10.2 ms, 1,000 tokens 550 → 349 ms). Logits differ from 1.4.1 in the last bits, so a span can differ in
+rare cases: on 18,692 development texts and the four sizes, 1 of 74,768 results did. Results on arm64 now equal the npm
+package's relaxed-SIMD build (Chrome, Edge, Firefox) and are no longer bit-identical to x86-64, where nothing changes;
+building the core with `PII_NO_FMA` keeps the 1.4 kernel ([native/core](native/core/README.md#build)). The npm package
+gives the 1.4.1 spans.
 
 ## Repository layout
 

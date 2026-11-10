@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const m = JSON.parse(readFileSync(process.argv[2], "utf8"));
-const pick = (f) => ({ bytes: f.bytes, sha256: f.sha256 });
+const pick = (f) => ({ bytes: f.bytes, sha256: f.sha256, ...(f.gzBytes ? { gzBytes: f.gzBytes } : {}) });
 const tiers = Object.fromEntries(
   Object.entries(m.tiers).map(([t, f]) => [
     t,
@@ -23,6 +23,8 @@ export type Variant = "q4" | "q4e";
 export interface FileInfo {
   bytes: number;
   sha256: string;
+  /** Size of the published gzip copy (<file>.gz); absent when none is published. bytes and sha256 describe the decompressed file. */
+  gzBytes?: number;
 }
 
 export const MODEL_FILES: Record<Size, { q4: FileInfo; q4e: FileInfo; tokenizer: FileInfo }> = ${JSON.stringify(tiers, null, 2)};

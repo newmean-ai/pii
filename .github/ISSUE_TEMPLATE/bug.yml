@@ -1,0 +1,49 @@
+name: Bug report
+description: Something is detected wrongly, crashes, or does not install
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please replace real personal data with made-up values. Security problems go to SECURITY.md, not here.
+        First answer within one week. 실제 개인정보는 지어낸 값으로 바꿔 주세요. 한국어로 써도 됩니다.
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        - npm (@newmean-ai/pii)
+        - PyPI (newmean-pii)
+        - Swift (NewmeanPII)
+        - "Android (ai.newmean:pii)"
+        - Flutter (newmean_pii)
+        - pii.newmean.ai demo
+        - other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Package version and model size
+      placeholder: "1.5.0, small"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "Chrome 140 / Node 22 / Python 3.12 on Linux / iOS 19 / Android 16"
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal input and code
+      description: The shortest text and call that show the problem.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true

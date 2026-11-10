@@ -104,8 +104,8 @@ fetch_model(size, variant=None, cache_dir=None)  # download and verify ahead of 
       results = list(pool.map(redactor.redact, texts))
   ```
 
-- **Speed**: one thread on Apple M5 Pro, about 10 ms for a short text with nano and 15 ms with medium; a 1,000-token text
-  takes 0.4 s (nano) to 0.55 s (medium). Long texts are split into overlapping 256-token windows.
+- **Speed**: one thread on Apple M5 Pro, about 6.5 ms for a short text with nano and 10 ms with medium; a 1,000-token text
+  takes 0.22 s (nano) to 0.35 s (medium) (arm64; since 1.5.0). Long texts are split into overlapping 256-token windows.
 - Errors: `ValueError` for bad options (`ListError`, a `ValueError`, for bad lists), `ModelFileError` when a file is
   missing, cannot be downloaded or does not match its pin.
 
@@ -212,7 +212,8 @@ pytest -q                     # fixture parity tests skip without fixtures and m
 ```
 
 The C extension compiles `native/core` (the shared core of every native package) with the same flags as its Makefile,
-so logits are bit-identical to the npm package's baseline WebAssembly engine. Tests: regex parity with the Python
+so logits are bit-identical to the npm package's WebAssembly engine (its relaxed-SIMD build on arm64, where the kernel
+fuses multiply and add since 1.5.0; its baseline build elsewhere). Tests: regex parity with the Python
 baseline, redaction modes, offsets on emoji text, threads, downloads against a local HTTP server and `file://` (no
 network), and, when the private fixtures and model copies exist (`PII_FIXTURES`, default `js/test/fixtures`;
 `PII_MODELS`, default `js/test/models`), tokenizer parity with Hugging Face and span parity with the Python evaluator for

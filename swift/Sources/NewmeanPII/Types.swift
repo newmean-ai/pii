@@ -183,7 +183,7 @@ public enum PIIError: Error, LocalizedError, Sendable {
 
 /// What a redactor runs (`PIIRedactor.info`).
 public struct PIIRedactorInfo: Sendable, Hashable {
-  /// Version of this package and its C core ("1.4.1").
+  /// Version of this package and its C core ("1.5.0").
   public let packageVersion: String
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
   public let modelVersion: String

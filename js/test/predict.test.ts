@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import * as ort from "onnxruntime-web/wasm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ListError } from "../src/lists";
@@ -97,6 +98,36 @@ describe("loadFile reports whether the SHA-256 was checked", () => {
     expect((await loadFile("https://x.test/f", "f", undefined, opts)).verified).toBe(false); // no pinned value
     await expect(load({}, { ...info, sha256: "0".repeat(64) })).rejects.toThrow(/does not match/);
     await expect(load({}, { ...info, bytes: info.bytes + 1 })).rejects.toThrow(/does not match/);
+  });
+
+  it("downloads the gzip copy where one is published, and falls back to the plain file", async () => {
+    const gz = gzipSync(bytes);
+    const gzInfo = { ...info, gzBytes: gz.length };
+    const urls: string[] = [];
+    const serve = (gzBody: Uint8Array | null) =>
+      (async (u: string) => {
+        urls.push(u);
+        if (u.endsWith(".gz")) return gzBody ? new Response(gzBody as BodyInit) : new Response("", { status: 404 });
+        return new Response(bytes as BodyInit);
+      }) as unknown as typeof fetch;
+    expect(await load({ fetch: serve(gz) }, gzInfo)).toEqual({ bytes, verified: true });
+    expect(urls).toEqual(["https://x.test/f.gz"]);
+    // no gzip copy on the server, a truncated one, and one of another file: the plain file is used
+    for (const body of [null, gz.subarray(0, gz.length - 4), gzipSync(new TextEncoder().encode("other bytes"))]) {
+      urls.length = 0;
+      expect(await load({ fetch: serve(body) }, gzInfo)).toEqual({ bytes, verified: true });
+      expect(urls).toEqual(["https://x.test/f.gz", "https://x.test/f"]);
+    }
+    // progress counts compressed bytes against gzBytes
+    const seen: number[] = [];
+    await load({ fetch: serve(gz), onProgress: (p) => void seen.push(p.loaded / p.total) }, gzInfo);
+    expect(seen[seen.length - 1]).toBe(1);
+    // no gzBytes pinned, or no DecompressionStream: only the plain file is requested
+    urls.length = 0;
+    await load({ fetch: serve(gz) });
+    vi.stubGlobal("DecompressionStream", undefined);
+    await load({ fetch: serve(gz) }, gzInfo);
+    expect(urls).toEqual(["https://x.test/f", "https://x.test/f"]);
   });
 
   it("false without crypto.subtle (insecure context), which only checks the size", async () => {

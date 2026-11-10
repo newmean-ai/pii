@@ -8,7 +8,7 @@ options and spans as the npm package [`@newmean-ai/pii`](https://www.npmjs.com/p
 
 ```yaml
 dependencies:
-  newmean_pii: ^1.4.1
+  newmean_pii: ^1.5.0
 ```
 
 ```dart
@@ -218,8 +218,9 @@ The package compiles `native/core` of the repository: one C library shared by th
 packages. It reads the published ONNX files directly (no ONNX Runtime), tokenizes like the npm package (token ids and
 offsets equal), and its logits are bit-identical to the npm package's WebAssembly engine. The pattern layer (`regexSpans`, a port of the npm
 package's `regex.ts`) and the redaction modes are Dart; pattern spans are merged with the model's in the C core, by the
-same rule as the npm package's `combine`. Builds never fuse multiply and add, so results are the same on every CPU; 32-bit
-ARM uses the engine's scalar path for the same reason.
+same rule as the npm package's `combine`. On arm64 the matrix kernel fuses multiply and add (since 1.5.0, about 1.5× as fast; equal to the npm package's
+relaxed-SIMD build); other builds never fuse them, so their results are the same on every such CPU, and 32-bit ARM uses
+the engine's scalar path for the same reason.
 
 ## Development
 

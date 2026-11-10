@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 瀏覽器、Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+、macOS 12+ | `NewmeanPII`（Swift Package Manager） | 加入 `https://github.com/newmean-ai/pii`，版本從 `1.4.1` 起 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.4.1")` |
+| iOS 15+、macOS 12+ | `NewmeanPII`（Swift Package Manager） | 加入 `https://github.com/newmean-ai/pii`，版本從 `1.5.0` 起 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.5.0")` |
 | Flutter、Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 
 Python、iOS、Android 與 Flutter 套件透過同一個 C 引擎
@@ -198,6 +198,13 @@ small 與 nano 在每種模式下都會遮蔽許多不含個資的儲存格（16
 載入時、讀取任何檔案之前檢查其原生核心，符合其 1.4.0 版本說明中的敘述。其他小幅修正：npm 的 `detectTable` 會在
 執行模型前檢查分隔符號；Flutter 下載時的 User-Agent 會包含套件版本；並修正了幾處 README
 段落（內建引擎大小、清單範例、誤列為標籤的名稱）。
+
+1.5 的變更。SDK 1.5.0，沿用相同的 v1.1 模型；僅提升速度。在 arm64（Apple 晶片、iPhone、64 位元 Android）上，Python、Swift、Android
+與 Flutter 套件的原生核心現在於矩陣運算核心中使用融合乘加，並一次處理 16 個輸出欄，與 npm 套件的 relaxed-SIMD 版本相同：速度約為
+1.5 倍（medium，Apple M5 Pro 單執行緒：短文 14.9 → 10.2 ms，1,000 個 token 550 → 349 ms）。logits 與 1.4.1 在最後幾個位元上不同，
+因此極少數情況下區段可能不同：在 18,692 篇開發用文字與四種大小上，74,768 個結果中有 1 個不同。arm64 上的結果現在與 npm 套件的
+relaxed-SIMD 版本（Chrome、Edge、Firefox）相同，不再與 x86-64 逐位元相同（x86-64 沒有任何變更）；以 `PII_NO_FMA` 建置核心即可沿用
+1.4 的運算核心（[native/core](native/core/README.md#build)）。npm 套件得到與 1.4.1 相同的區段。
 
 ## 儲存庫結構
 

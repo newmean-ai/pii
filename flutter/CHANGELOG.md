@@ -1,3 +1,12 @@
+## 1.5.0
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.4.1. Speed only.
+- arm64 (iPhone, 64-bit Android, Apple silicon): the native core's matrix kernel fuses multiply and add and works on 16
+  output columns at a time, about 1.5 times as fast (medium on Apple M5 Pro: a short text 14.9 → 10.2 ms).
+  `info.build` reports `neon+fma` there. Logits differ from 1.4.1 in the last bits, so a span can differ in rare
+  cases (1 of 74,768 results on our development texts); results equal the npm package's relaxed-SIMD build. x86-64 and
+  32-bit ARM are unchanged.
+
 ## 1.4.1
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.4.0. Bug and doc fixes only: every valid input gives the 1.4.0 spans.

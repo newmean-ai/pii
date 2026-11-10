@@ -12,7 +12,7 @@ Swift Package Manager: Xcode에서 File › Add Package Dependencies… › `htt
 `NewmeanPII`. 또는 `Package.swift`에:
 
 ```swift
-.package(url: "https://github.com/newmean-ai/pii", from: "1.4.1"),
+.package(url: "https://github.com/newmean-ai/pii", from: "1.5.0"),
 // target: .product(name: "NewmeanPII", package: "pii")
 ```
 
@@ -207,7 +207,7 @@ xcodebuild -scheme NewmeanPII -destination 'generic/platform=iOS Simulator' buil
 | 정규식 | `PIIRegex` vs Python 기준선, `regex.jsonl`(3,273행); JavaScript `\s` 사례 |
 | 가림·오프셋 | `js/test/combine.test.ts`의 모드; 이모지, ZWJ 시퀀스, 국기, 결합 문자; 브리지된 NSString |
 | 옵션·스레드·파일 | 라벨, 민감도, 정규식 병합; 동시 호출 4 × 48; 손상·누락된 모델 파일 |
-| 패키지 | 모든 `native/core/src/*.c`의 심; 기본(FMA 아님) 커널 빌드; 핀 12개가 `js/src/models.ts`와 같음 |
+| 패키지 | 모든 `native/core/src/*.c`의 심; 기본 커널 빌드(arm64에서 `neon+fma`); 핀 12개가 `js/src/models.ts`와 같음 |
 
 ## 라이선스
 

@@ -24,6 +24,7 @@ await build({
   chunkNames: "[name]-[hash]",
   minify: true,
   legalComments: "linked",
+  define: { __VERSION__: JSON.stringify(JSON.parse(readFileSync(join(js, "package.json"), "utf8")).version) },
   absWorkingDir: js,
 });
 mkdirSync(join(out, "ort"), { recursive: true });
@@ -37,4 +38,5 @@ writeFileSync(
   `${readFileSync(join(js, "..", "NOTICE"), "utf8")}\n${"-".repeat(80)}\n${readFileSync(ortLicense, "utf8")}`,
 );
 cpSync(join(here, "index.html"), join(out, "index.html"));
+cpSync(join(here, "og-image.png"), join(out, "og-image.png")); // link-preview image (source: og-image.html)
 console.log("built", out);
