@@ -246,7 +246,7 @@ langfuse = Langfuse(mask=pii_mask(size="medium"))
 `pii_mask(redactor=None, *, mode="tag", **create_redactor_options)`는 관측 하나의 입력, 출력, 메타데이터 안에 있는
 모든 문자열을 깊이 제한 없이 가립니다: dict의 키와 값, list·tuple·set의 항목, bytes(UTF-8로 읽음), dataclass와
 pydantic 모델의 필드. 가린 키가 이미 있는 키와 같아지면 ` #2`, ` #3`, ...을 붙여 값이 사라지지 않습니다. 숫자, 불리언,
-날짜, UUID, `None`은 그대로 두고, 그 밖의 값과 UTF-8이 아닌 bytes는 `[UNMASKED: <type>]`으로 바꿔 읽지 못한 것은
+날짜, UUID, `None`, Langfuse의 미디어 객체(참조 id로 전송)는 그대로 두고, 그 밖의 값과 UTF-8이 아닌 bytes는 `[UNMASKED: <type>]`으로 바꿔 읽지 못한 것은
 보내지 않습니다. 모든 관측마다 내 프로세스에서 돌므로, 기록 양을 생각해 모델 크기를 고르세요.
 
 ## 오프라인 사용

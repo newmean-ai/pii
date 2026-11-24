@@ -252,7 +252,8 @@ langfuse = Langfuse(mask=pii_mask(size="medium"))
 `pii_mask(redactor=None, *, mode="tag", **create_redactor_options)` masks every string in an observation's input, output
 and metadata, at any depth: dict keys and values, list, tuple and set items, bytes (as UTF-8) and the fields of
 dataclasses and pydantic models. A key that masks to a key already there gets ` #2`, ` #3`, ... so no value is lost.
-Numbers, booleans, dates, UUIDs and `None` are kept; any other value, and bytes that are not UTF-8, become
+Numbers, booleans, dates, UUIDs, `None` and Langfuse's own media objects (sent as a reference id) are kept; any other
+value, and bytes that are not UTF-8, become
 `[UNMASKED: <type>]`, so nothing it cannot read is sent. It runs on every observation in your process, so pick the size
 with your trace volume in mind.
 

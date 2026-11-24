@@ -1,5 +1,6 @@
 # LangChain and LiteLLM adapters. The detector needs neither library; the middleware and guardrail tests skip
 # without langchain / litellm, and everything that runs a model skips without the local model copies.
+import array
 import asyncio
 import collections
 import copy
@@ -7,6 +8,7 @@ import dataclasses
 import datetime
 import types
 import uuid
+import warnings
 from decimal import Decimal
 from enum import Enum, IntEnum
 
@@ -272,6 +274,59 @@ def test_langfuse_input_not_mutated(lf):
     before = copy.deepcopy(data)
     mask(data=data)
     assert data == before
+
+
+def test_langfuse_media_reference_kept(lf):
+    media = pytest.importorskip("langfuse.media")
+    mask, _ = lf
+    item = media.LangfuseMedia(base64_data_uri="data:image/png;base64,iVBORw0KGgo=")
+    assert mask(data={"url": item})["url"] is item  # Langfuse turns it into its media reference string
+
+
+def test_langfuse_char_and_byte_sequences(lf):
+    mask, M = lf
+    assert mask(data=memoryview(EMAIL.encode())) == M(EMAIL).encode()
+    assert mask(data=collections.UserString(EMAIL)) == M(EMAIL)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)  # typecode "u" is deprecated in 3.13
+        assert mask(data=array.array("u", EMAIL)) == M(EMAIL)
+    assert mask(data=array.array("b", EMAIL.encode())) == "[UNMASKED: array]"
+    assert mask(data=range(3)) == [0, 1, 2]
+
+
+@dataclasses.dataclass(frozen=True)
+class _Frozen:
+    v: str
+
+
+@dataclasses.dataclass
+class _Unset:
+    v: str = dataclasses.field(init=False)
+
+
+class _BadProperty:
+    @property
+    def model_dump(self):
+        raise RuntimeError(TEXT)
+
+
+def test_langfuse_access_failures_are_placeholders(lf):
+    mask, M = lf
+    assert mask(data={_Frozen(EMAIL)}) == {str({"v": M(EMAIL)})}
+    assert mask(data=_Unset()) == "[UNMASKED: _Unset]"
+    assert mask(data=_BadProperty()) == "[UNMASKED: _BadProperty]"
+
+
+def test_langfuse_real_pydantic_model(lf):
+    pydantic = pytest.importorskip("pydantic")
+    mask, M = lf
+
+    class Msg(pydantic.BaseModel):
+        role: str
+        content: str
+        tags: set
+
+    assert mask(data=Msg(role="user", content=TEXT, tags={EMAIL})) == {"role": "user", "content": M(TEXT), "tags": {M(EMAIL)}}
 
 
 def test_langfuse_client_accepts_the_mask(nano):
