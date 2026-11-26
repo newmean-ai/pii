@@ -1,0 +1,272 @@
+# The vault test tools in public: the npm package (type check, the whole vitest suite, the packed package) and the leak
+# corpus, fuzz and boundary runners of npm and Python through the real frameworks, with a stand-in detector (no model).
+# Public CI repeats, on another machine, what already passed on the laptop; it never explores: the fuzz cases have a fixed
+# seed (python/tests/vault_fuzz.json), and every runtime and framework version is exact and the same as the local gate
+# run's (Node 25.9.0, CPython 3.14.7; js/package-lock.json, js/test/vault-envs/*/package-lock.json,
+# python/tests/vault-envs/*.txt; the AI SDK of js/scripts/install-gate-ai-sdk.sh). A skip is a failure: each job compares
+# its JUnit report with python/tests/vault_ci_expected.json (gen_vault_ci_expected.py). The timing tests never share a
+# step with functional tests (the 1.7.2 release standard, CI3): the npm and python jobs set PII_SKIP_TIMING=1, which
+# skips those inside functional files, and leave out the *growth* files; the timing job runs them, one file per step
+# (inside a functional file only its timing tests: PII_TIMING_ONLY=1 with --allowOnly for vitest, -m timing for pytest).
+# One that is over its limit on a runner is run again once, and over again means a new candidate. rc.yml calls this
+# workflow for a release candidate.
+name: vault
+
+on:
+  push:
+    branches: [main]
+    paths: [js/**, python/**, native/core/**, .github/workflows/vault.yml]
+  pull_request:
+    paths: [js/**, python/**, native/core/**, .github/workflows/vault.yml]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event and ref. A push run
+# and a run called by rc.yml (github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: vault-${{ (github.workflow == 'vault' && github.event_name != 'push') && format('{0}-{1}', github.event_name, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'vault' && github.event_name != 'push' }}
+
+env:
+  NODE_VERSION: "25.9.0"
+  PYTHON_VERSION: "3.14.7"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+# Limits: about three times the laptop rehearsal (npm 6, python 12, timing 7, generators 1 minute), raised for a slower
+# runner, at least 10 and at most 90; set again from the first public run.
+
+jobs:
+  npm:
+    # on push only in the public repository; other copies of it run these by hand (workflow_dispatch), Linux x64 only
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PII_SKIP_TIMING: "1"  # every step: the timing tests run in the timing job (CI3)
+    defaults:
+      run:
+        shell: bash
+        working-directory: js
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Versions
+        run: |
+          node --version && npm --version && python3 --version
+          mkdir -p "$RUNNER_TEMP/out"
+      - name: npm ci (the lockfile; LangChain.js 1.6.6, @langchain/core 1.4.1)
+        run: |
+          npm ci --no-audit --no-fund
+          node -e 'for (const p of ["langchain", "@langchain/core", "@langchain/langgraph", "zod", "vitest", "typescript"]) console.log(p, require("./node_modules/" + p + "/package.json").version)'
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: The AI SDK of the boundary gate (5.0.290, 6.0.332, 7.0.173)
+        run: |
+          sh scripts/install-gate-ai-sdk.sh "$RUNNER_TEMP/ai-sdk"
+          (cd "$RUNNER_TEMP/ai-sdk" && npm ls --all)
+      - name: The whole suite without the timing tests, the runners with PII_GATE=1 (lockfile)
+        env:
+          PII_GATE: "1"
+        run: |
+          AI_SDK_DIR="$RUNNER_TEMP/ai-sdk" npx vitest run --exclude '**/*growth*' \
+            --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-lockfile.xml"
+      - name: Skips and case ids (lockfile)
+        run: python3 ../python/tests/gen_vault_ci_expected.py check npm-lockfile "$RUNNER_TEMP/out/npm-lockfile.xml" --summary "$RUNNER_TEMP/out/npm-lockfile.json"
+      # js/node_modules of the lockfile is set aside and each environment's node_modules takes its place: the sources,
+      # the tests and the shared cases stay where they are, and every bare import resolves to that environment
+      - name: LangChain.js floor (1.5.1, @langchain/core 1.2.1)
+        env:
+          PII_GATE: "1"
+        run: |
+          e=langchain-floor
+          mkdir -p "$RUNNER_TEMP/$e"
+          cp "test/vault-envs/$e/package.json" "test/vault-envs/$e/package-lock.json" "$RUNNER_TEMP/$e/"
+          (cd "$RUNNER_TEMP/$e" && npm ci --no-audit --no-fund)
+          if [ -L node_modules ]; then rm node_modules; elif [ -d node_modules ]; then mv node_modules "$RUNNER_TEMP/node_modules.lockfile"; fi
+          ln -s "$RUNNER_TEMP/$e/node_modules" node_modules
+          node -e 'for (const p of ["langchain", "@langchain/core", "@langchain/langgraph", "zod", "vitest", "typescript"]) console.log(p, require("./node_modules/" + p + "/package.json").version)'
+          echo '{ "extends": "./tsconfig.json", "include": ["src", "test"] }' > "tsconfig.$e.json"
+          npx tsc --noEmit -p "tsconfig.$e.json"
+          AI_SDK_DIR="$RUNNER_TEMP/ai-sdk" npx vitest run test/langchain.test.ts test/vault-corpus.test.ts test/vault-fuzz.test.ts test/vault-boundary.test.ts \
+            --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-$e.xml"
+          python3 ../python/tests/gen_vault_ci_expected.py check "npm-$e" "$RUNNER_TEMP/out/npm-$e.xml" --summary "$RUNNER_TEMP/out/npm-$e.json"
+      - name: LangChain.js current (1.6.8, @langchain/core 1.5.1)
+        env:
+          PII_GATE: "1"
+        run: |
+          e=langchain-current
+          mkdir -p "$RUNNER_TEMP/$e"
+          cp "test/vault-envs/$e/package.json" "test/vault-envs/$e/package-lock.json" "$RUNNER_TEMP/$e/"
+          (cd "$RUNNER_TEMP/$e" && npm ci --no-audit --no-fund)
+          if [ -L node_modules ]; then rm node_modules; elif [ -d node_modules ]; then mv node_modules "$RUNNER_TEMP/node_modules.lockfile"; fi
+          ln -s "$RUNNER_TEMP/$e/node_modules" node_modules
+          node -e 'for (const p of ["langchain", "@langchain/core", "@langchain/langgraph", "zod", "vitest", "typescript"]) console.log(p, require("./node_modules/" + p + "/package.json").version)'
+          echo '{ "extends": "./tsconfig.json", "include": ["src", "test"] }' > "tsconfig.$e.json"
+          npx tsc --noEmit -p "tsconfig.$e.json"
+          AI_SDK_DIR="$RUNNER_TEMP/ai-sdk" npx vitest run test/langchain.test.ts test/vault-corpus.test.ts test/vault-fuzz.test.ts test/vault-boundary.test.ts \
+            --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-$e.xml"
+          python3 ../python/tests/gen_vault_ci_expected.py check "npm-$e" "$RUNNER_TEMP/out/npm-$e.xml" --summary "$RUNNER_TEMP/out/npm-$e.json"
+      - name: The packed package (npm pack, installed into an empty project, imported, type-checked)
+        run: |
+          rm node_modules
+          mv "$RUNNER_TEMP/node_modules.lockfile" node_modules
+          sh scripts/check-packed.sh "$RUNNER_TEMP/packed" 2>&1 | tee "$RUNNER_TEMP/out/npm-packed.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vault-npm
+          path: ${{ runner.temp }}/out/
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}
+
+  python:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PII_SKIP_TIMING: "1"  # every step: the timing tests run in the timing job (CI3)
+    defaults:
+      run:
+        shell: bash
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: The environments floor (langchain 1.4.0) and current (1.5.2), langfuse 5.2.0 in both
+        run: |
+          python --version && mkdir -p "$RUNNER_TEMP/out"
+          for e in floor current; do
+            python -m venv "$RUNNER_TEMP/py-$e"
+            "$RUNNER_TEMP/py-$e/bin/pip" install -q --no-deps -r "tests/vault-envs/$e.txt"
+            "$RUNNER_TEMP/py-$e/bin/pip" check
+            echo "$e: $("$RUNNER_TEMP/py-$e/bin/pip" freeze | grep -iE '^(langchain|langchain-core|langgraph|langfuse|pydantic|pytest)==' | paste -sd ' ' -)"
+          done
+      - name: The extension, built in place from native/core
+        run: '"$RUNNER_TEMP/py-current/bin/python" setup.py -q build_ext --inplace'
+      - name: Corpus, fuzz, boundary, model fields and Langfuse (floor)
+        run: |
+          PYTHONPATH=src "$RUNNER_TEMP/py-floor/bin/python" -m pytest -q -p no:cacheprovider -p no:warnings -rs \
+            tests/test_vault_corpus.py tests/test_vault_fuzz.py tests/test_vault_boundary.py tests/test_vault_model_fields.py tests/test_langfuse.py \
+            --junitxml="$RUNNER_TEMP/out/python-floor.xml"
+      - name: Skips and case ids (floor)
+        run: python tests/gen_vault_ci_expected.py check python-floor "$RUNNER_TEMP/out/python-floor.xml" --summary "$RUNNER_TEMP/out/python-floor.json"
+      - name: Corpus, fuzz, boundary, model fields and Langfuse (current)
+        run: |
+          PYTHONPATH=src "$RUNNER_TEMP/py-current/bin/python" -m pytest -q -p no:cacheprovider -p no:warnings -rs \
+            tests/test_vault_corpus.py tests/test_vault_fuzz.py tests/test_vault_boundary.py tests/test_vault_model_fields.py tests/test_langfuse.py \
+            --junitxml="$RUNNER_TEMP/out/python-current.xml"
+      - name: Skips and case ids (current)
+        run: python tests/gen_vault_ci_expected.py check python-current "$RUNNER_TEMP/out/python-current.xml" --summary "$RUNNER_TEMP/out/python-current.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vault-python
+          path: ${{ runner.temp }}/out/
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}
+
+  generators:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: The three generators write the data files again
+        run: |
+          python --version
+          python python/tests/gen_vault_corpus.py
+          python python/tests/gen_vault_fuzz.py
+          python python/tests/gen_vault_boundary_cases.py
+      - name: Byte for byte the committed files
+        run: |
+          git status --porcelain
+          git diff --exit-code --stat
+          test -z "$(git status --porcelain)"
+      - name: The expected cases of the vault jobs are the data's
+        run: python python/tests/gen_vault_ci_expected.py data
+
+  # the timing tests (at most 3 times per doubling, or a time limit), one file per step: the *growth* files whole, and the
+  # timing tests of the functional files the npm and python jobs run (they skip them there with PII_SKIP_TIMING=1)
+  timing:
+    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: npm ci, the Python environment current and the extension
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          (cd js && npm ci --no-audit --no-fund)
+          python -m venv "$RUNNER_TEMP/py-current"
+          "$RUNNER_TEMP/py-current/bin/pip" install -q --no-deps -r python/tests/vault-envs/current.txt
+          "$RUNNER_TEMP/py-current/bin/pip" check
+          (cd python && "$RUNNER_TEMP/py-current/bin/python" setup.py -q build_ext --inplace)
+      - name: npm vault-growth.test.ts
+        working-directory: js
+        run: npx vitest run test/vault-growth.test.ts --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-vault-growth.xml"
+      - name: npm langchain-growth.test.ts
+        working-directory: js
+        run: npx vitest run test/langchain-growth.test.ts --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-langchain-growth.xml"
+      - name: npm review-docs-growth.test.ts
+        working-directory: js
+        run: npx vitest run test/review-docs-growth.test.ts --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-review-docs-growth.xml"
+      - name: Python test_vault_growth.py
+        working-directory: python
+        run: PYTHONPATH=src "$RUNNER_TEMP/py-current/bin/python" -m pytest -q -p no:cacheprovider -p no:warnings -rs tests/test_vault_growth.py --junitxml="$RUNNER_TEMP/out/python-vault-growth.xml"
+      - name: Python test_review_docs_growth.py
+        working-directory: python
+        run: PYTHONPATH=src "$RUNNER_TEMP/py-current/bin/python" -m pytest -q -p no:cacheprovider -p no:warnings -rs tests/test_review_docs_growth.py --junitxml="$RUNNER_TEMP/out/python-review-docs-growth.xml"
+      # the timing tests inside functional files, each file alone, nothing else of it (PII_TIMING_ONLY=1: vitest's only)
+      - name: npm ai-sdk.test.ts, its timing tests
+        working-directory: js
+        env:
+          PII_TIMING_ONLY: "1"
+        run: npx vitest run test/ai-sdk.test.ts --allowOnly --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-ai-sdk-timing.xml"
+      - name: npm langchain.test.ts, its timing tests
+        working-directory: js
+        env:
+          PII_TIMING_ONLY: "1"
+        run: npx vitest run test/langchain.test.ts --allowOnly --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-langchain-timing.xml"
+      - name: npm regex.test.ts, its timing tests
+        working-directory: js
+        env:
+          PII_TIMING_ONLY: "1"
+        run: npx vitest run test/regex.test.ts --allowOnly --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-regex-timing.xml"
+      - name: npm vault.test.ts, its timing tests
+        working-directory: js
+        env:
+          PII_TIMING_ONLY: "1"
+        run: npx vitest run test/vault.test.ts --allowOnly --reporter=default --reporter=junit --outputFile.junit="$RUNNER_TEMP/out/npm-vault-timing.xml"
+      - name: Python test_langfuse.py, its timing tests
+        working-directory: python
+        run: PYTHONPATH=src "$RUNNER_TEMP/py-current/bin/python" -m pytest -q -p no:cacheprovider -p no:warnings -rs -m timing tests/test_langfuse.py --junitxml="$RUNNER_TEMP/out/python-langfuse-timing.xml"
+      - name: No timing test skipped
+        run: |
+          python python/tests/gen_vault_ci_expected.py check npm-timing "$RUNNER_TEMP"/out/npm-*.xml --summary "$RUNNER_TEMP/out/npm-timing.json"
+          python python/tests/gen_vault_ci_expected.py check python-timing "$RUNNER_TEMP"/out/python-*.xml --summary "$RUNNER_TEMP/out/python-timing.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vault-timing
+          path: ${{ runner.temp }}/out/
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}

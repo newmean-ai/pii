@@ -2,11 +2,24 @@
 # Linux x86-64/arm64, macOS arm64/x86-64 and Windows x86-64, each tested with pytest on CPython 3.9 and 3.14.
 # The fixtures and model copies are private, so CI runs the tests that need no model plus one network test that downloads
 # newmean-pii-nano from Hugging Face (NEWMEAN_PII_NETWORK_TESTS=1, set in python/pyproject.toml). Publishing is in
-# python-publish.yml, which calls this workflow.
+# python-publish.yml, which calls this workflow; rc.yml calls it for a release candidate. Dispatched by hand in
+# newmean-ai/pii with kernel_gates, it also runs the x86-64 kernel gates of issue #3 (the kernel-* jobs). Where rc.yml
+# calls it for an rc/* push, kernel-base runs too: the candidate's descent and parent at push time, and the pins.
 name: Python wheels
 
 on:
   workflow_dispatch:
+    inputs:
+      os:
+        description: "Runners outside newmean-ai/pii (the public repository always runs all): Linux x64 only, plus Windows, or all"
+        type: choice
+        options: [linux, linux-windows, all]
+        default: linux
+      kernel_gates:
+        description: "x86-64 kernel gates of issue #3, in newmean-ai/pii only: fast (digests, wheels, toolchains), sanitizers, emulation, speed, or all (what a release needs)"
+        type: choice
+        options: ["off", "fast", "sanitizers", "emulation", "speed", "all"]
+        default: "off"
   workflow_call:
   pull_request:
     paths: ["python/**", "native/core/**", ".github/workflows/python-wheels.yml"]
@@ -17,11 +30,48 @@ on:
 permissions:
   contents: read
 
+# The comparison base of the kernel gates: "the code before the change" of every kernel criterion is the public commit
+# KERNEL_BASE (a full SHA), public main at the 1.6.1 release, the last public one (1.7.0 and 1.7.1 were not
+# published; users upgrade from npm 1.6.2 and from 1.6.1 on the other channels, and the Python sources and vendored
+# native inputs of the PyPI 1.6.1 sdist are those of KERNEL_BASE). KERNEL_PINS are the git ids of the eleven kernel
+# paths at KERNEL_BASE. Before any kernel job compares anything, kernel-base logs the eleven ids, asserts them, checks
+# that the commit under test descends from KERNEL_BASE and, on an rc/* branch, that its only parent is public main.
+# Git ids hash content: the kernel code of KERNEL_BASE is that of the commit the reference digests of
+# python/tests/test_kernel_isa.py (PINS, WITNESS) were made from on arm64 with kernel_refs.py; three of the eleven
+# paths differ from it in version text only (two lines of native/core/pii.h, the version of the two manifests).
+# KERNEL_FILES hold the kernel's code in the packages' build inputs (its other changes there are API comments).
+# "This commit without the kernel" (nokernel) is this commit's tree with KERNEL_FILES taken from KERNEL_BASE: the
+# matched pre-kernel build of the candidate's own package inputs, the second base of P3 and of every D5/D6 toolchain
+# comparison beside KERNEL_BASE itself, so a warning or link dependency removed after 1.6.1 cannot come back unseen.
+env:
+  KERNEL_BASE: 4b63a4c142aab3f35b202fc07254f3a626430beb
+  KERNEL_FILES: native/core python/src/newmean_pii/_core.c python/src/newmean_pii/_core.pyi
+  KERNEL_PINS: |
+    native/core ac744888fee0d75e9df34b741095fcc2921287d6
+    android/pii/src/main/cpp 8464cf8a153bf046f889af6bd8b762a23e19ab22
+    flutter/hook c62feb78df40b802fd8c6cefb8466b30d926c9d1
+    rust/build.rs 031992b149f7a7277f6fe2034fffbdc1ef8df9f1
+    Package.swift 728cd765df9beb772d4d5c565de2cfed236fef54
+    js/src/engines 00cfc2b2f9f4cd2e74140efbb47dd6dd824b3e06
+    js/engine e8bad97d788c666fe3ab6a334fa881845ea71aef
+    python/src/newmean_pii/_core.c 6bc370736350a55249d83641cb0fd7856819ba20
+    python/setup.py a8f4f3fb94f42c9ff445ed0d344236441840666d
+    flutter/pubspec.yaml a370327c7d11a06c39df5678febecbbe41e5f1e9
+    rust/Cargo.toml 39701d46be336109eeee8fc7192dd20b47ffa6d8
+
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event, ref and
+# kernel_gates choice, so a plain dispatch never cancels a kernel run. A push run and a run called by another workflow
+# (rc, Python publish; github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: python-wheels-${{ (github.workflow == 'Python wheels' && github.event_name != 'push') && format('{0}-{1}-{2}', github.event_name, github.ref, inputs.kernel_gates) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'Python wheels' && github.event_name != 'push' }}
+
 jobs:
   sdist:
     # on push only in the public repository; other copies of it run these by hand (workflow_dispatch)
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -30,24 +80,44 @@ jobs:
       - name: Build sdist (copies native/core into it)
         run: pipx run build --sdist python --outdir dist
       - name: Check the sdist builds and passes the tests on its own
+        env:
+          PII_SKIP_TIMING: "1"  # the timing tests run in the next step, alone (CI3)
         run: |
           mkdir /tmp/sdist && tar xzf dist/*.tar.gz -C /tmp/sdist
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install /tmp/sdist/newmean_pii-*/ pytest
           cd /tmp/sdist/newmean_pii-* && /tmp/venv/bin/pytest -q -ra tests
+      # the tests with an assertion on measured time (the 1.7.2 release standard, CI3; marker timing), alone; those that
+      # need LangChain or Langfuse skip here as they do in the step above (vault.yml runs them)
+      - name: The timing tests of the sdist, alone
+        run: cd /tmp/sdist/newmean_pii-* && /tmp/venv/bin/pytest -q -ra -m timing tests
       - uses: actions/upload-artifact@v4
         with:
           name: sdist
           path: dist/*.tar.gz
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}
 
   wheels:
     needs: sdist
     name: wheels ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, windows-2022]
+        # every runner in the public repository; elsewhere the dispatch input os chooses (default: Linux x64 only). A
+        # kernel_gates subset builds only the wheels its kernel jobs test: fast the three x86-64 ones; sanitizers and
+        # emulation the Linux x86-64 one; speed the Linux x86-64 and Intel macOS ones (all, off and every other event:
+        # every runner).
+        os: >-
+          ${{ fromJSON((github.repository == 'newmean-ai/pii'
+          && contains(fromJSON('["sanitizers", "emulation"]'), inputs.kernel_gates)) && '["ubuntu-24.04"]'
+          || (github.repository == 'newmean-ai/pii' && inputs.kernel_gates == 'speed') && '["ubuntu-24.04", "macos-15-intel"]'
+          || (github.repository == 'newmean-ai/pii' && inputs.kernel_gates == 'fast')
+          && '["ubuntu-24.04", "macos-15-intel", "windows-2022"]'
+          || (github.repository == 'newmean-ai/pii' || inputs.os == 'all')
+          && '["ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel", "windows-2022"]'
+          || inputs.os == 'linux-windows' && '["ubuntu-24.04", "windows-2022"]' || '["ubuntu-24.04"]') }}
     steps:
       - uses: actions/download-artifact@v5
         with:
@@ -58,6 +128,10 @@ jobs:
         shell: bash
         run: echo "path=$(ls dist/*.tar.gz)" >> "$GITHUB_OUTPUT"
       - uses: pypa/cibuildwheel@v3.2.0
+        # test-environment of python/pyproject.toml plus PII_SKIP_TIMING=1: the test command leaves the timing tests out
+        # (CI3); the sdist job runs them alone
+        env:
+          CIBW_TEST_ENVIRONMENT: NEWMEAN_PII_NETWORK_TESTS=1 PII_SKIP_TIMING=1
         with:
           package-dir: ${{ steps.sdist.outputs.path }}
           output-dir: wheelhouse
@@ -65,3 +139,1016 @@ jobs:
         with:
           name: wheels-${{ matrix.os }}
           path: wheelhouse/*.whl
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}
+
+  # x86-64 kernel gates (issue #3): only in newmean-ai/pii, only when dispatched by hand with kernel_gates. A subset is
+  # for working on a failure (fast: digests, wheels, toolchains; sanitizers; emulation; speed, with arm64 and Intel
+  # macOS); a release needs one run of all on its commit, every job green. kernel-base checks KERNEL_BASE first, and
+  # every other kernel job needs it; it also runs where rc.yml calls this workflow on an rc/* branch (the push of a
+  # candidate), so the candidate's descent from KERNEL_BASE and its parent are checked at push time. Logits digests
+  # against the pins of the code before the change (C1-C4), sanitizers and the race of the first callers (C5, D3, D4),
+  # emulated CPUs without AVX and without AVX2 (D1, D2), the speed and the documented source build (P1-P3), the workload
+  # of the issue #3 reporter on a CPU with AVX2 and FMA but no AVX-512 (Intel macOS), the package toolchains and the
+  # final binaries (D5-D7). Every kernel job uploads what it measured as an artifact (kernel-*), kept 90 days.
+  kernel-base:
+    if: >-
+      github.repository == 'newmean-ai/pii' && ((github.workflow != 'Python wheels' && startsWith(github.ref, 'refs/heads/rc/'))
+      || (github.workflow == 'Python wheels' && github.event_name == 'workflow_dispatch'
+      && contains(fromJSON('["fast", "sanitizers", "emulation", "speed", "all"]'), inputs.kernel_gates)))
+    name: kernel base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # KERNEL_BASE and the ancestry check need the history
+      - name: KERNEL_BASE - the commit, descent from it, the parent of a candidate, the eleven pinned ids, the diffs of the manifests and build inputs
+        run: |
+          mkdir -p $OUT
+          {
+            echo "KERNEL_BASE $KERNEL_BASE"
+            echo "HEAD $(git rev-parse HEAD)"
+            echo "ref $GITHUB_REF, event $GITHUB_EVENT_NAME, workflow $GITHUB_WORKFLOW"
+            [[ "$KERNEL_BASE" =~ ^[0-9a-f]{40}$ ]] || { echo "KERNEL_BASE is not a full commit SHA"; exit 1; }
+            git cat-file -e "$KERNEL_BASE^{commit}" || { echo "KERNEL_BASE is not a commit of this repository"; exit 1; }
+            git merge-base --is-ancestor "$KERNEL_BASE" HEAD || { echo "HEAD does not descend from KERNEL_BASE"; exit 1; }
+            echo "HEAD descends from KERNEL_BASE"
+            # a candidate (rc/*) is one commit on public main: its only parent is main as the repository has it now, read
+            # from the remote, not from the checkout
+            if [[ "$GITHUB_REF" == refs/heads/rc/* ]]; then
+              main=$(git ls-remote origin refs/heads/main | cut -f 1)
+              parents=$(git rev-list --parents -n 1 HEAD | cut -s -d ' ' -f 2-)
+              echo "public main $main"
+              echo "parents of HEAD: $parents"
+              [[ "$main" =~ ^[0-9a-f]{40}$ ]] || { echo "cannot read public main"; exit 1; }
+              [ "$parents" = "$main" ] || { echo "HEAD's only parent is not public main: build the candidate again on main"; exit 1; }
+              echo "HEAD has one parent, public main"
+            fi
+            n=0; bad=0
+            while read -r path want; do
+              [ -n "$path" ] || continue
+              n=$((n + 1))
+              got=$(git rev-parse "$KERNEL_BASE:$path")
+              if [ "$got" = "$want" ]; then echo "pin $path $got"; else echo "pin $path $got, pinned $want"; bad=1; fi
+            done <<< "$KERNEL_PINS"
+            [ "$n" = 11 ] || { echo "KERNEL_PINS names $n paths, not 11"; exit 1; }
+            [ "$bad" = 0 ] || { echo "KERNEL_BASE does not have the pinned ids"; exit 1; }
+            echo "the eleven ids at KERNEL_BASE equal the pins"
+            # the same paths at HEAD: the kernel changes native/core and _core.c, the versions change the two manifests
+            while read -r path want; do
+              [ -n "$path" ] || continue
+              echo "head $path $(git rev-parse "HEAD:$path")"
+            done <<< "$KERNEL_PINS"
+            echo "== git diff KERNEL_BASE HEAD: the two manifests and the Python build inputs"
+            git diff "$KERNEL_BASE" HEAD -- flutter/pubspec.yaml rust/Cargo.toml python/pyproject.toml python/setup.py \
+              python/MANIFEST.in python/src/newmean_pii/__init__.py
+            # this commit without the kernel (P3 base (a), the second base of D5/D6) takes KERNEL_FILES from KERNEL_BASE
+            echo "== git diff --stat KERNEL_BASE HEAD -- $KERNEL_FILES"
+            # shellcheck disable=SC2086  # one argument per path
+            git diff --stat "$KERNEL_BASE" HEAD -- $KERNEL_FILES
+            echo "== git diff --stat KERNEL_BASE HEAD -- python/src python/setup.py python/pyproject.toml python/MANIFEST.in"
+            git diff --stat "$KERNEL_BASE" HEAD -- python/src python/setup.py python/pyproject.toml python/MANIFEST.in
+            # this commit without the kernel as a git tree (the jobs below unpack the same files: HEAD's tree, its
+            # native/core moved out, KERNEL_FILES of KERNEL_BASE), and the ids of its package inputs, which the record
+            # checks against the commit before the kernel's merge
+            echo "== nokernel: HEAD's tree with KERNEL_FILES of KERNEL_BASE"
+            export GIT_INDEX_FILE=/tmp/nokernel.index
+            git read-tree HEAD
+            # shellcheck disable=SC2086  # one argument per path
+            git rm -r -q --cached $KERNEL_FILES
+            for p in $KERNEL_FILES; do
+              if [ "$(git cat-file -t "$KERNEL_BASE:$p")" = tree ]; then
+                git read-tree --prefix="$p/" "$KERNEL_BASE:$p"
+              else
+                git update-index --add --cacheinfo "$(git ls-tree "$KERNEL_BASE" -- "$p" | cut -d ' ' -f 1),$(git rev-parse "$KERNEL_BASE:$p"),$p"
+              fi
+            done
+            nokernel=$(git write-tree)
+            unset GIT_INDEX_FILE
+            echo "nokernel tree $nokernel"
+            for p in $KERNEL_FILES python/src/newmean_pii python/setup.py python/pyproject.toml python/MANIFEST.in \
+              android/pii/src/main android/pii/build.gradle.kts flutter/hook flutter/lib flutter/pubspec.yaml \
+              flutter/test/api_test.dart rust/Cargo.toml rust/build.rs rust/src rust/examples/extract.rs Package.swift \
+              swift/Sources; do
+              echo "nokernel $p $(git rev-parse "$nokernel:$p")"
+            done
+          } 2>&1 | tee $OUT/base.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-base
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-digests:
+    # C1, C2: the digests of every kernel through the installed wheel and the CLI; C3, C4: KERNEL_BASE built here
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["fast", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel digests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      PII_MODELS: /tmp/mc/v1.1.0
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # kernel_refs.py takes KERNEL_BASE from git
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-ubuntu-24.04
+          path: wheelhouse
+      - name: CPU, wheel, models, CLI
+        run: |
+          mkdir -p $OUT
+          { git rev-parse HEAD; lscpu; grep -m1 '^flags' /proc/cpuinfo; gcc --version | sed -n 1p; clang --version | sed -n 1p; } | tee $OUT/cpu.txt
+          python -m venv /tmp/w
+          /tmp/w/bin/pip install -q wheelhouse/*abi3*manylinux*x86_64*.whl pytest
+          ls wheelhouse | tee $OUT/wheel.txt
+          for s in nano small medium large; do for v in q4 q4e; do
+            /tmp/w/bin/python -m newmean_pii download --size $s --variant $v --cache-dir /tmp/mc > /dev/null
+          done; done
+          make -C native/core B=/tmp/cli CFLAGS=-Werror all
+          /tmp/cli/pii_cli info | tee $OUT/cli-info.json
+          cp -r python/tests /tmp/t
+      - name: C1, C2 - digests of every kernel through the installed wheel and the CLI, against the pins
+        working-directory: /tmp/t
+        run: |
+          NEWMEAN_PII_KERNEL_TESTS=full NEWMEAN_PII_EXPECT_KERNEL=avx2 PII_CLI=/tmp/cli/pii_cli \
+            /tmp/w/bin/pytest -q -rs -s -p no:cacheprovider test_kernel_isa.py --junitxml=$OUT/c1c2.xml 2>&1 | tee $OUT/c1c2.txt
+      - name: C3, C4 - KERNEL_BASE built here (scalar, sse, sse+fma) gives the arm64 pins, every build required
+        if: ${{ !cancelled() }}
+        run: |
+          # the seven compiler and flag combinations the pins were made with on arm64 (Apple clang and GCC: -DPII_NO_FMA,
+          # -DPII_SCALAR, -DPII_NO_FMA -DPII_WIDE=0, and the default, which is fused there and is -march=x86-64-v3
+          # -DPII_FMA here), with clang and gcc, plus the two builds without flags that the 1.6.1 wheels are; on x86-64
+          # the code before the change reads PII_NO_FMA nowhere and has PII_WIDE=0 already, so those builds are sse
+          /tmp/w/bin/python python/tests/kernel_refs.py --ref "$KERNEL_BASE" --check --full --models $PII_MODELS \
+            --require-builds 9 \
+            --build "clang:-DPII_NO_FMA" --build "clang:-DPII_SCALAR" --build "clang:-DPII_NO_FMA -DPII_WIDE=0" \
+            --build "gcc:-DPII_NO_FMA" --build "gcc:-DPII_SCALAR" \
+            --build "clang:-march=x86-64-v3 -DPII_FMA" --build "gcc:-march=x86-64-v3 -DPII_FMA" \
+            --build "gcc:" --build "clang:" > $OUT/c3c4.json || { cat $OUT/c3c4.json; exit 1; }
+          cat $OUT/c3c4.json
+          # each build's kernel, as the arm64 record has them in kind: sse or scalar plain, sse+fma fused
+          python3 -c "
+          import json, sys
+          r = json.load(open('$OUT/c3c4.json'))
+          want = ['sse', 'scalar', 'sse', 'sse', 'scalar', 'sse+fma', 'sse+fma', 'sse', 'sse']
+          got = [b.get('build') for b in r['builds']]
+          print('kernels', got)
+          assert r['results'] == 9 and got == want and not r['errors'] and not r['mismatches'], (got, r['errors'], r['mismatches'])"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-digests
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-sanitizers:
+    # C5: ASan and UBSan per kernel; D3, D4: the first callers of the kernel choice under ThreadSanitizer
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["sanitizers", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel sanitizers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      PII_MODELS: /tmp/mc/v1.1.0
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-ubuntu-24.04
+          path: wheelhouse
+      - name: CPU, wheel, nano, the sanitizer builds of the CLI, texts
+        run: |
+          mkdir -p $OUT
+          { git rev-parse HEAD; lscpu; grep -m1 '^flags' /proc/cpuinfo; gcc --version | sed -n 1p; } | tee $OUT/cpu.txt
+          python -m venv /tmp/w
+          /tmp/w/bin/pip install -q wheelhouse/*abi3*manylinux*x86_64*.whl pytest
+          ls wheelhouse | tee $OUT/wheel.txt
+          /tmp/w/bin/python -m newmean_pii download --size nano --variant q4 --cache-dir /tmp/mc > /dev/null
+          make -C native/core B=/tmp/cli CFLAGS=-Werror asan tsan
+          cp -r python/tests /tmp/t
+          /tmp/w/bin/python /tmp/t/test_kernel_isa.py texts /tmp/texts.jsonl $PII_MODELS/pii-nano
+          wc -l /tmp/texts.jsonl
+      - name: C5 - ASan and UBSan per kernel (selftest, logits of every text against the pins, four threads)
+        run: |
+          M=$PII_MODELS/pii-nano
+          for k in sse avx2 avx2+fma; do
+            NEWMEAN_PII_KERNEL=$k /tmp/cli/asan/pii_cli selftest $M/onnx/model_q4.onnx $M/tokenizer.web.json
+            NEWMEAN_PII_KERNEL=$k /tmp/cli/asan/pii_cli logits $M/onnx/model_q4.onnx $M/tokenizer.web.json < /tmp/texts.jsonl > /tmp/asan-$k.jsonl
+            tail -1 /tmp/asan-$k.jsonl > $OUT/asan-$k.json
+            NEWMEAN_PII_KERNEL=$k /tmp/cli/asan/pii_cli threads $M/onnx/model_q4.onnx $M/tokenizer.web.json 4 < /tmp/texts.jsonl > /dev/null
+          done
+          cd /tmp/t && /tmp/w/bin/python -c "
+          import json, os, test_kernel_isa as K
+          pins = K.PINS['1.1.0'][('nano', 'q4')]
+          for k in ('sse', 'avx2', 'avx2+fma'):
+              r = json.load(open(os.environ['OUT'] + f'/asan-{k}.json'))
+              assert r['build'] == k and r['sha256'] == pins['fused' if k.endswith('+fma') else 'plain'], (k, r)
+              print(k, r['sha256'])
+          print('ASan + UBSan: no error; digests equal the pins')" | tee $OUT/asan.txt
+      - name: D3, D4 - 16 first callers under ThreadSanitizer
+        if: ${{ !cancelled() }}
+        run: |
+          sudo sysctl vm.mmap_rnd_bits=28  # ThreadSanitizer needs the older address-space layout
+          M=$PII_MODELS/pii-nano
+          for k in "" sse avx2 avx2+fma; do
+            NEWMEAN_PII_KERNEL=$k /tmp/cli/tsan/pii_cli race 16
+            NEWMEAN_PII_KERNEL=$k /tmp/cli/tsan/pii_cli race $M/onnx/model_q4.onnx $M/tokenizer.web.json 16
+          done 2>&1 | tee $OUT/tsan.txt
+          ! grep -q "WARNING: ThreadSanitizer" $OUT/tsan.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-sanitizers
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-emulation:
+    # D1, D2: the packaged wheel under QEMU on CPUs without AVX (Nehalem) and without AVX2 (Sandy Bridge)
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["emulation", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel emulation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      PII_MODELS: /tmp/mc/v1.1.0
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-ubuntu-24.04
+          path: wheelhouse
+      - name: CPU, wheel, nano, texts
+        run: |
+          mkdir -p $OUT
+          { git rev-parse HEAD; lscpu; grep -m1 '^flags' /proc/cpuinfo; } | tee $OUT/cpu.txt
+          python -m venv /tmp/w
+          /tmp/w/bin/pip install -q wheelhouse/*abi3*manylinux*x86_64*.whl pytest
+          ls wheelhouse | tee $OUT/wheel.txt
+          /tmp/w/bin/python -m newmean_pii download --size nano --variant q4 --cache-dir /tmp/mc > /dev/null
+          cp -r python/tests /tmp/t
+          /tmp/w/bin/python /tmp/t/test_kernel_isa.py texts /tmp/texts.jsonl $PII_MODELS/pii-nano
+          wc -l /tmp/texts.jsonl
+      - name: D1, D2 - the packaged wheel under QEMU on CPUs without AVX (Nehalem) and without AVX2 (Sandy Bridge)
+        run: |
+          sudo apt-get install -y -q qemu-user > /dev/null
+          qemu-x86_64 --version | sed -n 1p | tee $OUT/qemu.txt
+          cd /tmp/t && /tmp/w/bin/python -c "
+          import json, test_kernel_isa as K
+          t = [json.loads(l)['text'] for l in open('/tmp/texts.jsonl', encoding='utf-8')]
+          json.dump([t[i] for i in K.smoke_indices(t)], open('/tmp/smoke.json', 'w', encoding='utf-8'), ensure_ascii=False)"
+          for cpu in Nehalem SandyBridge; do
+            for k in "-" avx2 avx2+fma; do  # the default, and requests the CPU cannot meet
+              if [ "$k" = "-" ]; then unset NEWMEAN_PII_KERNEL; else export NEWMEAN_PII_KERNEL=$k; fi
+              qemu-x86_64 -cpu $cpu /tmp/w/bin/python /tmp/t/test_kernel_isa.py --worker \
+                $PII_MODELS/pii-nano nano q4 /tmp/smoke.json | tail -1 > $OUT/qemu-$cpu-$k.json
+            done
+          done
+          unset NEWMEAN_PII_KERNEL
+          /tmp/w/bin/python -c "
+          import glob, json, os, sys
+          sys.path.insert(0, '/tmp/t')
+          import test_kernel_isa as K
+          pin = K.PINS['1.1.0'][('nano', 'q4')]['smoke_plain']
+          files = sorted(glob.glob(os.environ['OUT'] + '/qemu-*.json'))
+          assert len(files) == 6, files
+          for f in files:
+              r = json.load(open(f))
+              ml, ecx, ebx, xcr0, bits = r['inputs']
+              print(os.path.basename(f), r['build'], r['inputs'], sum(r['tokens']), 'tokens', r['sha256'])
+              assert r['build'] == 'sse' and r['sha256'] == pin, f
+              assert not ebx >> 5 & 1, 'AVX2 reported'
+              if 'SandyBridge' in f:  # AVX with the XMM and YMM state enabled, no AVX2
+                  assert ecx >> 28 & 1 and ecx >> 27 & 1 and xcr0 & 6 == 6, r['inputs']
+              else:
+                  assert not ecx >> 28 & 1, r['inputs']
+          print('sse on both emulated CPUs for every request; logits equal to the plain pins')" | tee -a $OUT/qemu.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-emulation
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-speed:
+    # P1-P3 on Linux x86-64, two runs side by side, and the documented source build. The reporter's build of issue #3 is
+    # the sdist of newmean-pii REPORTER_VERSION from PyPI, pinned by its sha256 (its Python sources and vendored native
+    # inputs are KERNEL_BASE's, checked file by file below), built with CFLAGS="-march=x86-64-v3 -DPII_FMA" (sse+fma);
+    # the 1.6.1 wheels run sse on Linux and Intel macOS x86-64, scalar on Windows. Forced sse is held to two bases:
+    # KERNEL_BASE as it is (base: the last public release) and this commit's python/ with KERNEL_FILES of KERNEL_BASE
+    # (nokernel: the candidate without the kernel; that ratio is the kernel's own). Either ratio below 0.95 fails; when
+    # only the one against the release fails, the job records an end-to-end regression since 1.6.1 to investigate.
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["speed", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel speed linux (run ${{ matrix.run }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PII_MODELS: /tmp/mc/v1.1.0
+      OUT: /tmp/out
+      REPORTER_VERSION: "1.6.1"
+      REPORTER_SDIST: newmean_pii-1.6.1.tar.gz
+      REPORTER_SDIST_SHA256: c0bd91501e3b753dbd343603ae63185359cf7caf4860bb113428844145672f9b
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # the speed baseline is KERNEL_BASE, taken from git
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: sdist
+          path: dist
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-ubuntu-24.04
+          path: wheelhouse
+      - name: CPU, wheel, models, CLI
+        run: |
+          mkdir -p $OUT
+          { git rev-parse HEAD; lscpu; grep -m1 '^flags' /proc/cpuinfo; gcc --version | sed -n 1p; } | tee $OUT/cpu.txt
+          python -m venv /tmp/w
+          /tmp/w/bin/pip install -q wheelhouse/*abi3*manylinux*x86_64*.whl pytest
+          ls wheelhouse | tee $OUT/wheel.txt
+          for m in "nano q4" "medium q4e"; do
+            set -- $m
+            /tmp/w/bin/python -m newmean_pii download --size $1 --variant $2 --cache-dir /tmp/mc > /dev/null
+          done
+          make -C native/core B=/tmp/cli CFLAGS=-Werror all
+          /tmp/cli/pii_cli info | tee $OUT/cli-info.json
+      - name: Source builds - the documented command on the pinned PyPI sdist (the reporter's version, sse+fma) and this sdist (avx2+fma)
+        run: |
+          # the reporter's build: the PyPI sdist of REPORTER_VERSION, pinned by its sha256, built with the documented flags
+          python -m pip download -q --no-deps --no-binary :all: "newmean-pii==$REPORTER_VERSION" -d /tmp/reporter
+          (cd /tmp/reporter && ls && echo "$REPORTER_SDIST_SHA256  $REPORTER_SDIST" | sha256sum -c -) | tee $OUT/reporter-sdist.txt
+          # its Python sources and vendored native inputs are those of KERNEL_BASE, file by file, both ways
+          mkdir /tmp/reporter/x && tar -xzf "/tmp/reporter/$REPORTER_SDIST" -C /tmp/reporter/x
+          X=/tmp/reporter/x/newmean_pii-$REPORTER_VERSION; n=0
+          for f in $(cd "$X" && find src/newmean_pii native-core/src -type f | sort) native-core/pii.h pyproject.toml setup.py \
+            MANIFEST.in README.md README.ko.md; do
+            case $f in native-core/*) g=native/core/${f#native-core/} ;; *) g=python/$f ;; esac
+            git show "$KERNEL_BASE:$g" | cmp - "$X/$f"
+            n=$((n + 1))
+          done
+          for g in $(git ls-tree -r --name-only "$KERNEL_BASE" python/src/newmean_pii native/core/src); do
+            case $g in native/core/*) f=native-core/${g#native/core/} ;; *) f=${g#python/} ;; esac
+            test -f "$X/$f" || { echo "$g of KERNEL_BASE is not in the sdist"; exit 1; }
+          done
+          echo "$n files of the sdist equal KERNEL_BASE's; every file of its python/src/newmean_pii and native/core/src is in the sdist" | tee -a $OUT/reporter-sdist.txt
+          python -m venv /tmp/pypi
+          CFLAGS="-march=x86-64-v3 -DPII_FMA" /tmp/pypi/bin/pip install -q --no-cache-dir "/tmp/reporter/$REPORTER_SDIST"
+          python -m venv /tmp/src && CFLAGS="-march=x86-64-v3 -DPII_FMA" /tmp/src/bin/pip install -q --no-binary newmean-pii dist/*.tar.gz
+          # the same compiler and flags for the 4-wide kernel before (KERNEL_BASE; this commit without the kernel) and
+          # after the change
+          mkdir /tmp/base && git archive "$KERNEL_BASE" python native/core | tar -x -C /tmp/base
+          python -m venv /tmp/basev && /tmp/basev/bin/pip install -q /tmp/base/python
+          mkdir /tmp/nokernel && git archive HEAD python | tar -x -C /tmp/nokernel
+          # shellcheck disable=SC2086  # one argument per path
+          git archive "$KERNEL_BASE" $KERNEL_FILES | tar -x -C /tmp/nokernel
+          python -m venv /tmp/nokv && /tmp/nokv/bin/pip install -q /tmp/nokernel/python
+          python -m venv /tmp/headv && /tmp/headv/bin/pip install -q --no-binary newmean-pii dist/*.tar.gz
+          for py in /tmp/w /tmp/pypi /tmp/src /tmp/basev /tmp/nokv /tmp/headv; do
+            $py/bin/python -c "import newmean_pii as n; from newmean_pii import _core; print('$py', n.__version__, _core.build_info())"
+          done | tee $OUT/source-builds.txt
+          test "$(/tmp/pypi/bin/python -c 'import newmean_pii as n; print(n.__version__)')" = "$REPORTER_VERSION"
+          test "$(/tmp/pypi/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "sse+fma"
+          test "$(/tmp/src/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "avx2+fma"
+          test "$(NEWMEAN_PII_KERNEL=sse+fma /tmp/src/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "sse+fma"
+          test "$(/tmp/basev/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "sse"
+          test "$(/tmp/nokv/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "sse"
+          test "$(/tmp/headv/bin/python -c 'from newmean_pii import _core; print(_core.build_info())')" = "avx2"
+      - name: P1-P3 - speed, five alternating rounds per model in fresh processes, one thread
+        run: |
+          # fused must beat the reporter's build: a ratio above 1.0, so a tie fails
+          for m in "nano q4" "medium q4e"; do
+            set -- $m
+            /tmp/w/bin/python python/tests/bench_kernels.py --model-dir $PII_MODELS/pii-$1 --size $1 --variant $2 \
+              --wheel sse /tmp/w/bin/python sse --wheel avx2 /tmp/w/bin/python - --wheel avx2fma /tmp/w/bin/python avx2+fma \
+              --wheel head-sse /tmp/headv/bin/python sse --wheel base /tmp/basev/bin/python - \
+              --wheel nokernel /tmp/nokv/bin/python - --wheel reporter-ssefma /tmp/pypi/bin/python - \
+              --cli cli-sse /tmp/cli/pii_cli sse --cli cli-avx2 /tmp/cli/pii_cli - \
+              --require "avx2/sse>=1.10" --require "cli-avx2/cli-sse>=1.10" --require "avx2fma/reporter-ssefma>1.0" \
+              --require "head-sse/base>=0.95" --require "head-sse/nokernel>=0.95" \
+              > $OUT/bench-$1-$2.json || echo "$1 $2" >> /tmp/bench-failed.txt
+            cat $OUT/bench-$1-$2.json
+            python3 python/tests/bench_kernels.py --p3-note $OUT/bench-$1-$2.json head-sse | tee -a $OUT/p3-note.txt
+          done
+          test ! -f /tmp/bench-failed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-speed-linux-${{ matrix.run }}
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-arm64:
+    # P3, arm64: the same speed script on a Linux arm64 runner, this sdist against both bases of kernel-speed
+    # (KERNEL_BASE; this commit without the kernel), built the same way; either ratio below 0.95 fails, and when only the
+    # one against the release fails the job records an end-to-end regression since 1.6.1 to investigate
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["speed", "all"]'), inputs.kernel_gates)
+    needs: [sdist, kernel-base]
+    name: kernel speed arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: sdist
+          path: dist
+      - name: Builds and models
+        run: |
+          mkdir -p $OUT && { git rev-parse HEAD; lscpu; gcc --version | sed -n 1p; } | tee $OUT/cpu.txt
+          mkdir /tmp/base && git archive "$KERNEL_BASE" python native/core | tar -x -C /tmp/base
+          python -m venv /tmp/basev && /tmp/basev/bin/pip install -q /tmp/base/python
+          mkdir /tmp/nokernel && git archive HEAD python | tar -x -C /tmp/nokernel
+          # shellcheck disable=SC2086  # one argument per path
+          git archive "$KERNEL_BASE" $KERNEL_FILES | tar -x -C /tmp/nokernel
+          python -m venv /tmp/nokv && /tmp/nokv/bin/pip install -q /tmp/nokernel/python
+          python -m venv /tmp/headv && /tmp/headv/bin/pip install -q --no-binary newmean-pii dist/*.tar.gz pytest
+          for py in /tmp/basev /tmp/nokv /tmp/headv; do $py/bin/python -c "from newmean_pii import _core; print('$py', _core.build_info())"; done | tee $OUT/builds.txt
+          for m in "nano q4" "medium q4e"; do set -- $m; /tmp/headv/bin/python -m newmean_pii download --size $1 --variant $2 --cache-dir /tmp/mc > /dev/null; done
+      - name: P3 - arm64 within 5% of the code before the change (KERNEL_BASE, and this commit without the kernel)
+        run: |
+          for m in "nano q4" "medium q4e"; do
+            set -- $m
+            /tmp/headv/bin/python python/tests/bench_kernels.py --model-dir /tmp/mc/v1.1.0/pii-$1 --size $1 --variant $2 \
+              --wheel head /tmp/headv/bin/python - --wheel base /tmp/basev/bin/python - --wheel nokernel /tmp/nokv/bin/python - \
+              --require "head/base>=0.95" --require "head/nokernel>=0.95" \
+              > $OUT/bench-$1-$2.json || echo "$1 $2" >> /tmp/bench-failed.txt
+            cat $OUT/bench-$1-$2.json
+            python3 python/tests/bench_kernels.py --p3-note $OUT/bench-$1-$2.json head | tee -a $OUT/p3-note.txt
+          done
+          test ! -f /tmp/bench-failed.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-arm64
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-speed-mac:
+    # The workload of the issue #3 reporter, on the setup promised there: an x86-64 CPU with AVX2 and FMA but no AVX-512,
+    # one thread per call, one input of about 3,000 characters (2,500 to 3,500). Of the public runners only Intel macOS
+    # has had such a CPU (the Linux x86-64 runners have AVX-512), so the job logs the CPU and fails before it measures
+    # anything on another one. The packaged wheel times sse (the kernel the 1.6.1 wheels run), avx2 (the default) and
+    # avx2+fma (the opt-in), five alternating rounds per model in fresh processes; the artifact holds every round and the
+    # medians. This measurement has no threshold of its own: a public figure for that setup comes only from a run whose
+    # log shows that CPU.
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["speed", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel speed macos-15-intel
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-macos-15-intel
+          path: wheelhouse
+      - name: "CPU - AVX2 and FMA, no AVX-512 (the setup promised on issue #3), then the wheel and the models"
+        run: |
+          mkdir -p $OUT
+          { git rev-parse HEAD; sysctl machdep.cpu; } | tee $OUT/cpu.txt
+          feats=" $(sysctl -n machdep.cpu.features machdep.cpu.leaf7_features | tr '\n' ' ' | tr '[:lower:]' '[:upper:]') "
+          bad=0
+          for f in AVX2 FMA; do
+            case $feats in
+              *" $f "*) echo "$f: yes" ;;
+              *) echo "::error::this runner's CPU has no $f, so it is not the setup promised on issue #3"; bad=1 ;;
+            esac
+          done
+          case $feats in
+            *" AVX512"*) echo "::error::this runner's CPU has AVX-512 (machdep.cpu above), so it is not the setup promised on issue #3"; bad=1 ;;
+            *) echo "AVX-512: no" ;;
+          esac
+          test $bad = 0
+          python -m venv /tmp/w
+          WHLS=(wheelhouse/*abi3*.whl); WHL="${WHLS[0]}"; test -f "$WHL"
+          echo "$WHL" | tee $OUT/wheel.txt
+          /tmp/w/bin/pip install -q "$WHL" pytest
+          for m in "nano q4" "medium q4e"; do
+            set -- $m
+            /tmp/w/bin/python -m newmean_pii download --size $1 --variant $2 --cache-dir /tmp/mc > /dev/null
+          done
+          # the kernel each configuration of the bench runs: forced sse, the default (avx2), the opt-in avx2+fma
+          info='from newmean_pii import _core; print(_core.build_info())'
+          for k in sse - avx2+fma; do
+            if [ "$k" = - ]; then got=$(/tmp/w/bin/python -c "$info"); else got=$(NEWMEAN_PII_KERNEL=$k /tmp/w/bin/python -c "$info"); fi
+            echo "NEWMEAN_PII_KERNEL=$k: $got"
+          done | tee $OUT/kernels.txt
+          test "$(cut -d ' ' -f 2 $OUT/kernels.txt | paste -s -d ' ' -)" = "sse avx2 avx2+fma"
+      - name: "The issue #3 workload - one input of about 3,000 characters, one thread, sse, avx2 and avx2+fma, five alternating rounds per model in fresh processes"
+        run: |
+          for m in "nano q4" "medium q4e"; do
+            set -- $m
+            /tmp/w/bin/python python/tests/bench_kernels.py --model-dir /tmp/mc/v1.1.0/pii-$1 --size $1 --variant $2 \
+              --workloads reporter \
+              --wheel sse /tmp/w/bin/python sse --wheel avx2 /tmp/w/bin/python - --wheel avx2fma /tmp/w/bin/python avx2+fma \
+              > $OUT/reporter-$1-$2.json
+            cat $OUT/reporter-$1-$2.json
+          done
+          # the medians in one file, after checking the CPU and the kernel each configuration ran
+          python3 - "$OUT" "$(git rev-parse HEAD)" <<'PY' | tee $OUT/reporter-medians.json
+          import json, sys
+          out, sha = sys.argv[1], sys.argv[2]
+          kernels = {"sse": "sse", "avx2": "avx2", "avx2fma": "avx2+fma"}
+          s = {"commit": sha, "cpu": None, "workload": "bench_kernels.py --workloads reporter: one input, one thread",
+               "models": {}}
+          for m in ("nano-q4", "medium-q4e"):
+              with open(f"{out}/reporter-{m}.json", encoding="utf-8") as f:
+                  d = json.load(f)
+              assert d["cpu"]["issue3_cpu"], d["cpu"]
+              s["cpu"] = d["cpu"]
+              c = d["configs"]
+              for label, k in kernels.items():
+                  assert c[label]["build"] == [k], (m, label, c[label]["build"])
+              s["models"][d["model"]] = {
+                  "chars": d["reporter"]["chars"], "sha256": d["reporter"]["sha256"],
+                  "tokens": c["sse"]["reporter_tokens"], "rounds": d["rounds"],
+                  "ms_median": {k: c[label]["reporter_ms_median"] for label, k in kernels.items()}}
+          print(json.dumps(s, indent=1))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-speed-macos-15-intel
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-wheels:
+    # C5, C6: the wheels built from the sdist run the executed-path and digest tests with every case required; D6: the
+    # final binaries inspected; D5: MSVC (Windows) builds the core with no warning that KERNEL_BASE or this commit
+    # without the kernel lacks
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["fast", "all"]'), inputs.kernel_gates)
+    needs: [wheels, kernel-base]
+    name: kernel wheels ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-24.04, expect: avx2, skips: 0, baseline: x86-64}
+          - {os: macos-15-intel, expect: avx2, skips: 0, baseline: penryn}
+          - {os: windows-2022, expect: scalar, skips: 1, baseline: ""}  # no make there: the CLI test skips
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v5
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse
+      - name: Install the wheel
+        run: |
+          mkdir -p out
+          python -m venv venv
+          if [ -d venv/Scripts ]; then PY=venv/Scripts/python; else PY=venv/bin/python; fi
+          echo "PY=$PWD/$PY" >> "$GITHUB_ENV"
+          WHLS=(wheelhouse/*abi3*.whl); WHL="${WHLS[0]}"; test -f "$WHL"
+          echo "$WHL" | tee out/wheel.txt
+          $PY -m pip install -q "$WHL" pytest
+          if [ "$RUNNER_OS" != "Windows" ]; then
+            make -C native/core B=/tmp/cli CFLAGS=-Werror
+            echo "PII_CLI=/tmp/cli/pii_cli" >> "$GITHUB_ENV"
+          fi
+          if [ "$RUNNER_OS" = "macOS" ]; then sysctl machdep.cpu.brand_string machdep.cpu.features machdep.cpu.leaf7_features | tee out/cpu.txt; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then lscpu | tee out/cpu.txt; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then $PY -c "import platform; print(platform.processor())" | tee out/cpu.txt; fi
+      - name: test_kernel_isa.py, every case required
+        env:
+          NEWMEAN_PII_KERNEL_TESTS: full
+          NEWMEAN_PII_NETWORK_TESTS: "1"
+          NEWMEAN_PII_EXPECT_KERNEL: ${{ matrix.expect }}
+        run: |
+          cp -r python/tests kt && cd kt
+          $PY -m pytest -q -rs -s -p no:cacheprovider test_kernel_isa.py --junitxml=../out/kernel.xml 2>&1 | tee ../out/kernel.txt
+          $PY -c "
+          import xml.etree.ElementTree as E
+          r = E.parse('../out/kernel.xml').getroot()
+          s = r if r.tag == 'testsuite' else r.find('testsuite')
+          n, f, e, k = (int(s.get(x)) for x in ('tests', 'failures', 'errors', 'skipped'))
+          print(n, 'tests', f, 'failures', e, 'errors', k, 'skipped')
+          assert n == 14 and f == e == 0 and k == ${{ matrix.skips }}, (n, f, e, k)" | tee -a ../out/kernel.txt
+      - name: D6 - the wheel's extension inspected (AVX and FMA only in the 8-wide kernels, nothing above the baseline)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir /tmp/whl && cd /tmp/whl && python -m zipfile -e "$GITHUB_WORKSPACE/$(cat $GITHUB_WORKSPACE/out/wheel.txt)" .
+          SO=$(ls newmean_pii/_core*.so)
+          python "$GITHUB_WORKSPACE/python/tests/kernel_binaries.py" $SO --baseline ${{ matrix.baseline }} | tee "$GITHUB_WORKSPACE/out/isa-wheel.json"
+      - name: D5 - MSVC builds the core with no new warnings (CMake, /W4) against KERNEL_BASE and this commit without the kernel
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p base-src nokernel-src && git archive "$KERNEL_BASE" native/core | tar -x -C base-src
+          # this commit without the kernel, for this build's one input: HEAD's native/core moved out and KERNEL_BASE's
+          # put in its place (every file this build reads is a kernel file), built on its own like the others
+          git archive HEAD native/core | tar -x -C nokernel-src && mv nokernel-src/native/core nokernel-src/head-core
+          git archive "$KERNEL_BASE" native/core | tar -x -C nokernel-src
+          for t in base nokernel head; do
+            case $t in base) src=base-src/native/core ;; nokernel) src=nokernel-src/native/core ;; *) src=native/core ;; esac
+            cmake -S $src -B build-$t > /dev/null
+            cmake --build build-$t --config Release 2>&1 | tee out/msvc-$t.log
+            grep -o "[A-Za-z_]*\.[ch]([0-9,]*): warning C[0-9]*" out/msvc-$t.log | sed 's/([0-9,]*)//' | sort -u > out/msvc-$t.warnings || true
+          done
+          wc -l out/msvc-*.warnings
+          bad=0
+          for b in base nokernel; do
+            new=$(comm -13 out/msvc-$b.warnings out/msvc-head.warnings)
+            echo "MSVC warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+          done
+          test $bad = 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-${{ matrix.os }}
+          path: out
+          retention-days: 90
+
+  kernel-toolchains:
+    # D5-D7 on Linux x86-64: gcc and clang (make, -Werror), CMake, NDK r29 (x86_64), the release AAR as Gradle builds it,
+    # Rust 1.70 and stable, the Flutter build hook; each against two builds made the same way, KERNEL_BASE (the 1.6.1
+    # release) and this commit without the kernel (the candidate's own package inputs with KERNEL_FILES of KERNEL_BASE):
+    # no warning that either lacks, the same link dependencies, the final binaries inspected; the WebAssembly engines and
+    # the JS package unchanged.
+    # Every check runs even when an earlier one failed (!cancelled()), so one failure does not hide the others. These
+    # steps run under pipefail and the runner ignores SIGPIPE, so no pipe here has a reader that stops before its writer:
+    # the writer would fail on the broken pipe (`yes | sdkmanager` did in round 2). Hence answers read from a file,
+    # `sed -n 1p` (reads to the end) instead of `head -1`, and `find -print -quit`.
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["fast", "all"]'), inputs.kernel_gates)
+    needs: kernel-base
+    name: kernel toolchains linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: /tmp/out
+      NDK_VERSION: 29.0.14206865
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: The code before the change - KERNEL_BASE (its pins checked by kernel-base) and this commit without the kernel, for every comparison below
+        run: |
+          mkdir -p $OUT /tmp/base /tmp/nokernel
+          git archive "$KERNEL_BASE" | tar -x -C /tmp/base
+          test -f /tmp/base/native/core/pii.h
+          # HEAD's tree with KERNEL_FILES of KERNEL_BASE; HEAD's native/core is moved out first, so none of its files stays
+          git archive HEAD | tar -x -C /tmp/nokernel
+          mv /tmp/nokernel/native/core /tmp/nokernel-head-core
+          # shellcheck disable=SC2086  # one argument per path
+          git archive "$KERNEL_BASE" $KERNEL_FILES | tar -x -C /tmp/nokernel
+          for p in $KERNEL_FILES; do diff -r "/tmp/base/$p" "/tmp/nokernel/$p"; done
+          echo "nokernel: HEAD $(git rev-parse HEAD) with $KERNEL_FILES of KERNEL_BASE" | tee $OUT/nokernel.txt
+      - name: D7 - the WebAssembly engines and the JS package as at KERNEL_BASE
+        if: ${{ !cancelled() }}
+        run: |
+          # The content part of D7: HEAD's engine folders have the pinned ids and the three files hash as KERNEL_BASE's.
+          # Its history part (the kernel's merge commit M changes nothing under js/: git diff --exit-code M^1 M -- js/)
+          # needs the history the kernel was made in, so it is checked in git before the candidate is built.
+          for p in js/src/engines js/engine; do
+            want=$(awk -v p="$p" '$1 == p { print $2 }' <<< "$KERNEL_PINS"); got=$(git rev-parse "HEAD:$p")
+            echo "$p $got pinned $want"; test -n "$want"; test "$got" = "$want"
+          done | tee $OUT/wasm.txt
+          for f in js/src/engines/wasm-simd.ts js/src/engines/wasm-relaxed.ts js/engine/pii.c; do
+            a=$(git show "$KERNEL_BASE:$f" | sha256sum | cut -c1-64); b=$(sha256sum < $f | cut -c1-64)
+            echo "$f $a $b"; test "$a" = "$b"
+          done | tee -a $OUT/wasm.txt
+      - name: D5, D6 - gcc and clang (make; this branch with -Werror), CMake, against KERNEL_BASE and this commit without the kernel
+        if: ${{ !cancelled() }}
+        run: |
+          gcc --version | sed -n 1p | tee $OUT/toolchains.txt; clang --version | sed -n 1p | tee -a $OUT/toolchains.txt
+          bad=0
+          for cc in gcc clang; do
+            for t in base nokernel head; do
+              # the code before the change warns on x86-64 (gemm16 unused there), so only this branch builds with -Werror
+              case $t in base) src=/tmp/base; WE= ;; nokernel) src=/tmp/nokernel; WE= ;; *) src=$PWD; WE=-Werror ;; esac
+              make -C $src/native/core B=/tmp/mk-$cc-$t CC=$cc CFLAGS=$WE all > $OUT/make-$cc-$t.log 2>&1 || { cat $OUT/make-$cc-$t.log; exit 1; }
+              readelf -d /tmp/mk-$cc-$t/libpii.so | grep NEEDED | sort > /tmp/mk-$cc-$t.needed
+              cmake -S $src/native/core -B /tmp/cm-$cc-$t -DCMAKE_C_COMPILER=$cc -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$WE" > /dev/null
+              cmake --build /tmp/cm-$cc-$t > $OUT/cmake-$cc-$t.log 2>&1 || { cat $OUT/cmake-$cc-$t.log; exit 1; }
+              grep -h "warning:" $OUT/make-$cc-$t.log $OUT/cmake-$cc-$t.log | sed -E 's#[^ ]*(native/core/|native-core/)#native/core/#g; s/:[0-9]+:[0-9]+:/:/g' | sort -u > $OUT/warnings-$cc-$t.txt || true
+            done
+            echo "$cc warnings: base $(wc -l < $OUT/warnings-$cc-base.txt), nokernel $(wc -l < $OUT/warnings-$cc-nokernel.txt), head $(wc -l < $OUT/warnings-$cc-head.txt)"
+            cat $OUT/warnings-$cc-base.txt
+            # this branch has no warning at all, so none that a base lacks; each base has its link dependencies
+            [ ! -s $OUT/warnings-$cc-head.txt ] || bad=1
+            for b in base nokernel; do
+              diff /tmp/mk-$cc-$b.needed /tmp/mk-$cc-head.needed || bad=1
+              python python/tests/kernel_binaries.py /tmp/mk-$cc-head/libpii.so --base /tmp/mk-$cc-$b/libpii.so > $OUT/isa-make-$cc-$b.json || { cat $OUT/isa-make-$cc-$b.json; exit 1; }
+              python python/tests/kernel_binaries.py /tmp/mk-$cc-head/pii_cli --base /tmp/mk-$cc-$b/pii_cli > $OUT/isa-cli-$cc-$b.json || { cat $OUT/isa-cli-$cc-$b.json; exit 1; }
+            done
+            cat /tmp/mk-$cc-head.needed
+            head -c 1500 $OUT/isa-make-$cc-base.json
+          done
+          test $bad = 0
+      - name: D5, D6 - NDK r29, x86_64 (the AAR's CMakeLists), against KERNEL_BASE and this commit without the kernel
+        if: ${{ !cancelled() }}
+        run: |
+          NDK=$ANDROID_HOME/ndk/$NDK_VERSION; BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          # license answers from a file, not `yes |`: yes exits 1 on the broken pipe when sdkmanager stops reading
+          for i in $(seq 64); do echo y; done > /tmp/sdk-answers.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" < /tmp/sdk-answers.txt \
+            > $OUT/sdkmanager.log 2>&1 || { cat $OUT/sdkmanager.log; exit 1; }
+          grep "^Pkg.Revision = $NDK_VERSION" $NDK/source.properties
+          test -x $BIN/clang
+          $BIN/clang --version | sed -n 1p | tee -a $OUT/toolchains.txt
+          for t in base nokernel head; do
+            case $t in base) src=/tmp/base ;; nokernel) src=/tmp/nokernel ;; *) src=$PWD ;; esac
+            cmake -S $src/android/pii/src/main/cpp -B /tmp/ndk-$t -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=x86_64 -DANDROID_PLATFORM=24 -DCMAKE_BUILD_TYPE=Release > $OUT/ndk-cmake-$t.log 2>&1 || { cat $OUT/ndk-cmake-$t.log; exit 1; }
+            cmake --build /tmp/ndk-$t --clean-first -v > $OUT/ndk-$t.log 2>&1 || { cat $OUT/ndk-$t.log; exit 1; }
+            $BIN/llvm-readelf -h /tmp/ndk-$t/libnewmean_pii_jni.so | grep "Machine:.*X86-64"
+            grep -o "[A-Za-z_]*\.[ch]:[0-9]*:[0-9]*: warning: .*" $OUT/ndk-$t.log | sed 's/:[0-9]*:[0-9]*:/:/' | sort -u > /tmp/ndk-$t.warnings || true
+            $BIN/llvm-readelf -d /tmp/ndk-$t/libnewmean_pii_jni.so | grep NEEDED | sort > /tmp/ndk-$t.needed
+          done
+          wc -l /tmp/ndk-*.warnings; cat /tmp/ndk-head.warnings
+          # a check never stands before && here: set -e ignores a failure there (diff && cat never failed a step); each
+          # comparison records a failure in bad, so both bases are shown before the step fails
+          bad=0
+          for b in base nokernel; do
+            new=$(comm -13 /tmp/ndk-$b.warnings /tmp/ndk-head.warnings)
+            echo "NDK warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+            diff /tmp/ndk-$b.needed /tmp/ndk-head.needed || bad=1
+            python python/tests/kernel_binaries.py /tmp/ndk-head/libnewmean_pii_jni.so --baseline android --objdump $BIN/llvm-objdump \
+              --base /tmp/ndk-$b/libnewmean_pii_jni.so > $OUT/isa-ndk-$b.json || { cat $OUT/isa-ndk-$b.json; exit 1; }
+          done
+          cat /tmp/ndk-head.needed
+          head -c 1500 $OUT/isa-ndk-base.json
+          test $bad = 0
+      - uses: actions/setup-java@v4
+        if: ${{ !cancelled() }}
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: D5, D6 - the release AAR as Gradle builds it (NDK r29, CMake 3.22.1), against KERNEL_BASE and this commit without the kernel
+        if: ${{ !cancelled() }}
+        run: |
+          # exactly one file under $1 whose path matches $2
+          one() { local f n=0 all=; while IFS= read -r f; do n=$((n + 1)); all="$all $f"; done < <(find "$1" -path "$2" -type f); [ $n = 1 ] || { echo "want one $2 under $1, found $n:$all" >&2; return 1; }; echo "${all# }"; }
+          BIN=$ANDROID_HOME/ndk/$NDK_VERSION/toolchains/llvm/prebuilt/linux-x86_64/bin
+          for i in $(seq 64); do echo y; done > /tmp/sdk-answers-aar.txt
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "cmake;3.22.1" < /tmp/sdk-answers-aar.txt \
+            > $OUT/sdkmanager-aar.log 2>&1 || { cat $OUT/sdkmanager-aar.log; exit 1; }
+          for t in base nokernel head; do
+            case $t in base) src=/tmp/base ;; nokernel) src=/tmp/nokernel ;; *) src=$PWD ;; esac
+            (cd $src/android && ./gradlew :pii:assembleRelease --console=plain) > $OUT/aar-$t.log 2>&1 || { tail -60 $OUT/aar-$t.log; exit 1; }
+            AAR=$src/android/pii/build/outputs/aar/pii-release.aar
+            unzip -l $AAR 'jni/*' > $OUT/aar-jni-$t.txt
+            mkdir -p /tmp/aar-$t && unzip -q -o $AAR jni/x86_64/libnewmean_pii_jni.so -d /tmp/aar-$t
+            # AGP strips the packaged copy (no function names left), so the library CMake built for it is inspected, once
+            # both are shown to hold the same code
+            FULL=$(one $src/android/pii/build/intermediates '*/cxx/*/obj/x86_64/libnewmean_pii_jni.so'); echo "$t $FULL"
+            cp "$FULL" /tmp/aar-$t/built.so
+            $BIN/llvm-objcopy -O binary --only-section=.text /tmp/aar-$t/jni/x86_64/libnewmean_pii_jni.so /tmp/aar-$t/packaged.text
+            $BIN/llvm-objcopy -O binary --only-section=.text /tmp/aar-$t/built.so /tmp/aar-$t/built.text
+            cmp /tmp/aar-$t/packaged.text /tmp/aar-$t/built.text
+            $BIN/llvm-readelf -d /tmp/aar-$t/jni/x86_64/libnewmean_pii_jni.so | grep NEEDED | sort > /tmp/aar-$t.needed
+            # the C compiler's warnings for the four ABIs, from Gradle's log and the native build's own output files
+            { cat $OUT/aar-$t.log; find $src/android/pii/.cxx -name '*.txt' -type f -exec cat {} + 2> /dev/null; } \
+              | grep -o "[A-Za-z_]*\.[ch]:[0-9]*:[0-9]*: warning: .*" | sed 's/:[0-9]*:[0-9]*:/:/' | sort -u > /tmp/aar-$t.warnings || true
+          done
+          cat $OUT/aar-jni-head.txt
+          wc -l /tmp/aar-*.warnings; cat /tmp/aar-head.warnings
+          bad=0
+          for b in base nokernel; do
+            new=$(comm -13 /tmp/aar-$b.warnings /tmp/aar-head.warnings)
+            echo "AAR warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+            diff /tmp/aar-$b.needed /tmp/aar-head.needed || bad=1
+            python python/tests/kernel_binaries.py /tmp/aar-head/built.so --baseline android --objdump $BIN/llvm-objdump \
+              --base /tmp/aar-$b/built.so > $OUT/isa-aar-$b.json || { cat $OUT/isa-aar-$b.json; exit 1; }
+          done
+          tee $OUT/aar-needed.txt < /tmp/aar-head.needed
+          head -c 1500 $OUT/isa-aar-base.json
+          test $bad = 0
+      - name: D5, D6 - Rust 1.70 and stable (cc crate), against KERNEL_BASE and this commit without the kernel
+        if: ${{ !cancelled() }}
+        run: |
+          # exactly one file under $1 whose path matches $2
+          one() { local f n=0 all=; while IFS= read -r f; do n=$((n + 1)); all="$all $f"; done < <(find "$1" -path "$2" -type f); [ $n = 1 ] || { echo "want one $2 under $1, found $n:$all" >&2; return 1; }; echo "${all# }"; }
+          rustup toolchain install 1.70.0 --profile minimal > /dev/null
+          rustc +1.70.0 --version | tee -a $OUT/toolchains.txt; rustc --version | tee -a $OUT/toolchains.txt
+          test "$(rustc +1.70.0 --version | cut -d' ' -f2)" = 1.70.0
+          for t in base nokernel head; do
+            case $t in base) src=/tmp/base ;; nokernel) src=/tmp/nokernel ;; *) src=$PWD ;; esac
+            (cd $src/rust && CARGO_TARGET_DIR=/tmp/rs170-$t cargo +1.70.0 build --release --lib) > $OUT/rust170-$t.log 2>&1 || { cat $OUT/rust170-$t.log; exit 1; }
+            (cd $src/rust && CARGO_TARGET_DIR=/tmp/rs-$t cargo build --release --example extract) > $OUT/rust-$t.log 2>&1 || { cat $OUT/rust-$t.log; exit 1; }
+            # the crate's build.rs compiles the core with -w, so these are the Rust compiler's warnings; the C warnings with
+            # these compilers are the make and CMake builds above
+            grep -h "^warning" $OUT/rust170-$t.log $OUT/rust-$t.log | sed -E 's#[^ ]*(native/core/|native-core/)#native/core/#g; s/:[0-9]+:[0-9]+:/:/g' | sort -u > /tmp/rust-$t.warnings || true
+            # build/newmean-pii-<hash>/out with Rust 1.70, build/newmean-pii/<hash>/out with current cargo
+            for v in rs170 rs; do one /tmp/$v-$t '*/release/build/newmean-pii*/out/libnewmean_pii_core.a' > /tmp/$v-$t.lib; done
+            EX=$(one /tmp/rs-$t '*/release/examples/extract')
+            readelf -d $EX | grep NEEDED | sort > /tmp/rust-$t.needed
+          done
+          wc -l /tmp/rust-*.warnings; cat /tmp/rust-head.warnings
+          bad=0
+          for b in base nokernel; do
+            new=$(comm -13 /tmp/rust-$b.warnings /tmp/rust-head.warnings)
+            echo "Rust warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+            diff /tmp/rust-$b.needed /tmp/rust-head.needed || bad=1
+            for v in rs170 rs; do
+              python python/tests/kernel_binaries.py "$(cat /tmp/$v-head.lib)" --base "$(cat /tmp/$v-$b.lib)" > $OUT/isa-$v-$b.json || { cat $OUT/isa-$v-$b.json; exit 1; }
+            done
+          done
+          cat /tmp/rust-head.needed
+          head -c 1500 $OUT/isa-rs170-base.json
+          test $bad = 0
+      - uses: subosito/flutter-action@v2
+        if: ${{ !cancelled() }}
+        with:
+          flutter-version: 3.47.7
+          channel: stable
+      - name: D5, D6 - the Flutter build hook (Linux), against KERNEL_BASE and this commit without the kernel
+        if: ${{ !cancelled() }}
+        run: |
+          # exactly one file under $1 whose path matches $2
+          one() { local f n=0 all=; while IFS= read -r f; do n=$((n + 1)); all="$all $f"; done < <(find "$1" -path "$2" -type f); [ $n = 1 ] || { echo "want one $2 under $1, found $n:$all" >&2; return 1; }; echo "${all# }"; }
+          dart --version 2>&1 | tee -a $OUT/toolchains.txt
+          for t in base nokernel head; do
+            case $t in base) src=/tmp/base ;; nokernel) src=/tmp/nokernel ;; *) src=$PWD ;; esac
+            (cd $src/flutter && dart pub get > /dev/null && dart test test/api_test.dart) > $OUT/flutter-$t.log 2>&1 || { cat $OUT/flutter-$t.log; exit 1; }
+            # the hook runner keeps the hook's output next to its input: output.json names the library the hook built, and
+            # stderr.txt holds the compiler's warnings, one per line (native_toolchain_c logs the compiler's stderr at
+            # SEVERE and the hook prints WARNING and above; the test log glues the first one to "Running build hooks...")
+            OJ=$(one $src/flutter/.dart_tool '*/hooks_runner/newmean_pii/*/output.json'); H=$(dirname $OJ)
+            cp $H/stderr.txt $OUT/flutter-hook-$t.stderr.txt
+            SO=$(python -c "import json, sys; print(*[a['encoding']['file'] for a in json.load(open(sys.argv[1]))['assets']])" $OJ)
+            echo "$t $SO"; test -f "$SO"; test "${SO##*.}" = so
+            cp "$SO" /tmp/flutter-$t.so
+            readelf -d /tmp/flutter-$t.so | grep NEEDED | sort > /tmp/flutter-$t.needed
+            grep -ho "[A-Za-z_]*[.][ch]:[0-9]*:[0-9]*: warning: .*" $H/stderr.txt | sed 's/:[0-9]*:[0-9]*:/:/' | sort -u > /tmp/flutter-$t.warnings || true
+          done
+          tail -3 $OUT/flutter-head.log
+          wc -l /tmp/flutter-*.warnings; cat /tmp/flutter-head.warnings
+          bad=0
+          for b in base nokernel; do
+            new=$(comm -13 /tmp/flutter-$b.warnings /tmp/flutter-head.warnings)
+            echo "Flutter hook warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+            diff /tmp/flutter-$b.needed /tmp/flutter-head.needed || bad=1
+            python python/tests/kernel_binaries.py /tmp/flutter-head.so --base /tmp/flutter-$b.so > $OUT/isa-flutter-$b.json || { cat $OUT/isa-flutter-$b.json; exit 1; }
+          done
+          cat /tmp/flutter-head.needed
+          head -c 1500 $OUT/isa-flutter-base.json
+          test $bad = 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-toolchains-linux
+          path: /tmp/out
+          retention-days: 90
+
+  kernel-toolchains-mac:
+    # D5, D6 on Intel macOS: Apple clang (make -Werror) and SwiftPM, against KERNEL_BASE and this commit without the
+    # kernel (the candidate's own package inputs with KERNEL_FILES of KERNEL_BASE); the Swift package runs the kernel
+    if: github.repository == 'newmean-ai/pii' && contains(fromJSON('["fast", "all"]'), inputs.kernel_gates)
+    needs: kernel-base
+    name: kernel toolchains macos-15-intel
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    env:
+      OUT: /tmp/out
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Apple clang (make; this branch with -Werror) and SwiftPM, KERNEL_BASE, this commit without the kernel, and head
+        run: |
+          mkdir -p $OUT /tmp/base /tmp/nokernel && git archive "$KERNEL_BASE" | tar -x -C /tmp/base
+          # HEAD's tree with KERNEL_FILES of KERNEL_BASE; HEAD's native/core is moved out first, so none of its files stays
+          git archive HEAD | tar -x -C /tmp/nokernel
+          mv /tmp/nokernel/native/core /tmp/nokernel-head-core
+          # shellcheck disable=SC2086  # one argument per path
+          git archive "$KERNEL_BASE" $KERNEL_FILES | tar -x -C /tmp/nokernel
+          for p in $KERNEL_FILES; do diff -r "/tmp/base/$p" "/tmp/nokernel/$p"; done
+          { sysctl -n machdep.cpu.brand_string; cc --version | sed -n 1p; swift --version 2>&1 | sed -n 1p; } | tee $OUT/toolchains.txt
+          for t in base nokernel head; do
+            case $t in base) src=/tmp/base; WE= ;; nokernel) src=/tmp/nokernel; WE= ;; *) src=$PWD; WE=-Werror ;; esac
+            make -C $src/native/core B=/tmp/mk-$t CFLAGS=$WE all > $OUT/make-$t.log 2>&1 || { cat $OUT/make-$t.log; exit 1; }
+            grep -h "warning:" $OUT/make-$t.log | sed -E 's#[^ ]*(native/core/|native-core/)#native/core/#g; s/:[0-9]+:[0-9]+:/:/g' | sort -u > $OUT/warnings-make-$t.txt || true
+            otool -L /tmp/mk-$t/libpii.dylib | tail -n +2 | grep -v libpii | sort > /tmp/mk-$t.needed
+            (cd $src && swift build -c release) > $OUT/swift-$t.log 2>&1 || { cat $OUT/swift-$t.log; exit 1; }
+            grep -h "warning:" $OUT/swift-$t.log | sed -E 's#[^ ]*(native/core/|native-core/)#native/core/#g; s/:[0-9]+:[0-9]+:/:/g' | sort -u > /tmp/swift-$t.warnings || true
+          done
+          echo "make warnings: base $(wc -l < $OUT/warnings-make-base.txt), nokernel $(wc -l < $OUT/warnings-make-nokernel.txt), head $(wc -l < $OUT/warnings-make-head.txt)"
+          cat $OUT/warnings-make-base.txt
+          /tmp/mk-head/pii_cli info | tee $OUT/cli-info.json
+          wc -l /tmp/swift-*.warnings; cat /tmp/swift-head.warnings
+          # make for this branch ran with -Werror (no warning at all); each base has the link dependencies and every
+          # SwiftPM warning of head
+          bad=0
+          for b in base nokernel; do
+            diff /tmp/mk-$b.needed /tmp/mk-head.needed || bad=1
+            new=$(comm -13 /tmp/swift-$b.warnings /tmp/swift-head.warnings)
+            echo "SwiftPM warnings of head that $b lacks: ${new:-none}"
+            [ -z "$new" ] || bad=1
+            python3 python/tests/kernel_binaries.py /tmp/mk-head/libpii.dylib --baseline penryn --base /tmp/mk-$b/libpii.dylib > $OUT/isa-make-$b.json || { cat $OUT/isa-make-$b.json; exit 1; }
+          done
+          cat /tmp/mk-head.needed
+          # release/CNewmeanPII.build/engine.c.o (SwiftPM's native build system), Release/CNewmeanPII-t.build/.../engine.o
+          # (swiftbuild, the default of newer toolchains)
+          OBJ=$(find .build \( -name 'engine.c.o' -o -name 'engine.o' \) -ipath '*release*' -path '*CNewmeanPII*' -print -quit); echo "$OBJ"; test -n "$OBJ"
+          python3 python/tests/kernel_binaries.py "$OBJ" --baseline penryn > $OUT/isa-swift.json || { cat $OUT/isa-swift.json; exit 1; }
+          head -c 1500 $OUT/isa-swift.json
+          test $bad = 0
+      - name: The Swift package runs the kernel (a release executable that depends on the package prints its build info)
+        # (swift test is not used: the test target has not compiled on this runner, VaultGrowthTests.swift:39 takes the
+        # type checker too long)
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p /tmp/probe/Sources/probe
+          printf '%s\n' '// swift-tools-version:5.9' 'import PackageDescription' \
+            'let package = Package(name: "probe", platforms: [.macOS(.v12)],' \
+            '  dependencies: [.package(name: "NewmeanPII", path: "'"$GITHUB_WORKSPACE"'")],' \
+            '  targets: [.executableTarget(name: "probe", dependencies: [.product(name: "NewmeanPII", package: "NewmeanPII")])])' \
+            > /tmp/probe/Package.swift
+          printf '%s\n' 'import NewmeanPII' 'print(PIIRedactor.buildInfo)' > /tmp/probe/Sources/probe/main.swift
+          (cd /tmp/probe && swift build -c release > $OUT/swift-probe.log 2>&1) || { cat $OUT/swift-probe.log; exit 1; }
+          for k in - sse avx2 avx2+fma bogus; do
+            if [ "$k" = "-" ]; then got=$(/tmp/probe/.build/release/probe); else got=$(NEWMEAN_PII_KERNEL=$k /tmp/probe/.build/release/probe); fi
+            echo "NEWMEAN_PII_KERNEL=$k: $got"
+          done | tee $OUT/swift-kernel.txt
+          test "$(sed -n 1p $OUT/swift-kernel.txt)" = "NEWMEAN_PII_KERNEL=-: avx2"
+          test "$(sed -n 2p $OUT/swift-kernel.txt)" = "NEWMEAN_PII_KERNEL=sse: sse"
+          test "$(sed -n 3p $OUT/swift-kernel.txt)" = "NEWMEAN_PII_KERNEL=avx2: avx2"
+          test "$(sed -n 4p $OUT/swift-kernel.txt)" = "NEWMEAN_PII_KERNEL=avx2+fma: avx2+fma"
+          test "$(sed -n 5p $OUT/swift-kernel.txt)" = "NEWMEAN_PII_KERNEL=bogus: avx2"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-toolchains-mac
+          path: /tmp/out
+          retention-days: 90

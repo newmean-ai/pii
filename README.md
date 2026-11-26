@@ -2,7 +2,7 @@ English | [한국어](README.ko.md) | [繁體中文](README.zh-Hant.md)
 
 # @newmean-ai/pii
 
-**Browser-side PII redaction.** Detect and mask personal information (names, emails, phone numbers, addresses, IDs, …) in text **entirely in the browser**, so the original text never leaves the user's device.
+**Mask PII before it reaches OpenAI, Anthropic or any LLM.** Detect and mask personal information (names, emails, phone numbers, addresses, IDs, …) in text **in the browser or on the device**, so the original text never leaves it. With a vault, the real values come back in the model's reply and in the tool calls you allow (since 1.7.2).
 
 - 54 languages, 11 labels plus 2 level-2 labels for indirect identifiers (IP addresses are learned as `ID_NUMBER`); an optional
   pattern layer (e-mail, URL, card/account, phone, Korean resident number) is off by default
@@ -31,8 +31,8 @@ See [js/README.md](js/README.md) for the full API.
 |---|---|---|
 | Browser, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.6.1` |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.6.1")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | add `https://github.com/newmean-ai/pii`, from `1.7.2` |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.7.2")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 | Rust | [`newmean-pii`](https://crates.io/crates/newmean-pii) | `cargo add newmean-pii` |
 
@@ -100,6 +100,8 @@ model call per such cell (about twice the time of table mode). Every package has
 
 ## Results
 
+Found a miss? [Report it](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml) with a made-up text of the same shape (issues are public).
+
 Share of PII characters left unmasked (miss %, lower is better), model only, on newmean-pii-dataset (public test) and four external
 datasets none of our models was trained on. Full table with over-masking, parameters and speed: [technical report, Section 6](docs/report/REPORT.md);
 weekly scores on newmean-pii-dataset (public and private test): [leaderboard](https://huggingface.co/spaces/newmean-ai/pii-leaderboard).
@@ -126,6 +128,23 @@ how each serves this masking policy; the four external columns are the fairer co
 or on data that overlaps it (KoELECTRA). GLiNER2-PII ran on Gretel in its library's long-text mode. On phones (mean of four)
 the 11.3 MB model takes about 26 ms for a 40-token message. With SDK 1.2 (the Python package as shipped) every number of our
 models in this table stays within 0.04 points, because the SDK changes only texts with emoji or keycaps.
+
+Per label, format and language, for each size (SDK defaults, public test; miss %): [docs/results](docs/results/models-v1.1-public-test.md).
+
+| label | PII characters | large | medium | small | nano |
+|---|---|---|---|---|---|
+| PERSON | 55,982 | 2.2 | 3.0 | 3.8 | 4.5 |
+| ID_NUMBER | 33,392 | 0.9 | 1.3 | 1.2 | 1.1 |
+| EMAIL | 33,305 | 0.0 | 0.1 | 0.2 | 0.3 |
+| PHONE | 28,544 | 0.1 | 0.1 | 0.6 | 0.4 |
+| ADDRESS | 27,552 | 3.1 | 3.1 | 4.2 | 5.4 |
+| SECRET | 22,844 | 0.3 | 0.3 | 0.1 | 0.2 |
+| FINANCIAL | 21,398 | 0.4 | 0.6 | 0.5 | 0.8 |
+| ORG | 19,041 | 6.6 | 6.0 | 7.4 | 9.1 |
+| URL | 13,997 | 0.6 | 1.1 | 0.6 | 0.7 |
+| USERNAME | 7,901 | 2.2 | 2.8 | 2.9 | 4.2 |
+| DATE_OF_BIRTH | 3,861 | 1.8 | 2.8 | 2.1 | 3.7 |
+| IP_ADDRESS | 3,555 | 0.1 | 0.2 | 0.0 | 0.3 |
 
 What 1.2 changes. Release 1.2 is SDK 1.2.0 on the v1.1 models; v1.1 was not released on its own, so its model change ships
 here. *Models:* lone everyday words in short texts, table cells and survey exports are read as names far less often. On
@@ -231,6 +250,67 @@ LiteLLM guardrail accepts `allow` and `block` entries written in config.yaml. Th
 [`newmean-pii`](rust/README.md), added after 1.6.0, follows the version. On npm use 1.6.2: 1.6.1 was published there
 without its built files and cannot be imported; 1.6.2 is the same code, built, and publishing now refuses a package
 without them.
+
+What 1.7 changes. SDK 1.7.0, same v1.1 models and the same spans with default settings. *Putting the values back:* a
+vault (`createVault`, `Vault`, `PIIVault`, `PiiVault`) gives each value a numbered placeholder ("[PERSON_1]", the same
+value always the same one) that it can undo, in all six packages. With a vault, the npm and Python middlewares (Vercel AI
+SDK, LangChain, LangChain.js) put the values back in the model's answer and in the arguments of the tools you name in
+`restoreTools` / `restore_tools`; other tools get the placeholders, so text the model reads cannot send the values
+elsewhere. The AI SDK middleware also restores a streamed answer piece by piece; the LangChain middlewares restore the
+finished message, so a token callback still sees placeholders. *Agents:* the AI SDK middleware also masks JSON and content tool results when `"tool"` is a role (1.6
+left them as they were); Python gains `mask_documents` for retrieved documents; examples for an agent with a CRM tool
+(`js/examples`, `python/examples`) and for PDF text. *Results:* misses per label, format and language for each size
+([docs/results](docs/results/models-v1.1-public-test.md)), and a form to [report a miss](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml).
+Asked for in the comments on our LinkedIn post; the vault went through several rounds of review by an outside model
+before release.
+
+What 1.7.2 changes. SDK 1.7.2, same v1.1 models, is the first release with the vault: 1.7.0 and 1.7.1 were prepared
+but not published, so what 1.7 changes (above) comes with 1.7.2. The Python package's Langfuse mask (`pii_mask`) now also masks dict keys, set items,
+bytes (as UTF-8) and the fields of dataclasses and pydantic models; numbers, dates, `uuid.UUID` objects and Langfuse's
+media objects are kept, and any other value becomes `[UNMASKED: <type>]` instead of being sent as it is. Two keys that
+mask to the same text keep both values (` #2`), and `keys=False` keeps keys as they are. From
+[pull request #1](https://github.com/newmean-ai/pii/pull/1) by @Mramaran. The ids of a trace (provider and LangChain ids
+such as `call_…` and `chatcmpl-…`, and UUIDs where the trace names an id: the value of a key such as `run_id` or
+`session_id`, or an item of a list there, never a key) and keys that are field names of up to 64 characters (`user_id`,
+`userName`) are kept as written when the pattern layer and the `block` list find nothing in them; other keys and other
+UUIDs are read by the model (`ids=False` reads ids too). The mask also walks nesting of any
+depth, checks its options when it is built, and never raises: when masking fails (for example, the model cannot load),
+the whole value is sent as `[MASK FAILED]` and the error's type is logged. Langfuse uploads files and sends names, error
+messages and the spans of other OpenTelemetry instrumentations without passing them to the mask
+([python/README.md](python/README.md#integrations)).
+
+Before release, the vault was checked against a written guarantee and a corpus of 10,915 test cases, and these were
+added. In all six packages a known value is also found in capitals, in any ASCII case for e-mail addresses, user names,
+URL hosts and values of two or more words, in NFD and full-width forms, and as two Hangul syllables; and a value the
+model marks with punctuation, brackets or quotation marks around it (`Kim Minsu.`, `"Kim Minsu"`) is learned without
+them. The npm and Python middlewares also find it behind Python repr escapes, in ISO timestamps, in signed numbers and
+over two lines; hide known values in tool descriptions and schemas, the response format, provider options and a
+message's `name`; restore an agent's structured response; and fail a call they cannot mask instead of sending it. With
+a vault the npm middlewares accept only the tag mode and throw for other masking options, as Python does. The
+LangChain integrations now need langchain 1.4.0 or later in Python, and langchain 1.5.1 or later with `@langchain/core`
+1.2.1 or later in LangChain.js (1.6 took 1.0 or later); the package READMEs say why. These floors, and the ids and keys a trace keeps or reads (above),
+change what 1.6.1 promised; the maintainer approved them. Large data with thousands of known
+values takes seconds per call (with 2,000 known values, about 2 s for 181 KB of JSON rows in npm and in Python); a
+faster search is planned for 1.7.3. Details: [js/README.md](js/README.md#putting-the-values-back-vault),
+[python/README.md](python/README.md#integrations).
+
+x86-64 ([issue #3](https://github.com/newmean-ai/pii/issues/3)). The native core of the Python, Swift, Android, Flutter
+and Rust packages gains an 8-wide AVX2 matrix kernel, chosen once per process where the CPU has AVX2 (`avx2`, else
+`sse`). Its logits equal the SSE kernel's bit for bit, so every span stays the same; `NEWMEAN_PII_KERNEL=avx2+fma` opts
+in to fused multiply-add (logits equal to the arm64 default). Builds made with MSVC (the Windows wheels) keep the scalar
+kernel. One thread on an AMD EPYC 9V74 takes about 13 ms for a short text with nano and 19 ms with medium, against 23 ms
+and 35 ms with `sse`. The Python README now says what each `info()["build"]` value means and how to build from source
+with fused multiply-add for x86-64 CPUs with AVX2 and FMA3 (`CFLAGS="-march=x86-64-v3 -DPII_FMA"`)
+([python/README.md](python/README.md#api)).
+
+Model downloads in Python. `fetch_model()` and `python -m newmean_pii download` now fail when a model file cannot be
+written to the cache (`ModelFileError`; the command ends with status 1 and names the file), instead of returning a
+folder that a later `model_dir=` or offline load cannot use. A build step that ended with status 0 on such a cache (a
+read-only or full disk, or a `--cache-dir` that names a file) now fails. Loading for immediate use (`Redactor`,
+`create_redactor`) still keeps the verified bytes in memory when the cache cannot be written. From
+[pull request #4](https://github.com/newmean-ai/pii/pull/4) by @kyleoliver-gnomai
+([python/README.md](python/README.md#offline-use)). In the Python tests, `test_info` now compares the model's local path
+with the platform's separator; it failed on Windows in the contributor's run.
 
 ## Repository layout
 

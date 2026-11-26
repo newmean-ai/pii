@@ -7,8 +7,9 @@ class Span(NamedTuple):
     start: int
     end: int
     label: str
-    #: "model", "regex", "model+regex" when both found it, "table" when table mode propagated it down a column, or "block" for
-    #: an entry of the option block (since 1.4.0)
+    #: "model", "regex", "model+regex" when both found it, "table" when table mode propagated it down a column, "block" for
+    #: an entry of the option block (since 1.4.0), or "vault" for a value a vault already holds, found again by redact with
+    #: vault= (since 1.7.2)
     source: str
 
 

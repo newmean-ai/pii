@@ -20,11 +20,22 @@ from ._models import (
     model_file,
 )
 from ._lists import ListError
-from ._redactor import LABELS, LEVEL1_LABELS, TABLE_CONTEXTS, TABLE_DELIMITERS, TAGS, Redactor, apply_redaction, create_redactor
+from ._redactor import (
+    LABELS,
+    LEVEL1_LABELS,
+    TABLE_CONTEXTS,
+    TABLE_DELIMITERS,
+    TAGS,
+    Redactor,
+    apply_redaction,
+    create_redactor,
+    with_vault_spans,
+)
 from ._regex import REGEX_RULES, regex_spans
 from ._types import RedactResult, Span, Token
+from ._vault import Vault, VaultEntry, VaultHit, VaultRestorer, apply_vault, escape_tags, vault_tags
 
-__version__ = "1.6.1"
+__version__ = "1.7.2"
 
 __all__ = [
     "DEFAULT_SIZE",
@@ -45,10 +56,18 @@ __all__ = [
     "Redactor",
     "Span",
     "Token",
+    "Vault",
+    "VaultEntry",
+    "VaultHit",
+    "VaultRestorer",
     "apply_redaction",
+    "apply_vault",
     "create_redactor",
+    "escape_tags",
     "default_cache_dir",
     "fetch_model",
     "model_file",
     "regex_spans",
+    "vault_tags",
+    "with_vault_spans",
 ]

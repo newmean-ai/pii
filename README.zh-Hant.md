@@ -2,7 +2,7 @@
 
 # @newmean-ai/pii
 
-**瀏覽器端個資遮蔽。** **完全在瀏覽器內**偵測並遮蔽文字中的個人資料（姓名、電子郵件、電話號碼、地址、身分識別碼等），讓原始文字始終留在使用者的裝置上。
+**在送往 OpenAI、Anthropic 或任何 LLM 之前遮蔽個資。** **在瀏覽器或裝置內**偵測並遮蔽文字中的個人資料（姓名、電子郵件、電話號碼、地址、身分識別碼等），讓原始文字不離開裝置。搭配 vault 時，模型回答與允許的工具呼叫會還原原值（1.7.2 起）。
 
 - 54 種語言、11 種標籤，另有 2 種用於間接識別資訊的第 2 層標籤（IP 位址會被模型辨識為 `ID_NUMBER`）；可選用的
   模式比對層（電子郵件、URL、卡號／帳號、電話、韓國居民登錄號碼）預設關閉
@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 瀏覽器、Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+、macOS 12+ | `NewmeanPII`（Swift Package Manager） | 加入 `https://github.com/newmean-ai/pii`，版本從 `1.6.1` 起 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.6.1")` |
+| iOS 15+、macOS 12+ | `NewmeanPII`（Swift Package Manager） | 加入 `https://github.com/newmean-ai/pii`，版本從 `1.7.2` 起 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.7.2")` |
 | Flutter、Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 | Rust | [`newmean-pii`](https://crates.io/crates/newmean-pii) | `cargo add newmean-pii` |
 
@@ -99,6 +99,10 @@ create_redactor().redact_table(open("survey.csv", encoding="utf-8").read(), cont
 - 技術報告：[docs/report/REPORT.md](docs/report/REPORT.md)
 
 ## 結果
+
+發現遺漏？請用格式相同的虛構文字[回報](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml)（議題是公開的）。
+
+各尺寸按標籤、文字格式與語言的遺漏率（SDK 預設設定，公開測試）：[docs/results](docs/results/models-v1.1-public-test.md)。
 
 僅使用模型時，在 newmean-pii-dataset（公開測試集）與四個外部資料集上，未被遮蔽的個資字元比例（漏偵測率 %，越低越好）；
 我們的所有模型皆未使用這四個外部資料集訓練。包含過度遮蔽、參數量與速度的完整表格：[技術報告，第 6 節](docs/report/REPORT.md)；
@@ -224,6 +228,50 @@ SDK 的 language model middleware）與 `@newmean-ai/pii/langchain`（LangChain.
 LiteLLM guardrail 接受寫在 config.yaml 的 `allow` 與 `block` 項目。1.6.0 之後加入的 Rust crate
 [`newmean-pii`](rust/README.md) 也採用相同版本。npm 請使用 1.6.2：npm 上的 1.6.1 發佈時缺少建置後的檔案，無法匯入；
 1.6.2 是同一份程式碼建置後的版本，現在缺少建置檔案時會拒絕發佈。
+
+1.7 的變更。SDK 1.7.0，沿用相同的 v1.1 模型，預設設定下結果區段也相同。*還原原值：*vault（`createVault`、`Vault`、
+`PIIVault`、`PiiVault`）為每個值配上可還原的編號佔位符（「[PERSON_1]」，同一個值永遠是同一個佔位符），六個套件皆提供。搭配
+vault 時，npm 與 Python 的中介層（Vercel AI SDK、LangChain、LangChain.js）會在模型回答以及 `restoreTools`／
+`restore_tools` 指定的工具參數中還原原值；其他工具收到的是佔位符，因此模型讀到的文字無法把原值送到別處。AI SDK 中介層也會逐段
+還原串流回答；LangChain 中介層還原的是完成後的訊息，因此 token 回呼看到的仍是佔位符。*代理：*AI SDK 中介層
+在 `"tool"` 為角色時也會遮蔽 JSON 與 content 形式的工具結果（1.6 保持原樣）；Python 新增用於檢索文件的 `mask_documents`；
+新增含 CRM 工具的代理範例（`js/examples`、`python/examples`）與 PDF 文字範例。*結果：*各尺寸按標籤、格式與語言的遺漏率
+（[docs/results](docs/results/models-v1.1-public-test.md)），以及[回報遺漏](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml)的表單。
+以上來自 LinkedIn 貼文留言的請求；vault 在發佈前經外部模型多次審查。
+
+1.7.2 的變更。SDK 1.7.2 沿用相同的 v1.1 模型，是第一個包含 vault 的發佈版本：1.7.0 與 1.7.1 已準備但未發佈，因此上述 1.7
+的變更隨 1.7.2 推出。Python 套件的
+Langfuse 遮蔽函式（`pii_mask`）現在也會遮蔽 dict 的鍵、set 項目、bytes（以 UTF-8 解讀）以及 dataclass 與 pydantic 模型的
+欄位；數字、日期、`uuid.UUID` 物件與 Langfuse 的媒體物件保持原樣，其他任何值則變為 `[UNMASKED: <type>]`，不會原樣送出。遮蔽後相同的
+兩個鍵會保留兩個值（` #2`），`keys=False` 則讓鍵保持原樣。來自 @Mramaran 的 [pull request #1](https://github.com/newmean-ai/pii/pull/1)。
+追蹤紀錄的 ID（`call_…`、`chatcmpl-…` 等供應商與 LangChain 的 ID，以及追蹤紀錄標為 ID 之處的 UUID：`run_id`、`session_id`
+等鍵的值或該處列表的項目，鍵本身不算）與長度不超過 64 個字元、作為欄位名稱的鍵（`user_id`、`userName`），在模式層與 `block` 清單於其中找不到任何內容時保持原樣；其他鍵與其他 UUID
+由模型讀取（`ids=False` 時 ID 也由模型讀取）。遮蔽函式也會走訪任意
+深度的巢狀結構、在建立時檢查選項，且從不拋出例外：遮蔽失敗時（例如模型無法載入），整個值以 `[MASK FAILED]` 送出，並記錄錯誤的
+類型。檔案、名稱、錯誤訊息與其他 OpenTelemetry 檢測套件的 span，Langfuse 不經遮蔽函式就上傳或送出（[python/README.md](python/README.md#integrations)）。
+
+發佈前，vault 依照書面保證與 10,915 個測試案例的語料檢查過，並加入以下改進。六個套件都會找到以大寫寫成的已知值；電子郵件地址、
+使用者名稱、URL 主機與兩個詞以上的值不分 ASCII 大小寫；也會找到 NFD 與全形寫法，以及兩個音節的韓文；模型連同標點、括號或引號一起標記的值（`Kim Minsu.`、`"Kim Minsu"`）會去掉這些字元後再記住。npm 與 Python 中介軟體
+也會在 Python repr 跳脫、ISO 時間戳記、帶正負號的數字與分成兩行的值中找到它；在工具說明與結構描述、回應格式、供應商選項與
+訊息的 `name` 中隱藏已知值；還原代理的結構化回應；無法遮蔽的呼叫會失敗而不送出。搭配 vault 時，npm 中介軟體與 Python 一樣只接受 tag 模式，其他遮蔽設定會拋出錯誤。LangChain 整合現在需要
+Python 的 langchain 1.4.0 以上，以及 LangChain.js 的 langchain 1.5.1 以上與 `@langchain/core` 1.2.1 以上（1.6 接受 1.0 以上）；
+原因見各套件的 README。這些下限，以及上述追蹤中保留或讀取的 id 與鍵，改變了 1.6.1 的承諾；維護者已核准。含數千個已知值的大型資料每次呼叫需要數秒（2,000 個已知值與 181 KB 的 JSON 列，npm 與 Python 皆約
+2 秒）；更快的搜尋預計在 1.7.3。詳見
+[js/README.md](js/README.md#putting-the-values-back-vault)、[python/README.md](python/README.md#integrations)。
+
+x86-64（[issue #3](https://github.com/newmean-ai/pii/issues/3)）。Python、Swift、Android、Flutter 與 Rust 套件的原生核心新增
+x86-64 的 8 寬 AVX2 矩陣核心：CPU 具備 AVX2 時，每個行程選擇一次（`avx2`，否則 `sse`）。其 logits 與 SSE 核心逐位元相同，
+因此所有片段都不變；`NEWMEAN_PII_KERNEL=avx2+fma` 可選用融合乘加（logits 與 arm64 預設相同）。以 MSVC 建置的版本
+（Windows wheel）維持純量核心。AMD EPYC 9V74 單執行緒下，一則短文 nano 約 13 ms、medium 約 19 ms（`sse` 為 23 ms 與 35 ms）。
+Python README 現在說明每個 `info()["build"]` 值的意義，以及如何為具備 AVX2 與 FMA3 的 x86-64 CPU 從原始碼建置並啟用融合乘加
+（`CFLAGS="-march=x86-64-v3 -DPII_FMA"`）（[python/README.md](python/README.md#api)）。
+
+Python 的模型下載。模型檔案無法寫入快取時，`fetch_model()` 與 `python -m newmean_pii download` 現在會失敗（`ModelFileError`；
+指令以狀態 1 結束並指出該檔案），不再回傳之後以 `model_dir=` 或離線載入無法使用的資料夾。在這種快取（唯讀或已滿的磁碟，或
+`--cache-dir` 指向一個檔案）上原本以狀態 0 結束的建置步驟，現在會失敗。為立即使用而載入時（`Redactor`、`create_redactor`），
+即使快取無法寫入，仍與以前一樣把驗證過的位元組保留在記憶體中。來自 @kyleoliver-gnomai 的
+[pull request #4](https://github.com/newmean-ai/pii/pull/4)（[python/README.md](python/README.md#offline-use)）。Python 測試中的
+`test_info` 現在以平台的路徑分隔符比較模型的本機路徑；先前在貢獻者的 Windows 執行中失敗。
 
 ## 儲存庫結構
 

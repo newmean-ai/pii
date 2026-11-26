@@ -10,6 +10,7 @@ import 'models.dart';
 import 'native.dart';
 import 'redaction.dart';
 import 'span.dart';
+import 'vault.dart';
 
 /// Detects and masks personal information with a `newmean-pii-<size>` model, on the device. The model runs in the native
 /// core; [detect], [redact], [detectTable] and [redactTable] run it in a background isolate, so the calling (UI) isolate
@@ -373,6 +374,20 @@ final class NewmeanPii implements Finalizable {
     return PiiRedaction(applyRedaction(text, spans, mode: mode, maskChar: maskChar, replace: replace), spans);
   }
 
+  /// [text] with numbered placeholders that [vault] can undo ("[PERSON_1]", the same value always the same tag). The
+  /// vault's known values are also masked where they occur again and the model does not find them (source "vault");
+  /// placeholder-like text left unmasked is escaped ("［PERSON_1]"). Throws [StateError] if the vault is cleared while the
+  /// model reads the text (nothing is written). Since 1.7.2.
+  Future<PiiRedaction> redactVault(String text, PiiVault vault) async {
+    final started = vault.generation;
+    final found = await detect(text);
+    if (vault.generation != started) throw StateError('the vault was cleared while this text was masked');
+    return redactWithVault(text, found, vault);
+  }
+
+  /// [redactVault] on the calling isolate.
+  PiiRedaction redactVaultSync(String text, PiiVault vault) => redactWithVault(text, detectSync(text), vault);
+
   /// [redact] on the calling isolate.
   PiiRedaction redactSync(
     String text, {
@@ -434,7 +449,7 @@ final class NewmeanPii implements Finalizable {
 
 /// What a redactor runs ([NewmeanPii.info]).
 final class PiiRedactorInfo {
-  /// Version of this package and its native core ("1.6.1").
+  /// Version of this package and its native core ("1.7.2").
   final String packageVersion;
 
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).

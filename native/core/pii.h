@@ -8,7 +8,8 @@
  * package shares one combine step.
  *
  * Threads: a pii_model is immutable after pii_model_load; any number of threads may call pii_detect,
- * pii_detect_table and pii_tokenize on the same model at once (each call uses its own scratch memory). Nothing is global.
+ * pii_detect_table and pii_tokenize on the same model at once. Each inference call uses its own scratch memory. The first
+ * call that needs the kernel, including pii_build_info(), fixes the choice for the process.
  *
  * Offsets: every span and token carries [start, end) in UTF-8 bytes of the input, in code points (Python str), and in
  * UTF-16 code units (JavaScript, Java/Kotlin, Dart, NSString), so wrappers need no conversion. Invalid UTF-8 bytes count
@@ -39,7 +40,7 @@ extern "C" {
 #define PII_API
 #endif
 
-#define PII_VERSION "1.6.1"       /* this library */
+#define PII_VERSION "1.7.2"       /* this library */
 #define PII_MODEL_VERSION "1.1.0" /* model release (Hugging Face tag v1.1.0) */
 #define PII_DEFAULT_SIZE "medium"
 
@@ -190,15 +191,19 @@ typedef struct {
 #define PII_TABLE_CONTEXT_NONE 0
 #define PII_TABLE_CONTEXT_HEADER 1
 
-/* Library version ("1.6.1"). */
+/* Library version ("1.7.2"). */
 PII_API const char *pii_version(void);
 /* Message of a return code ("invalid argument", ...); static, never NULL. */
 PII_API const char *pii_strerror(int code);
-/* Kernel build: "neon", "sse", "vector" or "scalar", with "+fma" where the matrix kernel fuses multiply and add: always on
- * arm64 (unless built with PII_NO_FMA), elsewhere only in a PII_FMA build. A build without "+fma" gives bit-identical
- * results on every CPU and equals the npm package's baseline WebAssembly build; "+fma" equals its relaxed-SIMD build
- * (which Chrome, Edge and Firefox run) and is about 1.5x as fast on arm64: spans equal on the fixtures, logits differ in
- * the last bits. */
+/* The matrix kernel this process runs: "neon", "avx2", "sse", "vector" or "scalar", with "+fma" where it fuses multiply
+ * and add. arm64: "neon+fma" ("neon" in a PII_NO_FMA build). x86-64 (GCC, Clang): chosen from CPUID and XGETBV by the
+ * first call that needs the kernel: "avx2" where the CPU and the operating system support AVX2, else "sse"; the fused
+ * "avx2+fma" (AVX2 and FMA3) only on request, NEWMEAN_PII_KERNEL=avx2+fma in the environment before that call, or in a
+ * PII_FMA build (there "avx2+fma", else "sse+fma"). NEWMEAN_PII_KERNEL also takes "avx2" and "sse" ("sse+fma" in a
+ * PII_FMA build); an unknown name, or a kernel the CPU or the build lacks, leaves the default. MSVC: "scalar". Every
+ * kernel without "+fma" gives bit-identical results on every CPU and equals the npm package's baseline WebAssembly build;
+ * every "+fma" kernel equals its relaxed-SIMD build in a runtime that fuses there (Chrome on arm64, for example) and is
+ * faster: spans equal on the fixtures, logits differ in the last bits. */
 PII_API const char *pii_build_info(void);
 
 /* Label name ("PERSON", ...) or NULL; label id of a name, or -1. */

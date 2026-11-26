@@ -1,0 +1,53 @@
+name: It missed something
+description: Personal information that was not masked, or something masked that is not personal information
+labels: [missed-pii]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Issues are public. **Never paste real personal data.** Write a made-up text with the same shape: the same kind of
+        sentence, the same format of name, number or address, in the same language. That is enough to find the cause.
+        First answer within one week. 이슈는 공개됩니다. 실제 개인정보 대신 모양이 같은 지어낸 글을 써 주세요. 한국어로 써도 됩니다.
+  - type: checkboxes
+    id: made-up
+    attributes:
+      label: Made-up data
+      options:
+        - label: The text below is made up and holds no real person's data.
+          required: true
+  - type: textarea
+    id: text
+    attributes:
+      label: Text (made up)
+      description: The shortest text that shows it.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: missed
+    attributes:
+      label: What went wrong
+      description: Which part should have been masked (and as what), or which part was masked but should not be.
+      placeholder: |
+        "Lee Sora" was not masked (PERSON)
+        "Seoul Station" was masked as ADDRESS but is a place name
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: Language(s) of the text
+      placeholder: "Korean, English mixed"
+  - type: input
+    id: where
+    attributes:
+      label: Where, version and model size
+      description: The demo fills this in when you open the form from it.
+      placeholder: "npm 1.7.2, medium / PyPI 1.7.2, small / pii.newmean.ai demo 1.7.2, medium"
+    validations:
+      required: true
+  - type: input
+    id: options
+    attributes:
+      label: Options
+      placeholder: "sensitivity 0, pattern layer off, indirect identifiers on"

@@ -1,0 +1,16 @@
+{
+  "name": "vault-env-langchain-floor",
+  "private": true,
+  "description": "The LangChain.js environment floor of the public vault workflow (.github/workflows/vault.yml): the declared floor, langchain 1.5.1 with @langchain/core 1.2.1 (js/package.json peerDependencies), and the test tools of js/package.json. npm ci installs exactly the versions of package-lock.json, those of the local gate run.",
+  "type": "module",
+  "dependencies": {
+    "@langchain/core": "1.2.1",
+    "langchain": "1.5.1"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "onnxruntime-web": "1.31.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

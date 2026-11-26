@@ -140,6 +140,17 @@ public class PiiRedactor private constructor(
         return PiiRedaction(applyRedaction(text, spans, mode, maskChar, null), spans)
     }
 
+    /**
+     * [detect] with numbered placeholders that [vault] can undo ("[PERSON_1]", the same value always the same tag). The
+     * vault's known values are also masked where they occur again and the model does not find them (source VAULT);
+     * placeholder-like text left unmasked is escaped ("［PERSON_1]"). IllegalStateException if the vault is cleared while
+     * the model reads the text (nothing is written). Since 1.7.2.
+     */
+    public fun redact(text: String, vault: PiiVault): PiiRedaction {
+        val started = vault.generation
+        return vault.redact(text, detect(text), known = true, generation = started)
+    }
+
     /** [detect] and replace each span with [replace] (span, original text). */
     public fun redact(text: String, replace: (span: PiiSpan, original: String) -> String): PiiRedaction {
         val spans = detect(text)
@@ -327,6 +338,10 @@ public class PiiRedactor private constructor(
             load(model, tokenizer, size, variant, sensitivity, labels, regex, keepEmoji, wholeWords, strictShortNames, lists)
         }
 
+        /** [spans] replaced by [vault]'s numbered placeholders, as [redact] with a vault does. Since 1.7.2. */
+        @JvmStatic
+        public fun applyRedaction(text: String, spans: List<PiiSpan>, vault: PiiVault): String = vault.redact(text, spans, known = false).text
+
         /** Replaces [spans] in [text] as [redact] does (for spans kept from [detect] or edited by the app). */
         @JvmStatic
         @JvmOverloads
@@ -338,8 +353,10 @@ public class PiiRedactor private constructor(
             replace: ((span: PiiSpan, original: String) -> String)? = null,
         ): String = ai.newmean.pii.applyRedaction(text, spans, mode, maskChar, replace)
 
-        /** Kernel of the native library ("neon+fma" on arm64, "neon", "sse", "scalar"); results are bit-identical across the
-         *  kernels without "+fma", and "+fma" (fused multiply-add) differs from them in the last bits of the logits. */
+        /** Matrix kernel the native library runs ("neon+fma" on arm64; on x86_64 "avx2" where the CPU has AVX2, else "sse",
+         *  chosen once per process, "avx2+fma" with NEWMEAN_PII_KERNEL=avx2+fma; "scalar" on armeabi-v7a); results are
+         *  bit-identical across the kernels without "+fma", and "+fma" (fused multiply-add) differs from them in the last
+         *  bits of the logits. */
         @JvmStatic
         public fun buildInfo(): String = NativeBridge.buildInfo()
 

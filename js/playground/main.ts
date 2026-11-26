@@ -1,11 +1,13 @@
 // Public demo (pii.newmean.ai, later also GitHub Pages and a Hugging Face Space): type or pick a sample, the page finds and
 // masks personal information in the browser with @newmean-ai/pii. Icon-first, a few strings in eight languages (LANGS).
-// Model files come from Hugging Face (the SDK default); index.html preloads the medium ones. Built by build.mjs next to this file.
+// Model files come from models/ next to the page (build.mjs copies them there), with Hugging Face (the SDK default) as the
+// fallback; index.html preloads the medium ones. Built by build.mjs next to this file.
 import { createRedactor, DEFAULT_VARIANT, LABELS, LEVEL1_LABELS, MODEL_FILES, type EngineName, type Redactor, type Size, type Span } from "../src/index.js";
 import { SAMPLES } from "./samples.js";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 declare const __VERSION__: string; // SDK version, set by build.mjs from package.json
+declare const __SITE_MODELS__: boolean; // build.mjs copied the model files to models/ next to the page
 const SIZES: Size[] = ["nano", "small", "medium", "large"];
 // Hero facts. Languages and phone speed come from the technical report (docs/report/REPORT.md, Section 5 "On phones": medium,
 // built-in engine, 40 tokens, mean of four phones); the size range is read from the SDK's model table, so it follows releases.
@@ -15,18 +17,18 @@ const MB = (b: number) => (b / 1e6).toFixed(1);
 
 // ---- strings -------------------------------------------------------------------------------------------------------------
 
-const KEYS = ["tagline", "local", "placeholder", "loading", "found", "none", "copy", "copied", "options", "sensitivity", "level2", "regex", "engine", "notReady", "masked", "marked", "star", "models", "bench", "starAsk", "starShort", "install", "factLang", "factSize", "factSpeed", "guide", "phones", "results"] as const;
+const KEYS = ["tagline", "local", "placeholder", "loading", "found", "none", "copy", "copied", "options", "sensitivity", "level2", "regex", "engine", "notReady", "masked", "marked", "star", "models", "bench", "starAsk", "starShort", "install", "factLang", "factSize", "factSpeed", "guide", "phones", "results", "tryOwn", "missed", "fields"] as const;
 type Key = (typeof KEYS)[number];
 const LANGS: Record<string, [string, string[]]> = {
-  en: ["English", ["Mask personal info in your browser.", "Your text never leaves your device. Only speed numbers are sent.", "Type or paste text…", "Loading model {n}%", "{n} found", "Nothing found", "Copy", "Copied", "Options", "Sensitivity", "Also mask indirect identifiers", "Pattern layer (IP, URL, …)", "Engine", "The demo opens with the release.", "Masked", "Found", "Star on GitHub", "Models", "Speed", "Useful? A GitHub star helps others find it.", "Star", "Install", "languages", "model size", "phone · 40 tokens", "Guide", "Phone speed", "Accuracy"]],
-  ko: ["한국어", ["브라우저에서 개인정보를 가립니다.", "글은 기기 밖으로 나가지 않아요. 속도 숫자만 보내요.", "텍스트를 입력하거나 붙여 넣으세요…", "모델 불러오는 중 {n}%", "{n}개 찾음", "찾은 개인정보 없음", "복사", "복사됨", "설정", "민감도", "간접 식별자도 가리기", "패턴 층 (IP, URL 등)", "엔진", "데모는 출시와 함께 열립니다.", "가린 결과", "찾은 결과", "GitHub 스타", "모델", "속도 측정", "도움이 됐다면 GitHub 스타로 응원해 주세요.", "스타", "설치", "언어", "모델 크기", "폰 · 40토큰", "가이드", "폰 속도", "정확도"]],
-  ja: ["日本語", ["ブラウザで個人情報を隠します。", "文章は端末の外に出ません。送るのは速度の数値だけです。", "テキストを入力または貼り付け…", "モデルを読み込み中 {n}%", "{n}件検出", "個人情報なし", "コピー", "コピーしました", "設定", "感度", "間接的な識別子も隠す", "パターン層 (IP、URL など)", "エンジン", "デモは公開時にご利用いただけます。", "マスク結果", "検出結果", "GitHubでスター", "モデル", "速度テスト", "役に立ったら GitHub のスターで応援してください。", "スター", "インストール", "言語", "モデルサイズ", "スマホ · 40トークン", "ガイド", "スマホの速度", "精度"]],
-  zh: ["简体中文", ["在浏览器中遮盖个人信息。", "文字不会离开你的设备。只发送速度数据。", "输入或粘贴文本…", "正在加载模型 {n}%", "找到 {n} 处", "未发现个人信息", "复制", "已复制", "设置", "灵敏度", "同时遮盖间接标识", "模式层（IP、URL 等）", "引擎", "演示将在发布时开放。", "遮盖结果", "检测结果", "在 GitHub 上加星", "模型", "测速", "觉得有用？在 GitHub 上点个星吧。", "加星", "安装", "语言", "模型大小", "手机 · 40 个词元", "指南", "手机速度", "准确率"]],
-  "zh-Hant": ["繁體中文", ["在瀏覽器中遮蔽個人資料。", "文字不會離開你的裝置，只會送出測速數據。", "輸入或貼上文字…", "正在載入模型 {n}%", "找到 {n} 處", "沒有找到個人資料", "複製", "已複製", "設定", "敏感度", "一併遮蔽間接識別資訊", "規則比對層（IP、URL 等）", "引擎", "示範網站將隨正式版一同開放。", "遮蔽結果", "偵測結果", "在 GitHub 按星星", "模型", "測速", "覺得有用嗎？在 GitHub 按個星星，能讓更多人找到它。", "按星星", "安裝", "種語言", "模型大小", "手機 · 40 個 token", "指南", "手機執行速度", "準確率"]],
-  es: ["Español", ["Oculta tus datos personales.", "Tu texto nunca sale de tu dispositivo. Solo se envían datos de velocidad.", "Escribe o pega un texto…", "Cargando modelo {n}%", "{n} encontrados", "No se encontró nada", "Copiar", "Copiado", "Opciones", "Sensibilidad", "Ocultar también identificadores indirectos", "Capa de patrones (IP, URL, …)", "Motor", "La demo se abrirá con el lanzamiento.", "Ocultado", "Encontrado", "Estrella en GitHub", "Modelos", "Rapidez", "¿Te sirve? Una estrella en GitHub ayuda a que otros lo encuentren.", "Estrella", "Instalar", "idiomas", "tamaño del modelo", "móvil · 40 tokens", "Guía", "Velocidad en móvil", "Precisión"]],
-  fr: ["Français", ["Masquez les données personnelles.", "Votre texte ne quitte jamais l'appareil. Seules des mesures de vitesse sont envoyées.", "Saisissez ou collez un texte…", "Chargement du modèle {n} %", "{n} trouvés", "Rien trouvé", "Copier", "Copié", "Options", "Sensibilité", "Masquer aussi les identifiants indirects", "Couche de motifs (IP, URL, …)", "Moteur", "La démo ouvrira avec la sortie.", "Masqué", "Trouvé", "Étoile sur GitHub", "Modèles", "Vitesse", "Utile ? Une étoile sur GitHub aide les autres à le trouver.", "Étoile", "Installer", "langues", "taille du modèle", "mobile · 40 jetons", "Guide", "Vitesse sur mobile", "Précision"]],
-  de: ["Deutsch", ["Personendaten lokal schwärzen.", "Ihr Text verlässt nie Ihr Gerät. Gesendet werden nur Tempo-Messwerte.", "Text eingeben oder einfügen…", "Modell wird geladen {n} %", "{n} gefunden", "Nichts gefunden", "Kopieren", "Kopiert", "Optionen", "Empfindlichkeit", "Auch indirekte Merkmale schwärzen", "Musterebene (IP, URL, …)", "Engine", "Die Demo startet mit der Veröffentlichung.", "Geschwärzt", "Gefunden", "Stern auf GitHub", "Modelle", "Tempo", "Nützlich? Ein GitHub-Stern hilft anderen, es zu finden.", "Stern", "Installieren", "Sprachen", "Modellgröße", "Handy · 40 Tokens", "Anleitung", "Tempo auf dem Handy", "Genauigkeit"]],
-  pt: ["Português", ["Oculte dados pessoais no navegador.", "Seu texto nunca sai do dispositivo. Só enviamos números de velocidade.", "Digite ou cole um texto…", "Carregando modelo {n}%", "{n} encontrados", "Nada encontrado", "Copiar", "Copiado", "Opções", "Sensibilidade", "Ocultar também identificadores indiretos", "Camada de padrões (IP, URL, …)", "Motor", "A demo abre com o lançamento.", "Ocultado", "Encontrado", "Estrela no GitHub", "Modelos", "Rapidez", "Foi útil? Uma estrela no GitHub ajuda outros a encontrar.", "Estrela", "Instalar", "idiomas", "tamanho do modelo", "celular · 40 tokens", "Guia", "Velocidade no celular", "Precisão"]],
+  en: ["English", ["Mask personal info in your browser.", "Your text never leaves your device. We record speed numbers, device type, page language, country, whether you used a sample, button clicks and a random ID for this visit, and publish them only in aggregate.", "Type or paste text…", "Loading model {n}%", "{n} found", "Nothing found", "Copy", "Copied", "Options", "Sensitivity", "Also mask indirect identifiers", "Pattern layer (IP, URL, …)", "Engine", "The demo opens with the release.", "Masked", "Found", "Star on GitHub", "Models", "Speed", "Useful? A GitHub star helps others find it.", "Star", "Install", "languages", "model size", "phone · 40 tokens", "Guide", "Phone speed", "Accuracy", "Try your own text: edit or paste it above.", "Missed something?", "Full list"]],
+  ko: ["한국어", ["브라우저에서 개인정보를 가립니다.", "글은 기기 밖으로 나가지 않아요. 속도 숫자, 기기 종류, 화면 언어, 국가, 예시 글 사용 여부, 누른 버튼, 방문마다 새로 만드는 무작위 번호를 기록하고 통계로만 공개해요.", "텍스트를 입력하거나 붙여 넣으세요…", "모델 불러오는 중 {n}%", "{n}개 찾음", "찾은 개인정보 없음", "복사", "복사됨", "설정", "민감도", "간접 식별자도 가리기", "패턴 층 (IP, URL 등)", "엔진", "데모는 출시와 함께 열립니다.", "가린 결과", "찾은 결과", "GitHub 스타", "모델", "속도 측정", "도움이 됐다면 GitHub 스타로 응원해 주세요.", "스타", "설치", "언어", "모델 크기", "폰 · 40토큰", "가이드", "폰 속도", "정확도", "내 글로도 해 보세요. 위 칸을 고치거나 붙여 넣으면 돼요.", "놓친 게 있나요?", "전체 항목"]],
+  ja: ["日本語", ["ブラウザで個人情報を隠します。", "文章は端末の外に出ません。速度の数値、端末の種類、表示言語、国、サンプルを使ったかどうか、押したボタン、訪問ごとのランダムなIDを記録し、公開するのは集計だけです。", "テキストを入力または貼り付け…", "モデルを読み込み中 {n}%", "{n}件検出", "個人情報なし", "コピー", "コピーしました", "設定", "感度", "間接的な識別子も隠す", "パターン層 (IP、URL など)", "エンジン", "デモは公開時にご利用いただけます。", "マスク結果", "検出結果", "GitHubでスター", "モデル", "速度テスト", "役に立ったら GitHub のスターで応援してください。", "スター", "インストール", "言語", "モデルサイズ", "スマホ · 40トークン", "ガイド", "スマホの速度", "精度", "自分の文章でも試してください。上の欄を書き換えるか貼り付けます。", "見落としがありますか？", "全項目"]],
+  zh: ["简体中文", ["在浏览器中遮盖个人信息。", "文字不会离开你的设备。会记录速度数据、设备类型、页面语言、国家或地区、是否使用示例、点击的按钮和本次访问的随机编号，并且只以统计形式公开。", "输入或粘贴文本…", "正在加载模型 {n}%", "找到 {n} 处", "未发现个人信息", "复制", "已复制", "设置", "灵敏度", "同时遮盖间接标识", "模式层（IP、URL 等）", "引擎", "演示将在发布时开放。", "遮盖结果", "检测结果", "在 GitHub 上加星", "模型", "测速", "觉得有用？在 GitHub 上点个星吧。", "加星", "安装", "语言", "模型大小", "手机 · 40 个词元", "指南", "手机速度", "准确率", "试试你自己的文字：在上方修改或粘贴。", "有遗漏吗？", "完整列表"]],
+  "zh-Hant": ["繁體中文", ["在瀏覽器中遮蔽個人資料。", "文字不會離開你的裝置，會記錄測速數據、裝置類型、頁面語言、國家或地區、是否使用範例、點選的按鈕和本次造訪的隨機編號，並且只以統計形式公開。", "輸入或貼上文字…", "正在載入模型 {n}%", "找到 {n} 處", "沒有找到個人資料", "複製", "已複製", "設定", "敏感度", "一併遮蔽間接識別資訊", "規則比對層（IP、URL 等）", "引擎", "示範網站將隨正式版一同開放。", "遮蔽結果", "偵測結果", "在 GitHub 按星星", "模型", "測速", "覺得有用嗎？在 GitHub 按個星星，能讓更多人找到它。", "按星星", "安裝", "種語言", "模型大小", "手機 · 40 個 token", "指南", "手機執行速度", "準確率", "試試你自己的文字：在上方修改或貼上。", "有遺漏嗎？", "完整清單"]],
+  es: ["Español", ["Oculta tus datos personales.", "Tu texto nunca sale de tu dispositivo. Se registran datos de velocidad, el tipo de dispositivo, el idioma de la página, el país, si usaste un ejemplo, los botones pulsados y un identificador aleatorio de esta visita, y solo los publicamos como estadísticas.", "Escribe o pega un texto…", "Cargando modelo {n}%", "{n} encontrados", "No se encontró nada", "Copiar", "Copiado", "Opciones", "Sensibilidad", "Ocultar también identificadores indirectos", "Capa de patrones (IP, URL, …)", "Motor", "La demo se abrirá con el lanzamiento.", "Ocultado", "Encontrado", "Estrella en GitHub", "Modelos", "Rapidez", "¿Te sirve? Una estrella en GitHub ayuda a que otros lo encuentren.", "Estrella", "Instalar", "idiomas", "tamaño del modelo", "móvil · 40 tokens", "Guía", "Velocidad en móvil", "Precisión", "Prueba con tu propio texto: edítalo o pégalo arriba.", "¿Se escapó algo?", "Lista completa"]],
+  fr: ["Français", ["Masquez les données personnelles.", "Votre texte ne quitte jamais l'appareil. Nous enregistrons des mesures de vitesse, le type d'appareil, la langue de la page, le pays, l'usage d'un exemple, les boutons cliqués et un identifiant aléatoire de cette visite, et ne les publions qu'en statistiques.", "Saisissez ou collez un texte…", "Chargement du modèle {n} %", "{n} trouvés", "Rien trouvé", "Copier", "Copié", "Options", "Sensibilité", "Masquer aussi les identifiants indirects", "Couche de motifs (IP, URL, …)", "Moteur", "La démo ouvrira avec la sortie.", "Masqué", "Trouvé", "Étoile sur GitHub", "Modèles", "Vitesse", "Utile ? Une étoile sur GitHub aide les autres à le trouver.", "Étoile", "Installer", "langues", "taille du modèle", "mobile · 40 jetons", "Guide", "Vitesse sur mobile", "Précision", "Essayez votre propre texte : modifiez-le ou collez-le ci-dessus.", "Un oubli ?", "Liste complète"]],
+  de: ["Deutsch", ["Personendaten lokal schwärzen.", "Ihr Text verlässt nie Ihr Gerät. Erfasst werden Tempo-Messwerte, Gerätetyp, Seitensprache, Land, ob ein Beispiel genutzt wurde, angeklickte Schaltflächen und eine zufällige ID für diesen Besuch, veröffentlicht nur als Statistik.", "Text eingeben oder einfügen…", "Modell wird geladen {n} %", "{n} gefunden", "Nichts gefunden", "Kopieren", "Kopiert", "Optionen", "Empfindlichkeit", "Auch indirekte Merkmale schwärzen", "Musterebene (IP, URL, …)", "Engine", "Die Demo startet mit der Veröffentlichung.", "Geschwärzt", "Gefunden", "Stern auf GitHub", "Modelle", "Tempo", "Nützlich? Ein GitHub-Stern hilft anderen, es zu finden.", "Stern", "Installieren", "Sprachen", "Modellgröße", "Handy · 40 Tokens", "Anleitung", "Tempo auf dem Handy", "Genauigkeit", "Probieren Sie Ihren eigenen Text: oben ändern oder einfügen.", "Etwas übersehen?", "Vollständige Liste"]],
+  pt: ["Português", ["Oculte dados pessoais no navegador.", "Seu texto nunca sai do dispositivo. Registramos números de velocidade, o tipo de aparelho, o idioma da página, o país, se você usou um exemplo, os botões clicados e um identificador aleatório desta visita, e só os publicamos como estatísticas.", "Digite ou cole um texto…", "Carregando modelo {n}%", "{n} encontrados", "Nada encontrado", "Copiar", "Copiado", "Opções", "Sensibilidade", "Ocultar também identificadores indiretos", "Camada de padrões (IP, URL, …)", "Motor", "A demo abre com o lançamento.", "Ocultado", "Encontrado", "Estrela no GitHub", "Modelos", "Rapidez", "Foi útil? Uma estrela no GitHub ajuda outros a encontrar.", "Estrela", "Instalar", "idiomas", "tamanho do modelo", "celular · 40 tokens", "Guia", "Velocidade no celular", "Precisão", "Teste com seu próprio texto: edite ou cole acima.", "Algo passou?", "Lista completa"]],
 };
 
 function pickLang(): string {
@@ -68,16 +70,35 @@ const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&l
 
 // ---- speed numbers -------------------------------------------------------------------------------------------------------
 
-// On pii.newmean.ai only: the model size, engine, time and token count of each run and model load, a coarse device class and
-// whether the text was one of the samples, sent to /api/demo when the page is hidden. Never the text or what was found; the
-// "local" line under the title says so.
+// On pii.newmean.ai only: the model size, engine and time of each run and model load (the token count of a run, where the
+// files of a load came from), a coarse device class, the page language, whether the text was one of the samples, and which links and copy
+// buttons were used (a fixed name per element, from data-t), sent to /api/demo when the page is hidden, with a random ID
+// made on each page load (never stored in the browser) that ties one visit's events together. The Worker adds the country
+// Cloudflare reports. Never the text or what was found; the "local" line under the title names what is recorded about
+// the visit and links to site/README.md, which has every field (also the SDK version, where a model was loaded from and
+// the team flag). Change the three together.
 const TELEMETRY = location.hostname === "pii.newmean.ai";
-const session = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
-type DemoEvent = { kind: "run" | "load"; size: Size; engine: EngineName; ms: number; tokens?: number; src?: "sample" | "own" };
+const session = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2); // per page load, not kept
+type DemoEvent =
+  | { kind: "run" | "load"; size: Size; engine: EngineName; ms: number; tokens?: number; src?: "sample" | "own"; from?: "site" | "hf" }
+  | { kind: "click"; target: string };
 let events: DemoEvent[] = [];
 const record = (e: DemoEvent) => {
-  if (TELEMETRY && events.length < 100) events.push({ ...e, ms: Math.round(e.ms) });
+  if (TELEMETRY && events.length < 100) events.push("ms" in e ? { ...e, ms: Math.round(e.ms) } : e);
 };
+
+// Team visits: open the page once with ?team=1 and this browser's numbers are marked as internal from then on (?team=0 undoes
+// it), so the dashboard can leave them out.
+const team = (() => {
+  try {
+    const q = new URLSearchParams(location.search).get("team");
+    if (q === "1") localStorage.setItem("pii-demo-team", "1");
+    if (q === "0") localStorage.removeItem("pii-demo-team");
+    return localStorage.getItem("pii-demo-team") === "1";
+  } catch {
+    return false;
+  }
+})();
 
 function device() {
   const ua = navigator.userAgent;
@@ -92,7 +113,7 @@ function device() {
 
 function flush() {
   if (!events.length) return;
-  const body = JSON.stringify({ session, v: __VERSION__, lang, device: device(), events });
+  const body = JSON.stringify({ session, v: __VERSION__, lang, team, device: device(), events });
   events = [];
   try {
     navigator.sendBeacon("/api/demo", body);
@@ -119,30 +140,53 @@ async function ensureModel() {
   const got: Record<string, number> = {};
   setLoading(0);
   const t0 = performance.now();
-  const r = await createRedactor({
+  const options = {
     size,
     engine,
     regex: regexOn(),
     labels: level2() ? LABELS : LEVEL1_LABELS,
     sensitivity: sensitivity(),
     wasmPaths: new URL("ort/", document.baseURI).href,
-    onProgress: (p) => {
+    onProgress: (p: { file: string; loaded: number }) => {
       got[p.file] = p.loaded;
       setLoading(Math.min(99, Math.round((100 * Object.values(got).reduce((a, b) => a + b, 0)) / total)));
     },
-  });
+  };
+  // the site's copy first (same CDN as the page); Hugging Face when it fails (missing, or size/SHA-256 differs)
+  let from: "site" | "hf" = __SITE_MODELS__ ? "site" : "hf";
+  let r: Redactor;
+  try {
+    r = await createRedactor(__SITE_MODELS__ ? { ...options, modelUrl: new URL(`models/pii-${size}/`, document.baseURI).href } : options);
+  } catch (e) {
+    if (!__SITE_MODELS__ || loadingKey !== key) throw e;
+    console.warn("[demo] site model copy failed, using Hugging Face:", e);
+    from = "hf";
+    for (const k of Object.keys(got)) delete got[k];
+    r = await createRedactor(options);
+  }
   if (loadingKey !== key) {
     await r.dispose();
     return null;
   }
   redactor = r;
-  record({ kind: "load", size, engine, ms: performance.now() - t0 });
+  record({ kind: "load", size, engine, ms: performance.now() - t0, from });
   setLoading(null);
   return r;
 }
 
 const sensitivity = () => Number($<HTMLInputElement>("sens").value);
 const level2 = () => $<HTMLInputElement>("l2").checked;
+
+/** The "It missed something" issue form with the demo's version, size, engine and options filled in. Never the text:
+ *  the form asks for a made-up example. */
+function missedUrl(size: string, engine: string): string {
+  const q = new URLSearchParams({
+    template: "missed-pii.yml",
+    where: `pii.newmean.ai demo ${__VERSION__}, ${size}, ${engine}`,
+    options: `sensitivity ${sensitivity()}, pattern layer ${regexOn() ? "on" : "off"}, indirect identifiers ${level2() ? "on" : "off"}`,
+  });
+  return `https://github.com/newmean-ai/pii/issues/new?${q}`;
+}
 const regexOn = () => $<HTMLInputElement>("regex").checked;
 
 function setLoading(pct: number | null) {
@@ -157,6 +201,7 @@ function setLoading(pct: number | null) {
 // ---- run -----------------------------------------------------------------------------------------------------------------
 
 let seq = 0;
+let triedOwn = false;
 async function run() {
   const id = ++seq;
   const text = $<HTMLTextAreaElement>("input").value;
@@ -175,7 +220,11 @@ async function run() {
   const { text: masked, spans } = await r.redact(text, { mode: $<HTMLSelectElement>("mode").value as "tag" | "mask" });
   if (id !== seq) return;
   last = { text, spans, masked, ms: performance.now() - t0, tokens: r.lastRun?.tokens ?? 0 };
-  if (text.trim()) record({ kind: "run", size, engine, ms: last.ms, tokens: last.tokens, src: SAMPLES.some((s) => s.text === text) ? "sample" : "own" });
+  const src = SAMPLES.some((s) => s.text === text) ? "sample" : "own";
+  if (text.trim()) record({ kind: "run", size, engine, ms: last.ms, tokens: last.tokens, src });
+  // after a sample, point at the text box once: most visitors only ever ran the samples
+  if (src === "own" && text.trim()) triedOwn = true;
+  $("hint").hidden = triedOwn || src !== "sample";
   showResult();
 }
 
@@ -205,6 +254,7 @@ function showResult() {
   }
   $("count").textContent = spans.length ? t("found", spans.length) : t("none");
   $("stats").textContent = `${ms.toFixed(0)} ms · ${tokens} tok · pii-${size} · ${engine}`;
+  $<HTMLAnchorElement>("missed").href = missedUrl(size, engine);
   const used = [...new Set(spans.map((s) => s.label))];
   $("legend").innerHTML = used.map((l) => `<span class="f-${(LABEL_LOOK[l] ?? ["", "d"])[1]}">${icon((LABEL_LOOK[l] ?? ["l-key"])[0])}${l}</span>`).join("");
 }
@@ -336,6 +386,13 @@ function start() {
     engine = (e.target as HTMLSelectElement).value as EngineName;
     schedule(0);
   });
+
+  // links and copy buttons marked with data-t: count which ones are used (the name only)
+  document.addEventListener("click", (e) => {
+    const el = (e.target as Element | null)?.closest<HTMLElement>("[data-t]");
+    if (!el) return;
+    record({ kind: "click", target: el.dataset.t === "install" ? `install:${pkgs[pkg][3]}` : el.dataset.t! });
+  }, true);
 
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && flush());
   addEventListener("pagehide", flush);

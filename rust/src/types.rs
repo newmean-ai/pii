@@ -121,15 +121,18 @@ pub enum Source {
     Table,
     /// An entry of the block list ([`crate::Builder::block`]).
     Block,
+    /// A value a [`crate::Vault`] already holds, found again by [`crate::Redactor::redact_vault`] (since 1.7.2).
+    Vault,
 }
 
 impl Source {
-    /// The name every newmean-pii package uses: `"model"`, `"table"` or `"block"`.
+    /// The name every newmean-pii package uses: `"model"`, `"table"`, `"block"` or `"vault"`.
     pub fn as_str(self) -> &'static str {
         match self {
             Source::Model => "model",
             Source::Table => "table",
             Source::Block => "block",
+            Source::Vault => "vault",
         }
     }
 }

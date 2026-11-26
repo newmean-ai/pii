@@ -1,7 +1,7 @@
 {
   "name": "@newmean-ai/pii",
-  "version": "1.6.2",
-  "description": "Browser-side multilingual PII detection and masking with small on-device models",
+  "version": "1.7.2",
+  "description": "Mask PII before it reaches your LLM: on-device multilingual PII detection and redaction in the browser and Node (54 languages, 2.6-15.5 MB models)",
   "license": "Apache-2.0",
   "author": "newmean.ai",
   "homepage": "https://github.com/newmean-ai/pii",
@@ -20,7 +20,14 @@
     "browser",
     "multilingual",
     "ai-sdk",
-    "langchain"
+    "langchain",
+    "llm",
+    "pii-detection",
+    "pii-redaction",
+    "pii-masking",
+    "data-masking",
+    "llm-security",
+    "guardrails"
   ],
   "type": "module",
   "main": "./dist/index.js",
@@ -50,7 +57,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "prepublishOnly": "npm run build && node scripts/check-pack.mjs",
+    "prepack": "npm run build && node scripts/check-pack.mjs",
     "build": "node scripts/build.mjs && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -60,9 +67,13 @@
     "onnxruntime-web": "1.31.1"
   },
   "peerDependencies": {
-    "langchain": ">=1.0.0"
+    "@langchain/core": ">=1.2.1",
+    "langchain": ">=1.5.1"
   },
   "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
     "langchain": {
       "optional": true
     }

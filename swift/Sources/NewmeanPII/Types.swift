@@ -58,6 +58,8 @@ public enum PIISource: String, Sendable, Hashable {
   case table
   /// An entry of the `block` list (since 1.4.0).
   case block
+  /// A value a `PIIVault` already holds, found again by `redact(_:vault:)` (since 1.7.2).
+  case vault
 
   /// PII_SOURCE_* bits of the C core; nil for a pattern this package does not know.
   init?(bits: Int32) {
@@ -183,7 +185,7 @@ public enum PIIError: Error, LocalizedError, Sendable {
 
 /// What a redactor runs (`PIIRedactor.info`).
 public struct PIIRedactorInfo: Sendable, Hashable {
-  /// Version of this package and its C core ("1.6.1").
+  /// Version of this package and its C core ("1.7.2").
   public let packageVersion: String
   /// Model release ("1.1.0"; Hugging Face tag v1.1.0).
   public let modelVersion: String

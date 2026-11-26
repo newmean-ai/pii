@@ -2,7 +2,7 @@
 
 # @newmean-ai/pii
 
-**브라우저 안에서 하는 개인정보 마스킹.** 텍스트 속 개인정보(이름, 이메일, 전화번호, 주소, 신분증 번호 등)를 **브라우저 안에서만** 찾아 가리므로, 원문이 사용자의 기기를 떠나지 않습니다.
+**OpenAI, Anthropic 등 LLM에 보내기 전에 개인정보를 가립니다.** 텍스트 속 개인정보(이름, 이메일, 전화번호, 주소, 신분증 번호 등)를 **브라우저나 기기 안에서** 찾아 가리므로, 원문이 기기를 떠나지 않습니다. vault를 쓰면 모델 답변과 허용한 도구 호출에 원래 값을 되돌립니다(1.7.2부터).
 
 - 54개 언어, 11개 레이블과 간접 식별자를 위한 수준 2 레이블 2개(IP 주소는 `ID_NUMBER`로 학습); 패턴 계층(이메일, URL,
   카드·계좌, 전화, 주민등록번호)은 선택이며 기본은 꺼짐
@@ -31,8 +31,8 @@ const { text, spans } = await redactor.redact("My email is kim@example.com");
 |---|---|---|
 | 브라우저, Node.js | [`@newmean-ai/pii`](https://www.npmjs.com/package/@newmean-ai/pii) | `npm install @newmean-ai/pii` |
 | Python 3.9+ | [`newmean-pii`](https://pypi.org/project/newmean-pii/) | `pip install newmean-pii` |
-| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.6.1`부터 |
-| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.6.1")` |
+| iOS 15+, macOS 12+ | `NewmeanPII` (Swift Package Manager) | `https://github.com/newmean-ai/pii` 추가, `1.7.2`부터 |
+| Android 7.0+ | [`ai.newmean:pii`](https://central.sonatype.com/artifact/ai.newmean/pii) | `implementation("ai.newmean:pii:1.7.2")` |
 | Flutter, Dart | [`newmean_pii`](https://pub.dev/packages/newmean_pii) | `flutter pub add newmean_pii` |
 | Rust | [`newmean-pii`](https://crates.io/crates/newmean-pii) | `cargo add newmean-pii` |
 
@@ -97,6 +97,8 @@ create_redactor().redact_table(open("survey.csv", encoding="utf-8").read(), cont
 
 ## 결과
 
+놓친 게 있나요? 모양이 같은 지어낸 글로 [알려 주세요](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml)(이슈는 공개됩니다).
+
 가려지지 않고 남은 PII 문자의 비율(놓침 %, 낮을수록 좋음)이며, 모델만 쓴 결과입니다. 우리 newmean-pii-dataset (공개 테스트)와, 우리 어떤 모델도 학습에
 쓰지 않은 외부 데이터셋 네 개에서 쟀습니다. 과잉 마스킹, 파라미터 수, 속도를 담은 전체 표: [기술 보고서 6절](docs/report/REPORT.ko.md);
 newmean-pii-dataset (공개·비공개 테스트)의 주간 점수: [리더보드](https://huggingface.co/spaces/newmean-ai/pii-leaderboard).
@@ -123,6 +125,23 @@ newmean-pii-dataset (공개·비공개 테스트)의 주간 점수: [리더보�
 Gretel에서 라이브러리의 긴 글 모드로 돌렸습니다. 휴대폰(네 대 평균)에서 11.3 MB 모델은 40토큰 메시지에 약 26 ms가 걸립니다.
 SDK 1.2(배포된 Python 패키지)를 거쳐도 이 표의 우리 모델 수치는 모두 0.04점 안에서 같습니다. SDK가 바꾸는 것은 이모지나 키캡이
 든 텍스트뿐입니다.
+
+라벨별·형식별·언어별 숫자(SDK 기본 설정, 공개 테스트, 놓침 %): [docs/results](docs/results/models-v1.1-public-test.ko.md).
+
+| 라벨 | PII 글자 수 | large | medium | small | nano |
+|---|---|---|---|---|---|
+| PERSON | 55,982 | 2.2 | 3.0 | 3.8 | 4.5 |
+| ID_NUMBER | 33,392 | 0.9 | 1.3 | 1.2 | 1.1 |
+| EMAIL | 33,305 | 0.0 | 0.1 | 0.2 | 0.3 |
+| PHONE | 28,544 | 0.1 | 0.1 | 0.6 | 0.4 |
+| ADDRESS | 27,552 | 3.1 | 3.1 | 4.2 | 5.4 |
+| SECRET | 22,844 | 0.3 | 0.3 | 0.1 | 0.2 |
+| FINANCIAL | 21,398 | 0.4 | 0.6 | 0.5 | 0.8 |
+| ORG | 19,041 | 6.6 | 6.0 | 7.4 | 9.1 |
+| URL | 13,997 | 0.6 | 1.1 | 0.6 | 0.7 |
+| USERNAME | 7,901 | 2.2 | 2.8 | 2.9 | 4.2 |
+| DATE_OF_BIRTH | 3,861 | 1.8 | 2.8 | 2.1 | 3.7 |
+| IP_ADDRESS | 3,555 | 0.1 | 0.2 | 0.0 | 0.3 |
 
 1.2에서 달라진 점. 1.2는 v1.1 모델에 SDK 1.2.0을 더한 배포입니다. v1.1은 따로 공개하지 않았으므로 그 모델 변경이 여기에
 들어 있습니다. *모델:* 짧은 글, 표의 칸, 설문 내보내기에서 홀로 쓴 일상어를 이름으로 읽는 일이 크게 줄었습니다. 54개 언어의 짧은
@@ -217,6 +236,55 @@ Rust crate와 C 코어에는 이 계층이 없습니다. 패키지마다 구조 
 가드레일이 config.yaml에 적은 `allow`와 `block` 항목도 받습니다. 1.6.0 뒤에 추가한 Rust crate
 [`newmean-pii`](rust/README.ko.md)도 같은 버전을 따릅니다. npm에서는 1.6.2를 쓰세요. npm의 1.6.1은 빌드된 파일 없이 올라가
 import할 수 없습니다. 1.6.2는 같은 코드를 빌드해 올린 것이고, 이제 빌드된 파일이 없으면 게시가 거부됩니다.
+
+1.7에서 바뀐 것. SDK 1.7.0이며 모델은 v1.1 그대로이고, 기본 설정의 결과 구간도 같습니다. *값 되돌리기:* vault(`createVault`,
+`Vault`, `PIIVault`, `PiiVault`)가 값마다 번호 붙은 자리표시("[PERSON_1]", 같은 값에는 늘 같은 자리표시)를 붙이고 되돌릴 수
+있게 합니다. 여섯 패키지 모두에 있습니다. vault를 주면 npm·Python의 미들웨어(Vercel AI SDK, LangChain, LangChain.js)가 모델
+답변과, `restoreTools`·`restore_tools`에 지정한 도구의 인자에 원래 값을 되돌립니다. 다른 도구는 자리표시를
+받으므로, 모델이 읽은 글이 값을 다른 곳으로 보내게 할 수 없습니다. AI SDK 미들웨어는 스트리밍 답변도 조각마다 되돌리고,
+LangChain 미들웨어는 완성된 메시지를 되돌리므로 토큰 콜백에는 자리표시가 보입니다. *에이전트:* AI SDK 미들웨어는 `"tool"` 역할일 때 JSON과
+content 형식의 도구 결과도 가립니다(1.6은 그대로 두었음). Python에 검색 문서용 `mask_documents`가 생겼고, CRM 도구가 있는
+에이전트 예시(`js/examples`, `python/examples`)와 PDF 글 예시를 넣었습니다. *결과:* 크기별 라벨·형식·언어별 놓침
+([docs/results](docs/results/models-v1.1-public-test.ko.md))과 [놓친 사례 제보 양식](https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml).
+LinkedIn 글 댓글에서 요청받은 것들이며, vault는 배포 전에 외부 모델로 여러 차례 검토했습니다.
+
+1.7.2에서 바뀐 것. SDK 1.7.2는 vault가 들어간 첫 배포이며 모델은 v1.1 그대로입니다. 1.7.0과 1.7.1은 준비만 하고 배포하지
+않았으므로, 위의 1.7에서 바뀐 것은 1.7.2로 나옵니다. Python 패키지의 Langfuse 마스크(`pii_mask`)가 dict 키, set 항목, bytes(UTF-8로), dataclass와 pydantic
+모델의 필드도 가립니다. 숫자, 날짜, `uuid.UUID` 객체, Langfuse의 미디어 객체는 그대로 두고, 그 밖의 값은 그대로 보내지 않고
+`[UNMASKED: <type>]`이 됩니다. 가린 결과가 같은 두 키는 두 값을 모두 남기고(` #2`), `keys=False`는 키를 그대로 둡니다.
+@Mramaran 님의 [pull request #1](https://github.com/newmean-ai/pii/pull/1)에서 왔습니다. 트레이스의 id(`call_…`,
+`chatcmpl-…` 같은 공급자와 LangChain의 id, 그리고 트레이스가 id라고 이름 붙인 자리의 UUID: `run_id`, `session_id` 같은 키의
+값이나 그 자리 리스트의 항목이며, 키는 그런 자리가 아님)와 64자 이하의 필드 이름인 키(`user_id`, `userName`)는 패턴 계층과 `block` 목록이 그 안에서 아무것도 찾지 못하면 쓰인 그대로 둡니다. 다른
+키와 다른 UUID는 모델이 읽습니다(`ids=False`면 id도 읽습니다). 또 마스크는 깊이 제한 없이
+들어가 가리고, 만들 때 옵션을 확인하며, 예외를 내지 않습니다: 가리기가 실패하면(예를 들어 모델을 불러오지 못할 때) 값
+전체를 `[MASK FAILED]`로 보내고 오류의 타입을 로그에 남깁니다. 파일, 이름, 오류 메시지, 다른 OpenTelemetry 계측의 span은 Langfuse가
+마스크에 넘기지 않고 올리거나 보냅니다([python/README.ko.md](python/README.ko.md#통합)).
+
+배포 전에 vault를 글로 적은 약속과 시험 사례 10,915개의 코퍼스로 확인했고, 다음을 더했습니다. 여섯 패키지 모두 아는 값을 대문자로
+쓴 것, 이메일 주소·사용자 이름·URL 호스트·두 단어 이상인 값을 ASCII 대소문자를 달리 쓴 것, NFD와 전각으로 쓴 것, 두 음절 한글도
+찾고, 모델이 구두점, 괄호, 따옴표까지 표시한 값(`Kim Minsu.`, `"Kim Minsu"`)은 그것을 빼고 배웁니다. npm·Python 미들웨어는 Python repr 이스케이프로 쓴 값, ISO 시각, 부호 붙은 숫자, 두 줄로 쓴 값도 찾습니다. 도구 설명과
+스키마, 응답 형식, 공급자 설정, 메시지의 `name`에서도 아는 값을 숨기고, 에이전트의 구조화 응답에 값을 되돌리며, 가릴 수 없는
+호출은 보내지 않고 실패시킵니다. vault와 함께면 npm 미들웨어도 Python처럼 tag 방식만 받고 다른 가리기 설정에는 오류를 냅니다. LangChain 통합은 이제 Python에서 langchain 1.4.0 이상,
+LangChain.js에서 langchain 1.5.1 이상과 `@langchain/core` 1.2.1 이상이 필요합니다(1.6은 1.0 이상). 까닭은 각 패키지 README에
+있습니다. 이 하한과 위에서 말한 트레이스의 id·키 처리는 1.6.1이 약속한 것을 바꾸며, 메인테이너가 승인했습니다. 아는 값이 수천 개인 큰 데이터는 호출마다 몇 초가 걸립니다(아는 값 2,000개와 JSON 행 181 KB에 npm과 Python 모두 약
+2초). 더 빠른 찾기는 1.7.3에서 합니다. 자세한 것: [js/README.ko.md](js/README.ko.md#값-되돌리기-vault),
+[python/README.ko.md](python/README.ko.md#통합).
+
+x86-64([이슈 #3](https://github.com/newmean-ai/pii/issues/3)). Python, Swift, Android, Flutter, Rust 패키지의 네이티브
+코어에 x86-64용 8폭 AVX2 행렬 커널을 더했습니다. CPU에 AVX2가 있으면 프로세스마다 한 번 고릅니다(`avx2`, 없으면 `sse`).
+로짓이 SSE 커널과 비트 단위로 같으므로 구간은 모두 그대로입니다. `NEWMEAN_PII_KERNEL=avx2+fma`로 융합 곱셈-덧셈을 고를 수
+있습니다(로짓이 arm64 기본과 같음). MSVC로 만든 빌드(Windows 휠)는 스칼라 커널을 그대로 씁니다. AMD EPYC 9V74 한 스레드에서
+짧은 글 하나에 nano 약 13 ms, medium 약 19 ms로, `sse`의 23 ms와 35 ms보다 빠릅니다. Python README에 `info()["build"]`
+값마다 뜻과, AVX2와 FMA3가 있는 x86-64 CPU용으로 융합 곱셈-덧셈을 켜고 소스에서 빌드하는 방법
+(`CFLAGS="-march=x86-64-v3 -DPII_FMA"`)을 적었습니다([python/README.ko.md](python/README.ko.md#api)).
+
+Python의 모델 내려받기. `fetch_model()`과 `python -m newmean_pii download`는 이제 모델 파일을 캐시에 쓰지 못하면
+실패합니다(`ModelFileError`; 명령은 상태 1로 끝나며 그 파일을 적습니다). 전에는 나중에 `model_dir=`나 오프라인 로드로 쓸 수
+없는 폴더를 돌려주었습니다. 그런 캐시(읽기 전용이거나 가득 찬 디스크, 파일을 가리키는 `--cache-dir`)에서 상태 0으로 끝나던
+빌드 단계는 이제 실패합니다. 바로 쓰려고 불러올 때(`Redactor`, `create_redactor`)는 캐시에 쓰지 못해도 전처럼 검증한
+바이트를 메모리에 둡니다. @kyleoliver-gnomai 님의 [pull request #4](https://github.com/newmean-ai/pii/pull/4)에서
+왔습니다([python/README.ko.md](python/README.ko.md#오프라인-사용)). Python 시험의 `test_info`는 이제 모델의 로컬 경로를
+플랫폼의 경로 구분자로 비교합니다. 기여자의 Windows 실행에서 이 시험이 실패했습니다.
 
 ## 저장소 구성
 

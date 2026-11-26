@@ -3,8 +3,9 @@
 // - /mobile-bench: redirect to the trailing-slash URL so the page's relative paths resolve (query kept);
 // - /mobile-bench/models/*: model files; while the Worker secret BENCH_KEY is set, only with that share code (?k=);
 // - /api/bench: phone-bench results from the page, stored in D1. No IP or other request metadata is stored.
-// - /api/demo: the demo's speed numbers (model size, engine, ms, tokens, coarse device class, sample or own text; never the
-//   text), one Analytics Engine data point per run or model load, plus the country Cloudflare reports. No IP is stored.
+// - /api/demo: the demo's speed numbers (model size, engine, ms, tokens, where the model came from, coarse device class, sample
+//   or own text; never the text) and which marked links or buttons were used, one Analytics Engine data point per run, model
+//   load or click, plus the country Cloudflare reports and whether the browser is marked as the team's. No IP is stored.
 
 interface Env {
   ASSETS: Fetcher;
@@ -44,11 +45,14 @@ async function saveRun(request: Request, env: Env) {
   return json(200, { ok: true });
 }
 
-// Analytics Engine row: blob1 kind (run|load), blob2 size, blob3 engine, blob4 src (sample|own|-), blob5 os, blob6 browser,
-// blob7 mobile (1|0), blob8 lang, blob9 SDK version, blob10 session, blob11 country; double1 ms, double2 tokens,
-// double3 cores, double4 device memory GB; index1 session. Read with the SQL API (dataset pii_demo_runs).
+// Analytics Engine row: blob1 kind (run|load|click), blob2 size, blob3 engine, blob4 src (sample|own|-), blob5 os, blob6 browser,
+// blob7 mobile (1|0), blob8 lang, blob9 SDK version, blob10 session, blob11 country, blob12 team (1|0), blob13 model source of a
+// load (site|hf|-), blob14 click target (data-t name, e.g. star-top, install:js; - otherwise); double1 ms, double2 tokens,
+// double3 cores, double4 device memory GB; index1 session. Read with the SQL API (dataset pii_demo_runs). Rows before
+// 2026-11-18 have no blob12-14.
 const MAX_DEMO_EVENTS = 100;
 const pick = (v: unknown, ok: readonly string[]) => (typeof v === "string" && ok.includes(v) ? v : "-");
+const target = (v: unknown) => (typeof v === "string" && /^[a-z0-9:-]{1,32}$/.test(v) ? v : "-");
 const num = (v: unknown, max: number) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(v, max) : 0);
 
 async function saveDemo(request: Request, env: Env) {
@@ -73,11 +77,12 @@ async function saveDemo(request: Request, env: Env) {
     typeof b.v === "string" ? b.v.slice(0, 20) : "-",
     session,
     String((request as any).cf?.country ?? "-").slice(0, 2),
+    b.team === true ? "1" : "0",
   ];
   for (const e of b.events.slice(0, MAX_DEMO_EVENTS)) {
     env.DEMO.writeDataPoint({
-      blobs: [pick(e.kind, ["run", "load"]), pick(e.size, ["nano", "small", "medium", "large"]), pick(e.engine, ["builtin", "onnxruntime"]),
-        pick(e.src, ["sample", "own"]), ...common],
+      blobs: [pick(e.kind, ["run", "load", "click"]), pick(e.size, ["nano", "small", "medium", "large"]), pick(e.engine, ["builtin", "onnxruntime"]),
+        pick(e.src, ["sample", "own"]), ...common, pick(e.from, ["site", "hf"]), target(e.target)],
       doubles: [num(e.ms, 600_000), num(e.tokens, 100_000), num(d.cores, 256), num(d.memory, 64)],
       indexes: [session],
     });

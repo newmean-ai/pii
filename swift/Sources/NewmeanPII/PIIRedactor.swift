@@ -26,9 +26,10 @@ public final class PIIRedactor: @unchecked Sendable {
                     model: .model(size, variant), tokenizer: .tokenizer(size), build: Self.buildInfo,
                     lists: PIIListsInfo(allow: lists.allowCount, block: lists.blockCount, id: listsId))
   }
-  /// Kernel build of the C core ("neon", "sse", ...).
+  /// Matrix kernel the C core runs ("neon+fma" on arm64; "avx2" or "sse" on x86-64, chosen once per process, "avx2+fma"
+  /// with NEWMEAN_PII_KERNEL=avx2+fma).
   public static var buildInfo: String { String(cString: pii_build_info()) }
-  /// Version of this package and its C core ("1.6.1").
+  /// Version of this package and its C core ("1.7.2").
   public static var packageVersion: String { String(cString: pii_version()) }
 
   private let model: OpaquePointer

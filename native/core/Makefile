@@ -1,9 +1,13 @@
 # Plain build of the core: static and shared library, the test CLI, and a sanitizer build of the CLI.
 #   make            build/libpii.a, build/libpii.{so,dylib}, build/pii_cli
 #   make FMA=1      the same with fused multiply-add in the matrix kernel (like the relaxed-SIMD wasm build; x86-64 needs FMA3;
-#                   arm64 has it by default)
-#   make NOFMA=1    arm64: the plain kernel (bit-identical to the baseline wasm build); B=<dir> picks the build folder
+#                   arm64 has it by default); on x86-64 the 8-wide kernel is then "avx2+fma" where the CPU has AVX2 and FMA3
+#   make NOFMA=1    the plain kernel (bit-identical to the baseline wasm build) on arm64, and no fused kernel on x86-64;
+#                   B=<dir> picks the build folder
+#   x86-64 (GCC, Clang): the matrix kernel is chosen at run time ("avx2" where the CPU has AVX2, else "sse";
+#                   NEWMEAN_PII_KERNEL=avx2+fma opts in to the fused one); CFLAGS=-DPII_NO_AVX2 builds the 4-wide kernel only
 #   make asan       build/asan/pii_cli (AddressSanitizer + UndefinedBehaviorSanitizer)
+#   make tsan       build/tsan/pii_cli (ThreadSanitizer; run "pii_cli race" for the first callers of the kernel choice)
 #   make test       python3 tests/run_tests.py (fixture parity; skips without fixtures)
 # -ffp-contract=off keeps every other multiply and add separate, as in the WebAssembly engine; required for identical results.
 # -fno-math-errno: sqrt compiles to one instruction without a libm call (no -lm needed; results unchanged).
@@ -46,10 +50,15 @@ $(B)/asan/pii_cli: tests/pii_cli.c $(SRC) $(HDR)
 	$(CC) $(BASE) -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=undefined $(CFLAGS) \
 	  $(CLI_DEFS) tests/pii_cli.c $(SRC) -lpthread -o $@
 
+tsan: $(B)/tsan/pii_cli
+$(B)/tsan/pii_cli: tests/pii_cli.c $(SRC) $(HDR)
+	@mkdir -p $(B)/tsan
+	$(CC) $(BASE) -O1 -g -fno-omit-frame-pointer -fsanitize=thread $(CFLAGS) $(CLI_DEFS) tests/pii_cli.c $(SRC) -lpthread -o $@
+
 test: all asan
 	python3 tests/run_tests.py
 
 clean:
 	rm -rf $(B)
 
-.PHONY: all asan test clean
+.PHONY: all asan tsan test clean

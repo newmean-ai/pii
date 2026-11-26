@@ -1,0 +1,803 @@
+{
+ "version": 1,
+ "held": [
+  {
+   "label": "PERSON",
+   "value": "Kim Minsu"
+  },
+  {
+   "label": "EMAIL",
+   "value": "kim@example.com"
+  },
+  {
+   "label": "PHONE",
+   "value": "821023456789"
+  },
+  {
+   "label": "DATE_OF_BIRTH",
+   "value": "1990-01-02"
+  }
+ ],
+ "identifiers": [
+  "type",
+  "role",
+  "id",
+  "name",
+  "index",
+  "toolCallId",
+  "toolName",
+  "approvalId",
+  "tool_call_id",
+  "tool_use_id",
+  "call_id",
+  "mediaType",
+  "mimeType",
+  "mime_type",
+  "media_type",
+  "url",
+  "originalUrl",
+  "image_url",
+  "file_id",
+  "fileId",
+  "reference",
+  "signature",
+  "encrypted_content",
+  "providerMetadata",
+  "response_metadata",
+  "usage_metadata",
+  "thoughtSignature",
+  "thought_signature",
+  "redactedData",
+  "redacted_data",
+  "reasoningEncryptedContent",
+  "encryptedContent",
+  "previousResponseId",
+  "previous_response_id",
+  "itemId",
+  "item_id",
+  "conversationId",
+  "conversation_id",
+  "containerId",
+  "container_id",
+  "fileIds",
+  "file_ids",
+  "serverLabel",
+  "server_label",
+  "model",
+  "toolChoice",
+  "tool_choice",
+  "providerOptions"
+ ],
+ "frame_fields": [
+  "input",
+  "args",
+  "arguments",
+  "output",
+  "content",
+  "source",
+  "function",
+  "function_call",
+  "tool_calls",
+  "invalid_tool_calls",
+  "data",
+  "json",
+  "value",
+  "citations",
+  "annotations",
+  "extras",
+  "additional_kwargs"
+ ],
+ "readings": [
+  {
+   "id": "fold-percent@url",
+   "note": "a full-width percent sign before 40 (the earlier fixture of A4)",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim\uff0540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim\uff0540example.com"
+  },
+  {
+   "id": "fold-percent@sentence",
+   "note": "a full-width percent sign before 40 (the earlier fixture of A4)",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim\uff0540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim\uff0540example.com"
+  },
+  {
+   "id": "fold-percent@alone",
+   "note": "a full-width percent sign before 40 (the earlier fixture of A4)",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim\uff0540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim\uff0540example.com"
+  },
+  {
+   "id": "a4-percent-fold-percent@url",
+   "note": "24th outside review A4: the full-width percent sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%EF%BC%8540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%EF%BC%8540example.com"
+  },
+  {
+   "id": "a4-percent-fold-percent@sentence",
+   "note": "24th outside review A4: the full-width percent sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%EF%BC%8540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%EF%BC%8540example.com"
+  },
+  {
+   "id": "a4-percent-fold-percent@alone",
+   "note": "24th outside review A4: the full-width percent sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%EF%BC%8540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%EF%BC%8540example.com"
+  },
+  {
+   "id": "percent-fold@url",
+   "note": "a full-width at sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%EF%BC%A0example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-fold@sentence",
+   "note": "a full-width at sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%EF%BC%A0example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-fold@alone",
+   "note": "a full-width at sign percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%EF%BC%A0example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-percent-fold@url",
+   "note": "a full-width at sign percent-encoded twice",
+   "steps": [
+    "percent",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%25EF%25BC%25A0example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%25EF%25BC%25A0example.com"
+  },
+  {
+   "id": "percent-percent-fold@sentence",
+   "note": "a full-width at sign percent-encoded twice",
+   "steps": [
+    "percent",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%25EF%25BC%25A0example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%25EF%25BC%25A0example.com"
+  },
+  {
+   "id": "percent-percent-fold@alone",
+   "note": "a full-width at sign percent-encoded twice",
+   "steps": [
+    "percent",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%25EF%25BC%25A0example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%25EF%25BC%25A0example.com"
+  },
+  {
+   "id": "percent-percent-fold-percent@url",
+   "note": "A4 percent-encoded once more",
+   "steps": [
+    "percent",
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%25EF%25BC%258540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%25EF%25BC%258540example.com"
+  },
+  {
+   "id": "percent-percent-fold-percent@sentence",
+   "note": "A4 percent-encoded once more",
+   "steps": [
+    "percent",
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "sentence",
+   "text": "Write to kim%25EF%25BC%258540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%25EF%25BC%258540example.com"
+  },
+  {
+   "id": "percent-percent-fold-percent@alone",
+   "note": "A4 percent-encoded once more",
+   "steps": [
+    "percent",
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "alone",
+   "text": "kim%25EF%25BC%258540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%25EF%25BC%258540example.com"
+  },
+  {
+   "id": "unicode-fold@url",
+   "note": "a full-width at sign as a backslash-u escape",
+   "steps": [
+    "unicode",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim\\uff20example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim\\uff20example.com"
+  },
+  {
+   "id": "unicode-fold@sentence",
+   "note": "a full-width at sign as a backslash-u escape",
+   "steps": [
+    "unicode",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim\\uff20example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim\\uff20example.com"
+  },
+  {
+   "id": "unicode-fold@alone",
+   "note": "a full-width at sign as a backslash-u escape",
+   "steps": [
+    "unicode",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim\\uff20example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim\\uff20example.com"
+  },
+  {
+   "id": "unicode-fold-percent@url",
+   "note": "a full-width percent sign as a backslash-u escape before 40",
+   "steps": [
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim\\uff0540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim\\uff0540example.com"
+  },
+  {
+   "id": "unicode-fold-percent@sentence",
+   "note": "a full-width percent sign as a backslash-u escape before 40",
+   "steps": [
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim\\uff0540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim\\uff0540example.com"
+  },
+  {
+   "id": "unicode-fold-percent@alone",
+   "note": "a full-width percent sign as a backslash-u escape before 40",
+   "steps": [
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim\\uff0540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim\\uff0540example.com"
+  },
+  {
+   "id": "percent-unicode-fold-percent@url",
+   "note": "the backslash of that escape percent-encoded",
+   "steps": [
+    "percent",
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%5Cuff0540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%5Cuff0540example.com"
+  },
+  {
+   "id": "percent-unicode-fold-percent@sentence",
+   "note": "the backslash of that escape percent-encoded",
+   "steps": [
+    "percent",
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "sentence",
+   "text": "Write to kim%5Cuff0540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%5Cuff0540example.com"
+  },
+  {
+   "id": "percent-unicode-fold-percent@alone",
+   "note": "the backslash of that escape percent-encoded",
+   "steps": [
+    "percent",
+    "unicode",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 3,
+   "guaranteed": false,
+   "layout": "alone",
+   "text": "kim%5Cuff0540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%5Cuff0540example.com"
+  },
+  {
+   "id": "pyrepr-fold-percent@url",
+   "note": "a Python bytes repr of the full-width percent sign before 40",
+   "steps": [
+    "pyrepr",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=b'kim\\xef\\xbc\\x8540example.com'&ok=1",
+   "expect": "https://crm.test/u?mail=b'[EMAIL_1]'&ok=1",
+   "source": "kim\\xef\\xbc\\x8540example.com"
+  },
+  {
+   "id": "pyrepr-fold-percent@sentence",
+   "note": "a Python bytes repr of the full-width percent sign before 40",
+   "steps": [
+    "pyrepr",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to b'kim\\xef\\xbc\\x8540example.com' today.",
+   "expect": "Write to b'[EMAIL_1]' today.",
+   "source": "kim\\xef\\xbc\\x8540example.com"
+  },
+  {
+   "id": "pyrepr-fold-percent@alone",
+   "note": "a Python bytes repr of the full-width percent sign before 40",
+   "steps": [
+    "pyrepr",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "b'kim\\xef\\xbc\\x8540example.com'",
+   "expect": "b'[EMAIL_1]'",
+   "source": "kim\\xef\\xbc\\x8540example.com"
+  },
+  {
+   "id": "percent-fold-letters@url",
+   "note": "a full-width letter and at sign, each percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=%EF%BD%8Bim%EF%BC%A0example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "%EF%BD%8Bim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-fold-letters@sentence",
+   "note": "a full-width letter and at sign, each percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to %EF%BD%8Bim%EF%BC%A0example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "%EF%BD%8Bim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-fold-letters@alone",
+   "note": "a full-width letter and at sign, each percent-encoded",
+   "steps": [
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "%EF%BD%8Bim%EF%BC%A0example.com",
+   "expect": "[EMAIL_1]",
+   "source": "%EF%BD%8Bim%EF%BC%A0example.com"
+  },
+  {
+   "id": "percent-fold-percent-digits@url",
+   "note": "a full-width percent sign and full-width digits, percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%EF%BC%85%EF%BC%94%EF%BC%90example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%EF%BC%85%EF%BC%94%EF%BC%90example.com"
+  },
+  {
+   "id": "percent-fold-percent-digits@sentence",
+   "note": "a full-width percent sign and full-width digits, percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%EF%BC%85%EF%BC%94%EF%BC%90example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%EF%BC%85%EF%BC%94%EF%BC%90example.com"
+  },
+  {
+   "id": "percent-fold-percent-digits@alone",
+   "note": "a full-width percent sign and full-width digits, percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%EF%BC%85%EF%BC%94%EF%BC%90example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%EF%BC%85%EF%BC%94%EF%BC%90example.com"
+  },
+  {
+   "id": "fold-percent-all@url",
+   "note": "the whole address in full width with a full-width percent escape",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=\uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "\uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d"
+  },
+  {
+   "id": "fold-percent-all@sentence",
+   "note": "the whole address in full width with a full-width percent escape",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to \uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "\uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d"
+  },
+  {
+   "id": "fold-percent-all@alone",
+   "note": "the whole address in full width with a full-width percent escape",
+   "steps": [
+    "fold",
+    "percent"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "\uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d",
+   "expect": "[EMAIL_1]",
+   "source": "\uff4b\uff49\uff4d\uff05\uff14\uff10\uff45\uff58\uff41\uff4d\uff50\uff4c\uff45\uff0e\uff43\uff4f\uff4d"
+  },
+  {
+   "id": "percent-percent@url",
+   "note": "control: percent-encoded twice, no width",
+   "steps": [
+    "percent",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%2540example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%2540example.com"
+  },
+  {
+   "id": "percent-percent@sentence",
+   "note": "control: percent-encoded twice, no width",
+   "steps": [
+    "percent",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%2540example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%2540example.com"
+  },
+  {
+   "id": "percent-percent@alone",
+   "note": "control: percent-encoded twice, no width",
+   "steps": [
+    "percent",
+    "percent"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%2540example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%2540example.com"
+  },
+  {
+   "id": "fold-percent-fold@url",
+   "note": "full-width percent signs that encode a full-width at sign",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim\uff05EF\uff05BC\uff05A0example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim\uff05EF\uff05BC\uff05A0example.com"
+  },
+  {
+   "id": "fold-percent-fold@sentence",
+   "note": "full-width percent signs that encode a full-width at sign",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim\uff05EF\uff05BC\uff05A0example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim\uff05EF\uff05BC\uff05A0example.com"
+  },
+  {
+   "id": "fold-percent-fold@alone",
+   "note": "full-width percent signs that encode a full-width at sign",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim\uff05EF\uff05BC\uff05A0example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim\uff05EF\uff05BC\uff05A0example.com"
+  },
+  {
+   "id": "fold-all-percent-fold@url",
+   "note": "the same escape written wholly in full width",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com"
+  },
+  {
+   "id": "fold-all-percent-fold@sentence",
+   "note": "the same escape written wholly in full width",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com"
+  },
+  {
+   "id": "fold-all-percent-fold@alone",
+   "note": "the same escape written wholly in full width",
+   "steps": [
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 1,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim\uff05\uff25\uff26\uff05\uff22\uff23\uff05\uff21\uff10example.com"
+  },
+  {
+   "id": "percent-fold-percent-fold@url",
+   "note": "those full-width percent signs percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "url",
+   "text": "https://crm.test/u?mail=kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com&ok=1",
+   "expect": "https://crm.test/u?mail=[EMAIL_1]&ok=1",
+   "source": "kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com"
+  },
+  {
+   "id": "percent-fold-percent-fold@sentence",
+   "note": "those full-width percent signs percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "sentence",
+   "text": "Write to kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com today.",
+   "expect": "Write to [EMAIL_1] today.",
+   "source": "kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com"
+  },
+  {
+   "id": "percent-fold-percent-fold@alone",
+   "note": "those full-width percent signs percent-encoded",
+   "steps": [
+    "percent",
+    "fold",
+    "percent",
+    "fold"
+   ],
+   "decode_steps": 2,
+   "guaranteed": true,
+   "layout": "alone",
+   "text": "kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com",
+   "expect": "[EMAIL_1]",
+   "source": "kim%EF%BC%85EF%EF%BC%85BC%EF%BC%85A0example.com"
+  }
+ ]
+}

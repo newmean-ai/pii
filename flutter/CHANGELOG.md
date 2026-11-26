@@ -1,3 +1,36 @@
+## 1.7.2
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.6.1. The first published release with `PiiVault`: 1.7.0 (below) and
+  1.7.1 were prepared but not published, so their changes come with 1.7.2.
+- `PiiVault` finds a known value again in more spellings: in capitals (`JOSÉ` for `José`); an e-mail address, a user
+  name, a URL's scheme and host and a value of two or more words in any ASCII case (a one-word value in another case is
+  another word); with full-width ASCII and U+3000 read as ASCII; with Hangul written as conjoining jamo (NFD) read as
+  syllables. Two Hangul syllables (`이준`) are found at word edges, and Tai Tham, Balinese, Javanese, kana from
+  U+1B000 and Han Extension J are scripts written without spaces. A value found this way keeps the known value's
+  placeholder. An exponent joins only a number (an address after `4E+` is found). `withVaultSpans` takes one pass over
+  the hits and the spans.
+- `redactVault` and `applyVaultRedaction` learn what the model marks without the white space, punctuation, brackets and
+  quotation marks at its edges that are not part of the value (`Kim Minsu.` and `"Kim Minsu"` are learned as
+  `Kim Minsu`, and those characters stay in the text), so the value is found again where it stands without them. A
+  SECRET loses only its white space.
+- The vault core, its placeholders and the shared test cases (`python/tests/vault_cases.json`) are the npm and Python
+  packages'. The other spellings their middlewares read (escapes, URL forms, numbers written another way, other white
+  space, dates) are not read here.
+- x86-64 (Linux and macOS desktop, Android x86_64): the native core chooses its matrix kernel once per process, `avx2`
+  where the CPU has AVX2, else `sse`; both give the same logits bit for bit, so results do not change.
+  `NEWMEAN_PII_KERNEL=avx2+fma` in the environment opts in to fused multiply-add (results equal to arm64). Windows builds
+  keep `scalar`. `nativeBuildInfo` names the kernel that runs.
+
+## 1.7.0
+
+- Models `newmean-pii-<size>` v1.1.0, as in 1.6.1; default results unchanged.
+- `PiiVault`: numbered placeholders that can be undone ("[PERSON_1]"), with `NewmeanPii.redactVault` /
+  `redactVaultSync`, `restore`, a streaming `restorer`, `bindings` snapshots, `entries` to keep a vault, and spans with
+  source "vault" for known values found again. The vault core and the shared test cases are the npm and Python
+  packages' (see 1.7.2).
+  `redactVault` throws `StateError` if the vault is cleared while the model reads the text. An empty value has no
+  placeholder. A value found in a text is masked wherever it occurs again in that text (`redactWithVault`).
+
 ## 1.6.1
 
 - Models `newmean-pii-<size>` v1.1.0, as in 1.6.0.

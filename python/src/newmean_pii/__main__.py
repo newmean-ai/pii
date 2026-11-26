@@ -3,7 +3,7 @@
 import argparse
 import sys
 
-from . import DEFAULT_SIZE, SIZES, VARIANTS, create_redactor, fetch_model
+from . import DEFAULT_SIZE, SIZES, VARIANTS, ModelFileError, create_redactor, fetch_model
 from ._redactor import _check_sensitivity
 
 
@@ -22,7 +22,12 @@ def main(argv=None) -> int:
     r.add_argument("--regex", action="store_true")
     args = p.parse_args(argv)
     if args.cmd == "download":
-        print(fetch_model(args.size, args.variant, cache_dir=args.cache_dir))
+        try:
+            folder = fetch_model(args.size, args.variant, cache_dir=args.cache_dir)
+        except ModelFileError as e:  # failed download, or a cache file that could not be written: no folder to print
+            print(f"{p.prog} download: error: {e}", file=sys.stderr)
+            return 1
+        print(folder)
         return 0
     try:  # argparse's float accepts "nan" and "inf": a usage error (exit 2) before any model file is loaded
         _check_sensitivity(args.sensitivity)

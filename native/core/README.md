@@ -122,8 +122,10 @@ pii_model_free(m);
   those spans: fewer misses on name, contact and ID columns, more PII-free cells masked, one more model call per such cell.
 - **Threads**: a `pii_model` and a `pii_lists` are immutable after creation. Any number of threads may call `pii_detect` /
   `pii_detect_table` / `pii_tokenize` on one model (and one lists handle) at once; each call allocates its own scratch memory (about 4.5 MB for a full 256-token window, less for short texts).
+  The first call that needs the matrix kernel, including `pii_build_info()`, fixes the kernel for the process (x86-64,
+  see [Kernel](#build)).
 - `pii_tokenize` returns token ids and offsets (without `<s>` and `</s>`); `pii_model_get_info` the model shape;
-  `pii_build_info` the kernel build.
+  `pii_build_info` the matrix kernel the process runs.
 
 Left to each language (small and idiomatic there): the regex layer (`js/src/regex.ts`, off by default as in npm) and the
 redaction modes of `applyRedaction` (`tag` → `[FAMILY]` with `PERSON_L2` → `PERSON` and `URL_L2` → `URL`; `mask` → one
@@ -133,9 +135,11 @@ mask character per code point; `blank`).
 
 ```bash
 make                 # build/libpii.a, build/libpii.{dylib,so}, build/pii_cli
-make FMA=1           # x86-64: fused multiply-add kernel (see below; arm64 has it by default)
-make NOFMA=1         # arm64: the plain kernel
+make FMA=1           # fused multiply-add kernels by default (x86-64: needs FMA3, adds -mfma; arm64 has them by default)
+make NOFMA=1         # no fused kernel (arm64: the plain kernel)
+make CFLAGS=-DPII_NO_AVX2   # x86-64: the 4-wide kernel only
 make asan            # build/asan/pii_cli with AddressSanitizer + UndefinedBehaviorSanitizer
+make tsan            # build/tsan/pii_cli with ThreadSanitizer (pii_cli race: 16 first callers of the kernel choice)
 
 cmake -S native/core -B build && cmake --build build      # targets newmean::pii (static), newmean::pii_shared
 #   -DPII_FMA=ON  -DPII_NO_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
@@ -146,12 +150,24 @@ NEON on arm64 and SSE on x86-64; other compilers (MSVC) get a scalar path with t
 (`-DPII_SCALAR` forces it). `-ffp-contract=off` (MSVC: `/fp:precise`) is part of the build: it keeps every multiply and
 add separate, as in the WebAssembly engine. Little-endian targets only (the model files are little-endian).
 
-**Kernel.** On arm64 the matrix kernel fuses multiply and add (NEON always has it) and works on 16 output columns at a
-time (`pii_build_info()`: `neon+fma`), like the npm package's relaxed-SIMD build, which Chrome, Edge and Firefox run;
-since 1.5.0 this is the default there, about 1.5× as fast as the plain kernel on Apple M5. Elsewhere the kernel multiplies and adds separately, so
-logits are bit-identical on every such CPU and equal to the npm package's baseline (SIMD128) WebAssembly build;
-`PII_NO_FMA` gives that kernel on arm64 too, and `PII_FMA` the fused one on x86-64 with FMA3 (`-mfma`). Logits of the two
-kernels differ in the last bits; spans were identical on every fixture row checked.
+**Kernel.** `pii_build_info()` names the matrix kernel the process runs. Every kernel without `+fma` multiplies and adds
+separately, so their logits are bit-identical to each other on every CPU and equal to the npm package's baseline
+(SIMD128) WebAssembly build; the `+fma` kernels fuse multiply and add and give each other's logits, equal to the
+relaxed-SIMD build where that build fuses (Chrome on arm64, for example). Logits of the two kinds differ in the last bits;
+spans were identical on every fixture row checked.
+
+- arm64: `neon+fma`, 16 output columns at a time, the default since 1.5.0 (about 1.5× as fast as the plain kernel on
+  Apple M5); `neon` in a `PII_NO_FMA` build.
+- x86-64 with GCC or Clang (since 1.7.2; `sse` before): chosen once per process, by the first call that needs it (a
+  model run or `pii_build_info()`), from CPUID leaves 1 and 7 and, only when OSXSAVE is set, XGETBV (a leaf above the
+  highest one counts as zeros): `avx2` (8 columns per vector) where the CPU has AVX and AVX2 and the operating system saves the XMM and
+  YMM registers, else `sse` (4 columns). `NEWMEAN_PII_KERNEL` in the environment, set before that first call, picks
+  another: `avx2+fma` (also needs FMA3), `avx2` or `sse`; an unknown name, or a kernel the CPU or the build lacks, keeps
+  the default, and changing it later has no effect. A `PII_FMA` build (`-mfma`) makes the fused kernels the default
+  (`avx2+fma`, else `sse+fma`, which `NEWMEAN_PII_KERNEL=sse+fma` also picks); a `PII_NO_FMA` build has no fused kernel;
+  `-DPII_NO_AVX2` compiles the 4-wide kernel only. AVX2 and FMA instructions appear only in the 8-wide kernels, which carry
+  a target attribute, so a build for baseline x86-64 runs on any x86-64 CPU.
+- MSVC (Windows): `scalar`. Other compilers and targets: `vector` or `scalar`.
 
 ## Tests
 
@@ -166,7 +182,7 @@ they are absent. `PII_SIZES=nano,medium` limits the sizes. `fuzz` runs only when
 | Test | Checks | Target |
 |---|---|---|
 | pins | model files match the pinned size and SHA-256 | all |
-| selftest | `combine` cases of `js/test/combine.test.ts`; arguments, label filter, `extra` spans in UTF-16 units, invalid UTF-8, long texts; truncated and mutated model and tokenizer files fail cleanly | all |
+| selftest | `combine` cases of `js/test/combine.test.ts`; arguments, label filter, `extra` spans in UTF-16 units, invalid UTF-8, long texts; truncated and mutated model and tokenizer files fail cleanly; the x86-64 kernel choice on named CPUs and CPUID edge cases | all |
 | tokenizer | ids and offsets vs the npm package's `Tokenizer` (node + `js/dist`) and vs Hugging Face `tokenizers` on `tokenize.jsonl` (3,273 rows) | npm: 100%; Hugging Face: ids 100%, offsets all but 3 rows at most (as the npm test) |
 | offsets | UTF-8, code point and UTF-16 offsets vs Python on hard texts: emoji and ZWJ sequences, flags, combining marks, CJK, RTL and bidi controls, zero-width characters, CRLF, NUL, lone surrogates, invalid UTF-8, empty and blank input, special-token strings, 10,000+ tokens; spans sorted and inside the text | all |
 | predict | spans vs the Python evaluator for every run of `js/test/predict.test.ts` (412 rows each) | ≥ 99% of rows, as the npm test |
@@ -191,6 +207,7 @@ Results on Apple M5 Pro (macOS, Apple clang 21, default build), 2026-10-31:
 | fuzz (ASan + UBSan) | nano q4 and q4e: 800 mutated model files and 550 tokenizer files, each loads or fails with a message; 1,800 random byte strings, spans and tokens inside the input; no reports. No leaks (`leaks --atExit`, 900 more mutated files) |
 | logits | 13 windows × nano q4, medium q4e, large q4 (30,294 logits each): default build bit-identical to the wasm SIMD128 build, `FMA=1` bit-identical to the wasm relaxed-SIMD build (Node, arm64) |
 | other builds | GCC 16 (NEON and `-DPII_SCALAR`) give byte-identical output to Apple clang on all 412 nano q4 rows; x86-64 (`-target x86_64-apple-macos12`, with and without `-mfma -DPII_FMA`) compiles without warnings, not run |
+| x86-64 kernels (2026-11-25) | compiled, not run here: Apple clang 21, LLVM 23 and GCC 16 with `-Werror` in every flag set; AVX2 and FMA instructions only in the 8-wide kernels, no fused multiply-add in `avx2`. Run on x86-64 GitHub Actions runners by the kernel gates of `python-wheels.yml`: logits digests equal to those of the code before the change, `avx2` about 1.8 to 2.3 times as fast as `sse` |
 
 Rows that differ from the Python evaluator differ in the npm package as well: there the evaluator reports two
 overlapping spans with different labels (for example `20-21:ADDRESS 20-22:ORG`), and `detect()` merges overlapping spans

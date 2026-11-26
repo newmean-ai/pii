@@ -1373,3 +1373,54 @@ int pii_tokenize(const pii_model *m, const char *utf8, size_t len, pii_token **o
 }
 
 void pii_tokens_free(pii_token *tokens) { free(tokens); }
+
+// internal.h. The windows of model_spans, each run as model_spans runs it.
+int pii_model_logits(const pii_model *m, const char *utf8, size_t len, float **out, size_t *n_out) {
+  if (!m || !out || !n_out || (!utf8 && len) || len > (size_t)INT32_MAX) return PII_ERR_ARG;
+  *out = NULL;
+  *n_out = 0;
+  pii_text tx;
+  if (pii_text_init(&tx, utf8 ? utf8 : "", len)) return PII_ERR_NOMEM;
+  tok_list tk;
+  int rc = tokenize(m, &tx, &tk);
+  const size_t n = tk.ids.n, win = PII_WINDOW - 2;
+  int32_t *wids = NULL;
+  pii_vec res;
+  pii_vec_init(&res, sizeof(float));
+  pii_ws ws = {0};
+  if (rc || !n) goto done;
+  wids = malloc((win + 2) * sizeof *wids);
+  if (!wids || pii_ws_init(&ws, &m->eng, (int)((n < win ? n : win) + 2))) {
+    rc = PII_ERR_NOMEM;
+    goto done;
+  }
+  const size_t limit = n > PII_STRIDE + 1 ? n - PII_STRIDE : 1;
+  for (size_t s = 0; s == 0 || (n > win && s < limit); s += win - PII_STRIDE) {  // the windows of model_spans
+    const size_t wn = n - s < win ? n - s : win, rows = (wn + 2) * N_TAGS;
+    wids[0] = pii_tok_bos(m->tok);
+    memcpy(wids + 1, (const int32_t *)tk.ids.p + s, wn * sizeof *wids);
+    wids[wn + 1] = pii_tok_eos(m->tok);
+    const float *lg = pii_engine_run(&m->eng, &ws, wids, (int)wn + 2);
+    if (!lg) {
+      rc = PII_ERR_MODEL;
+      goto done;
+    }
+    if (pii_vec_reserve(&res, res.n + rows)) {
+      rc = PII_ERR_NOMEM;
+      goto done;
+    }
+    memcpy((float *)res.p + res.n, lg, rows * sizeof(float));
+    res.n += rows;
+    if (n <= win) break;
+  }
+  *out = res.p;
+  *n_out = res.n;
+  res.p = NULL;
+done:
+  pii_vec_free(&res);
+  pii_ws_free(&ws);
+  free(wids);
+  tok_list_free(&tk);
+  pii_text_free(&tx);
+  return rc;
+}

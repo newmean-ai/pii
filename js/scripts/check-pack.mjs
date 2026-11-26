@@ -1,4 +1,4 @@
-// Runs before `npm publish` (prepublishOnly, after the build): refuses to publish a package without its built files.
+// Runs before `npm pack` and `npm publish` (prepack, after the build): refuses to pack a package without its built files.
 // 1.6.1 was published from a folder that had never been built and held only the README and licence files.
 import { existsSync, readFileSync } from "node:fs";
 

@@ -16,9 +16,14 @@
 //     {"error": ["allow" | "block", index, "reason"]} for that line.
 //   pii_cli lists                                         pii_lists_create only: {"counts": [allow, block]} or the error
 //   pii_cli threads MODEL.onnx TOKENIZER.json N [SENS]    every text in N threads at once; "ok" when all equal one thread
-//   pii_cli bench MODEL.onnx TOKENIZER.json               ms per text (all inputs, inputs of <= 64 tokens, a 1,000-token text)
+//   pii_cli bench MODEL.onnx TOKENIZER.json               ms per text (all inputs, inputs of <= 64 tokens, a 1,000-token text:
+//                                                         best and median of five)
+//   pii_cli logits MODEL.onnx TOKENIZER.json              SHA-256 of each text's logits over every window, then of them all
+//                                                         (compares matrix kernels bit for bit; see cmd_logits)
+//   pii_cli race [MODEL.onnx TOKENIZER.json] [N]          N threads (16) make the first call that needs the kernel at once
 //   pii_cli verify FILE SIZE KIND                         checks FILE against the pinned size and SHA-256
-//   pii_cli info                                          {"version": ..., "build": "neon", "fma": false}
+//   pii_cli info                                          {"version": ..., "build": "neon", "fma": false, "kernel_inputs":
+//                                                         [CPUID max leaf, leaf 1 ECX, leaf 7 EBX, XCR0, build bits]}
 //   pii_cli selftest [MODEL.onnx TOKENIZER.json]          API checks (combine as js/test/combine.test.ts, grapheme snapping,
 //                                                         table parsing, clipping, vote and merge, arguments, table mode
 //                                                         with a model, malformed and truncated model files); "ok" or the
@@ -976,6 +981,146 @@ static void selftest_model_table(const pii_model *m) {
   pii_spans_free(s);
 }
 
+#ifndef PII_REFERENCE_BUILD
+// The x86-64 kernel choice (pii_kernel_select, a pure function, so it runs on every platform): named CPUs and the edge
+// cases of CPUID and XGETBV. python/tests/test_kernel_isa.py checks the full truth table through the wheel.
+static void selftest_kernel(void) {
+  enum { OSX = 1u << 27, AVX = 1u << 28, FMA = 1u << 12, AVX2 = 1u << 5, SSE = PII_KERNEL_SSE, V2 = PII_KERNEL_AVX2,
+         V2F = PII_KERNEL_AVX2_FMA, FUSED = PII_KERNEL_BUILD_FUSED, NOFUSED = PII_KERNEL_BUILD_NO_FUSED };
+  const uint64_t ymm = 7;  // XCR0: x87, SSE and AVX state enabled
+  // Nehalem (no AVX), Sandy and Ivy Bridge (AVX, no AVX2), Haswell and later (AVX2 and FMA3)
+  EXPECT(pii_kernel_select(0xb, 0, 0, 0, NULL, 0) == SSE);
+  EXPECT(pii_kernel_select(0xd, OSX | AVX, 0, ymm, NULL, 0) == SSE);
+  EXPECT(pii_kernel_select(0xd, OSX | AVX, 0, ymm, "avx2", 0) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, NULL, 0) == V2);  // plain AVX2 by default
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "avx2+fma", 0) == V2F);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "sse", 0) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, 0xe7, NULL, 0) == V2);  // AVX-512 state too
+  // AVX2 without FMA3 (some virtual machines): the fused kernel is not there
+  EXPECT(pii_kernel_select(0x16, OSX | AVX, AVX2, ymm, "avx2+fma", 0) == V2);
+  // FMA3 and AVX without AVX2 (AMD Piledriver): no 8-wide kernel
+  EXPECT(pii_kernel_select(0xd, OSX | AVX | FMA, 0, ymm, "avx2+fma", 0) == SSE);
+  // missing leaves count as zeros whatever the registers held: leaf 7 above the highest leaf, then leaf 1 too
+  EXPECT(pii_kernel_select(6, OSX | AVX | FMA, AVX2, ymm, "avx2+fma", 0) == SSE);
+  EXPECT(pii_kernel_select(0, OSX | AVX | FMA, AVX2, ymm, "avx2", 0) == SSE);
+  // XGETBV counts only with OSXSAVE; the OS must enable both the XMM and the YMM state; AVX itself must be there
+  EXPECT(pii_kernel_select(0x16, AVX | FMA, AVX2, ymm, NULL, 0) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, 3, NULL, 0) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, 5, NULL, 0) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | FMA, AVX2, ymm, NULL, 0) == SSE);
+  // unknown, empty and differently spelled names leave the default
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "", 0) == V2);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "AVX2+FMA", 0) == V2);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "sse+fma", 0) == V2);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "avx512", 0) == V2);
+  // a PII_FMA build: fused by default ("avx2+fma", else the fused 4-wide "sse+fma"); a PII_NO_FMA build: never fused
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, NULL, FUSED) == V2F);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "sse+fma", FUSED) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "sse", FUSED) == V2F);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "avx2", FUSED) == V2);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX, AVX2, ymm, NULL, FUSED) == SSE);
+  EXPECT(pii_kernel_select(0x16, OSX | AVX | FMA, AVX2, ymm, "avx2+fma", NOFUSED) == V2);
+  // what this process reads: the build bits, -1 where the build has one kernel; build info names a kernel
+  uint32_t ml, ecx, ebx;
+  uint64_t xcr0;
+  const int build = pii_kernel_inputs(&ml, &ecx, &ebx, &xcr0);
+  EXPECT(build == -1 || (build >= 0 && build <= (FUSED | NOFUSED) && build != (FUSED | NOFUSED)));
+  EXPECT(build != -1 || (!ml && !ecx && !ebx && !xcr0));
+  EXPECT((ecx >> 27 & 1) || !xcr0);  // XGETBV only with OSXSAVE
+  if (build >= 0) {
+    static const char *const names[2][4] = {{"", "sse", "avx2", "avx2+fma"}, {"", "sse+fma", "avx2", "avx2+fma"}};
+    EXPECT(!strcmp(pii_build_info(), names[build & FUSED][pii_kernel_select(ml, ecx, ebx, xcr0, getenv("NEWMEAN_PII_KERNEL"), build)]));
+  }
+}
+#endif
+
+// "logits": SHA-256 of each text's logits (float32 as stored, little-endian on every supported CPU) over every window the
+// model runs (pii_model_logits: <s> and </s> included, no padding), and of the per-text digests in order (their hex
+// strings joined). python/tests/test_kernel_isa.py computes the same through the wheel.
+static int cmd_logits(const pii_model *m, const input *texts, size_t nt) {
+  char *all = malloc(nt * 64 + 1), hex[65];
+  if (!all) return 1;
+  all[0] = 0;
+  for (size_t i = 0; i < nt; i++) {
+    float *lg;
+    size_t n;
+    if (pii_model_logits(m, texts[i].s, texts[i].n, &lg, &n)) {
+      free(all);
+      return 1;
+    }
+    pii_sha256_hex(lg ? (const void *)lg : "", n * sizeof(float), hex);
+    printf("{\"floats\": %zu, \"sha256\": \"%s\"}\n", n, hex);
+    memcpy(all + i * 64, hex, 65);
+    free(lg);
+  }
+  pii_sha256_hex(all, nt * 64, hex);
+  printf("{\"build\": \"%s\", \"texts\": %zu, \"sha256\": \"%s\"}\n", pii_build_info(), nt, hex);
+  free(all);
+  return 0;
+}
+
+#ifndef PII_REFERENCE_BUILD
+// "race": N threads (default 16) wait on one flag, then each makes the process's first call that needs the kernel at once,
+// pii_build_info() or (with a model) pii_detect of the first input; every thread must see the same kernel and the same
+// spans as a call made afterwards. Run under ThreadSanitizer (make tsan) where the kernel is chosen at run time.
+typedef struct {
+  const pii_model *m;
+  const input *text;
+  const int *go;
+  const char *build;
+  char *spans;
+  int fail;
+} racer;
+
+static void *race_one(void *arg) {
+  racer *r = arg;
+  while (!__atomic_load_n(r->go, __ATOMIC_ACQUIRE)) {
+  }
+  if (r->m) {
+    pii_span *s;
+    size_t n;
+    if (pii_detect(r->m, r->text->s, r->text->n, NULL, &s, &n)) r->fail = 1;
+    else {
+      r->spans = span_key(s, n);
+      pii_spans_free(s);
+    }
+  }
+  r->build = pii_build_info();
+  return NULL;
+}
+
+static int cmd_race(const pii_model *m, const input *text, int nth) {
+  static int go;
+  racer rs[64];
+  pthread_t th[64];
+  for (int k = 0; k < nth; k++) {
+    rs[k] = (racer){m, text, &go, NULL, NULL, 0};
+    pthread_create(&th[k], NULL, race_one, &rs[k]);
+  }
+  __atomic_store_n(&go, 1, __ATOMIC_RELEASE);
+  for (int k = 0; k < nth; k++) pthread_join(th[k], NULL);
+  const char *build = pii_build_info();
+  char *ref = NULL;
+  if (m) {
+    pii_span *s;
+    size_t n;
+    if (!pii_detect(m, text->s, text->n, NULL, &s, &n)) {
+      ref = span_key(s, n);
+      pii_spans_free(s);
+    }
+  }
+  int diff = 0;
+  for (int k = 0; k < nth; k++) {
+    diff += rs[k].fail || rs[k].build != build || (m && (!ref || !rs[k].spans || strcmp(ref, rs[k].spans)));
+    free(rs[k].spans);
+  }
+  printf("{\"threads\": %d, \"build\": \"%s\", \"model\": %s, \"differences\": %d, \"ok\": %s}\n", nth, build, m ? "true" : "false",
+         diff, diff ? "false" : "true");
+  free(ref);
+  return diff != 0;
+}
+#endif
+
 static void selftest_model(const char *onnx, const char *tok) {
   size_t n1, n2;
   uint8_t *a = read_file(onnx, &n1), *b = read_file(tok, &n2);
@@ -1222,8 +1367,17 @@ int main(int argc, char **argv) {
     return rc == PII_OK ? 0 : 1;
   }
   if (argc >= 2 && !strcmp(argv[1], "info")) {
+#ifndef PII_REFERENCE_BUILD
+    uint32_t ml, ecx, ebx;
+    uint64_t xcr0;
+    const int bits = pii_kernel_inputs(&ml, &ecx, &ebx, &xcr0);
+    printf("{\"version\": \"%s\", \"build\": \"%s\", \"fma\": %s, \"kernel_inputs\": [%u, %u, %u, %llu, %d]}\n", pii_version(),
+           pii_build_info(), strstr(pii_build_info(), "fma") ? "true" : "false", (unsigned)ml, (unsigned)ecx, (unsigned)ebx,
+           (unsigned long long)xcr0, bits);
+#else
     printf("{\"version\": \"%s\", \"build\": \"%s\", \"fma\": %s}\n", pii_version(), pii_build_info(),
            strstr(pii_build_info(), "fma") ? "true" : "false");
+#endif
     return 0;
   }
   if (argc >= 2 && !strcmp(argv[1], "selftest")) {
@@ -1236,10 +1390,26 @@ int main(int argc, char **argv) {
     selftest_table_apply();
     selftest_table_vote();
     selftest_lists();
+#ifndef PII_REFERENCE_BUILD
+    selftest_kernel();
+#endif
     if (argc >= 4) selftest_model(argv[2], argv[3]);
     printf("%s\n", fails ? "failed" : "ok");
     return fails != 0;
   }
+#ifndef PII_REFERENCE_BUILD
+  if (argc >= 2 && !strcmp(argv[1], "race")) {  // race [MODEL.onnx TOKENIZER.json] [N]: before anything else uses the kernel
+    pii_model *m = argc >= 4 ? load(argv[2], argv[3]) : NULL;
+    int nth = argc == 3 ? atoi(argv[2]) : argc >= 5 ? atoi(argv[4]) : 16;
+    if (nth < 1 || nth > 64) nth = 16;
+    input one = {0};
+    one.s = (char *)"Please email Maria Lopez at maria.lopez@example.com or call +1 202 555 0143.";
+    one.n = strlen(one.s);
+    int rc = cmd_race(m, &one, nth);
+    pii_model_free(m);
+    return rc;
+  }
+#endif
   if (argc >= 2 && !strcmp(argv[1], "lists")) {
     size_t nt;
     input *texts = read_texts(&nt);
@@ -1281,7 +1451,7 @@ int main(int argc, char **argv) {
     return rc;
   }
   if (argc < 4) {
-    fprintf(stderr, "usage: pii_cli tokenize|detect|table|apply|threads|bench|verify|selftest|fuzz|info ... (see source)\n");
+    fprintf(stderr, "usage: pii_cli tokenize|detect|table|apply|threads|bench|logits|race|verify|selftest|fuzz|info ... (see source)\n");
     return 2;
   }
   const char *cmd = argv[1];
@@ -1292,7 +1462,9 @@ int main(int argc, char **argv) {
   pii_options_init(&opt);
   int rc = 0;
 
-  if (!strcmp(cmd, "tokenize")) {
+  if (!strcmp(cmd, "logits")) {
+    rc = cmd_logits(m, texts, nt);
+  } else if (!strcmp(cmd, "tokenize")) {
     for (size_t i = 0; i < nt; i++) {
       pii_token *t;
       size_t n;
@@ -1413,7 +1585,7 @@ int main(int argc, char **argv) {
       pii_tokenize(m, big, len, &t, &nlong);
       pii_tokens_free(t);
     }
-    double best = 1e30;
+    double best = 1e30, runs[5];
     for (int r = 0; r < 5; r++) {
       pii_span *s;
       size_t n;
@@ -1421,12 +1593,20 @@ int main(int argc, char **argv) {
       pii_detect(m, big, len, &opt, &s, &n);
       double d = now_ms() - a;
       if (d < best) best = d;
+      runs[r] = d;
       pii_spans_free(s);
     }
+    for (int i = 1; i < 5; i++)  // median of the five runs
+      for (int j = i; j > 0 && runs[j - 1] > runs[j]; j--) {
+        const double t = runs[j];
+        runs[j] = runs[j - 1];
+        runs[j - 1] = t;
+      }
     printf("{\"build\": \"%s\", \"texts\": %zu, \"avg_tokens\": %.1f, \"ms_per_text\": %.2f, \"short_texts\": %zu, "
-           "\"short_avg_tokens\": %.1f, \"ms_per_short_text\": %.2f, \"long_tokens\": %zu, \"ms_long\": %.1f}\n",
+           "\"short_avg_tokens\": %.1f, \"ms_per_short_text\": %.2f, \"long_tokens\": %zu, \"ms_long\": %.1f, "
+           "\"ms_long_median\": %.1f}\n",
            pii_build_info(), nt, nt ? (double)tokens / nt : 0.0, all_ms / reps / (nt ? nt : 1), nshort,
-           nshort ? (double)tshort / nshort : 0.0, short_ms / reps / (nshort ? nshort : 1), nlong, best);
+           nshort ? (double)tshort / nshort : 0.0, short_ms / reps / (nshort ? nshort : 1), nlong, best, runs[2]);
     free(big);
     free(ntok);
   } else {

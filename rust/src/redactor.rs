@@ -63,7 +63,8 @@ pub struct Info {
     /// Where the weights and the tokenizer were read from (`None` when they were passed as bytes).
     pub model_path: Option<PathBuf>,
     pub tokenizer_path: Option<PathBuf>,
-    /// Kernel of the native core: `"neon+fma"`, `"sse"`, `"scalar"`, ...
+    /// Matrix kernel the native core runs: `"neon+fma"` (arm64), `"avx2"` or `"sse"` (x86-64, chosen once per process;
+    /// `"avx2+fma"` with `NEWMEAN_PII_KERNEL=avx2+fma`), `"scalar"` (MSVC), ...
     pub build: String,
     pub hidden: usize,
     pub layers: usize,
@@ -516,6 +517,14 @@ impl Redactor {
     pub fn redact_with<F: FnMut(&Span, &str) -> String>(&self, text: &str, replace: F) -> Result<Redacted> {
         let spans = self.detect(text)?;
         Ok(Redacted { text: apply_redaction_with(text, &spans, replace), spans })
+    }
+
+    /// The text with numbered placeholders that `vault` can undo (`"[PERSON_1]"`, the same value always the same tag), and
+    /// the spans. The vault's known values are also masked where they occur again and the model does not find them
+    /// (spans with [`crate::Source::Vault`]); placeholder-like text left unmasked is escaped (`"［PERSON_1]"`). Since 1.7.2.
+    pub fn redact_vault(&self, text: &str, vault: &mut crate::Vault) -> Result<Redacted> {
+        let (text, spans) = crate::vault::redact_with_vault(text, self.detect(text)?, vault);
+        Ok(Redacted { text, spans })
     }
 
     /// [`Redactor::detect_table`] and redaction. The output is still a valid table.

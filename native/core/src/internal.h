@@ -74,6 +74,19 @@ void pii_ws_free(pii_ws *w);
 // ids[L] (with <s> and </s>) -> logits [L, T] inside w; NULL on error.
 const float *pii_engine_run(const pii_engine *m, pii_ws *w, const int32_t *ids, int L);
 
+// x86-64 matrix kernels (engine.c, "kernel choice"): the 4-wide one ("sse", "sse+fma" in a PII_FMA build), 8-wide
+// multiply then add ("avx2"), 8-wide fused multiply-add ("avx2+fma").
+enum { PII_KERNEL_SSE = 1, PII_KERNEL_AVX2 = 2, PII_KERNEL_AVX2_FMA = 3 };
+#define PII_KERNEL_BUILD_FUSED 1     // a PII_FMA build: the 4-wide kernel fuses and the fused kernels are the default
+#define PII_KERNEL_BUILD_NO_FUSED 2  // a PII_NO_FMA build: no fused 8-wide kernel
+// The kernel for what CPUID and XGETBV report: leaf 0 EAX (the highest leaf), leaf 1 ECX, leaf 7 subleaf 0 EBX and XCR0;
+// request: the value of NEWMEAN_PII_KERNEL or NULL; build: PII_KERNEL_BUILD_* bits. A pure function.
+int pii_kernel_select(uint32_t max_leaf, uint32_t leaf1_ecx, uint32_t leaf7_ebx, uint64_t xcr0, const char *request, int build);
+// What this process passes to pii_kernel_select: the four CPU values (0 for a leaf the CPU lacks, XCR0 0 without
+// OSXSAVE) and, as the result, the build bits; -1 and zeros where the build has a single kernel (not x86-64, MSVC,
+// PII_NO_AVX2).
+int pii_kernel_inputs(uint32_t *max_leaf, uint32_t *leaf1_ecx, uint32_t *leaf7_ebx, uint64_t *xcr0);
+
 // ---------------------------------------------------------------- ONNX -> .piiw (port of onnx-weights.ts)
 int pii_onnx_to_piiw(const uint8_t *model, size_t n, uint8_t **image, size_t *len, char *err, size_t errlen);
 
@@ -193,5 +206,10 @@ int pii_lists_block(const pii_lists *l, const uint32_t *cp, size_t a, size_t b, 
 // PERSON_L2 logits (tags 1-4); same constants as js/src/redactor.ts.
 #define PII_SHORT_TOKENS 8
 #define PII_SHORT_PERSON_BIAS (-3.0)
+
+// Logits of every window the model runs on the text as given (detect's windows, emoji kept), concatenated: per window,
+// 1 + 2 * PII_LABEL_COUNT floats for each of its tokens, <s> and </s> included (no padding exists). *out is malloc'ed
+// (NULL when the text has no tokens); PII_OK or a PII_ERR_* code. For tests that compare kernels bit for bit.
+int pii_model_logits(const pii_model *m, const char *utf8, size_t len, float **out, size_t *n_out);
 
 #endif

@@ -136,6 +136,7 @@ def test_equals_the_legacy_matcher_with_changed_rules(monkeypatch):
             assert regex_spans(text) == legacy_regex_spans(text, rules), (rules, text)
 
 
+@pytest.mark.timing
 def test_long_inputs_take_time_in_proportion_to_their_length():
     """1.6.0 needed about 20 s for the first text on the machine that takes a few ms here."""
     import time

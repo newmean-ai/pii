@@ -61,9 +61,13 @@ def _matches(data: bytes, pin: FilePin) -> bool:
     return len(data) == pin.bytes and hashlib.sha256(data).hexdigest() == pin.sha256
 
 
-def download(url: str, dest: Optional[Path], pin: FilePin, on_progress: Optional[Progress] = None, timeout: float = 60.0) -> bytes:
+def download(
+    url: str, dest: Optional[Path], pin: FilePin, on_progress: Optional[Progress] = None,
+    timeout: float = 60.0, *, require_cache: bool = False,
+) -> bytes:
     """Downloads url and returns its bytes; raises ModelFileError unless they match pin. When dest is given, the file is
-    also written there (atomically); a cache that cannot be written is skipped, as the npm package does."""
+    also written there (atomically). Ordinary loads can keep using verified bytes if the cache is unwritable.
+    Explicit offline preparation requires the write to succeed."""
     req = urllib.request.Request(url, headers={"User-Agent": f"newmean-pii/{_core.VERSION} (python)"})
     h = hashlib.sha256()
     chunks = []
@@ -91,12 +95,23 @@ def download(url: str, dest: Optional[Path], pin: FilePin, on_progress: Optional
             with open(tmp, "wb") as f:
                 f.write(data)
             os.replace(tmp, dest)
-        except OSError:
+        except OSError as e:
             try:
                 tmp.unlink()
             except OSError:
                 pass
+            # another process may have stored the same file meanwhile (on Windows, replacing a file that is open for
+            # reading fails): then the cache holds it, as the Swift and Android packages also accept
+            if require_cache and not _holds(dest, pin):
+                raise ModelFileError(f"cannot write model cache file {dest}: {e}") from e
     return data
+
+
+def _holds(path: Path, pin: FilePin) -> bool:
+    try:
+        return path.is_file() and _matches(path.read_bytes(), pin)
+    except OSError:
+        return False
 
 
 def load_file(
@@ -107,6 +122,7 @@ def load_file(
     cache_dir: Optional[PathLike] = None,
     model_url: Optional[str] = None,
     on_progress: Optional[Progress] = None,
+    require_cache: bool = False,
 ) -> Tuple[bytes, Path]:
     """Bytes of a verified model file and where they came from: model_dir if given (never downloads), else the cache,
     else a download from model_url (default: Hugging Face newmean-ai/pii-<size> at the model version tag) into the cache."""
@@ -137,7 +153,7 @@ def load_file(
     base = model_url or default_url(size)
     if not base.endswith("/"):
         base += "/"
-    return download(base + pin.path, path, pin, on_progress), path
+    return download(base + pin.path, path, pin, on_progress, require_cache=require_cache), path
 
 
 def fetch_model(
@@ -148,8 +164,10 @@ def fetch_model(
     model_url: Optional[str] = None,
     on_progress: Optional[Progress] = None,
 ) -> Path:
-    """Downloads (or checks) the files of one model into the cache and returns its folder, usable as model_dir."""
+    """Downloads (or checks) the files of one model into the cache and returns its folder, usable as model_dir (also
+    with NEWMEAN_PII_OFFLINE=1). Raises ModelFileError when a file cannot be downloaded, verified or written there
+    (since 1.7.2); a complete cache is only read."""
     variant = variant or DEFAULT_VARIANT.get(size) or "q4"
-    _, tok = load_file(size, "tokenizer", cache_dir=cache_dir, model_url=model_url, on_progress=on_progress)
-    load_file(size, variant, cache_dir=cache_dir, model_url=model_url, on_progress=on_progress)
+    _, tok = load_file(size, "tokenizer", cache_dir=cache_dir, model_url=model_url, on_progress=on_progress, require_cache=True)
+    load_file(size, variant, cache_dir=cache_dir, model_url=model_url, on_progress=on_progress, require_cache=True)
     return tok.parent

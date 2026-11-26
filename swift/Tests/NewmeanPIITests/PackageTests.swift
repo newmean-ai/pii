@@ -18,14 +18,17 @@ final class PackageTests: XCTestCase {
   }
 
   func testBuildInfo() {
-    // the default build: fused multiply-add on arm64 (results equal to the npm package's relaxed-SIMD WebAssembly build),
-    // none elsewhere (bit-identical to its baseline build)
+    // the default build: fused multiply-add on arm64 (results equal to the npm package's relaxed-SIMD WebAssembly build);
+    // on x86-64 chosen once per process, "avx2" where the CPU has AVX2, else "sse" (both bit-identical to its baseline
+    // build), and the fused "avx2+fma" only on request (NEWMEAN_PII_KERNEL)
     let info = PIIRedactor.buildInfo
     #if arch(arm64)
     XCTAssertEqual(info, "neon+fma")
+    #elseif arch(x86_64)
+    let optIn = ProcessInfo.processInfo.environment["NEWMEAN_PII_KERNEL"] != nil
+    XCTAssertTrue(["avx2", "sse"].contains(info) || (optIn && info == "avx2+fma"), info)
     #else
-    XCTAssertFalse(info.contains("fma"), info)
-    XCTAssertTrue(["sse", "vector", "scalar"].contains(info), info)
+    XCTAssertTrue(["vector", "scalar"].contains(info), info)
     #endif
   }
 }

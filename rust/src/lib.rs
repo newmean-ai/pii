@@ -35,12 +35,15 @@ mod models;
 mod redact;
 mod redactor;
 mod types;
+mod vault;
+mod word_ranges;
 
 pub use extract::{Entity, Extracted};
 pub use models::{default_cache_dir, model_files, sha256_hex, ModelFile, Size, Variant, MODEL_VERSION};
 pub use redact::{apply_redaction, apply_redaction_with, Mode, Redacted};
 pub use redactor::{core_version, Builder, Delimiter, Info, Redactor, TableContext, TableOptions};
 pub use types::{Error, Label, ListError, ListKind, ListReason, Result, Source, Span, Token};
+pub use vault::{apply_redaction_vault, escape_tags, redact_with_vault, vault_tags, with_vault_spans, Only, Vault, VaultEntry, VaultHit, VaultRestorer};
 
 /// Version of this crate (the same number as the other newmean-pii packages of the release).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -118,8 +118,9 @@ pii_model_free(m);
   묶어 배포하고 공유 라이브러리는 내지 않습니다.
 - **스레드**: `pii_model`과 `pii_lists`는 만든 뒤 바뀌지 않습니다. 여러 스레드가 한 모델(과 한 목록 핸들)로 동시에 `pii_detect` / `pii_detect_table` /
   `pii_tokenize`를 불러도 됩니다. 호출마다 작업 메모리를 따로 잡습니다(256토큰 윈도 하나에 약 4.5 MB, 짧은 글은 더 적음).
-- `pii_tokenize`는 토큰 id와 오프셋(`<s>`, `</s>` 제외)을, `pii_model_get_info`는 모델 형태를, `pii_build_info`는 커널
-  빌드 종류를 돌려줍니다.
+  행렬 커널이 필요한 첫 호출(`pii_build_info()` 포함)이 그 프로세스의 커널을 정합니다(x86-64, [커널](#빌드) 참고).
+- `pii_tokenize`는 토큰 id와 오프셋(`<s>`, `</s>` 제외)을, `pii_model_get_info`는 모델 형태를, `pii_build_info`는 그
+  프로세스가 쓰는 행렬 커널을 돌려줍니다.
 
 각 언어에 남긴 부분(작고 언어마다 관용이 다름): 정규식 계층(`js/src/regex.ts`, npm처럼 기본 꺼짐)과 `applyRedaction`의
 마스킹 방식(`tag` → `[계열]`, `PERSON_L2` → `PERSON`, `URL_L2` → `URL`; `mask` → 코드 포인트마다 마스크 문자 하나; `blank`).
@@ -128,9 +129,11 @@ pii_model_free(m);
 
 ```bash
 make                 # build/libpii.a, build/libpii.{dylib,so}, build/pii_cli
-make FMA=1           # x86-64: 융합 곱셈-덧셈 커널 (아래 참고; arm64는 기본)
-make NOFMA=1         # arm64: 융합하지 않는 커널
+make FMA=1           # 융합 곱셈-덧셈 커널을 기본으로 (x86-64: FMA3 필요, -mfma 추가; arm64는 원래 기본)
+make NOFMA=1         # 융합 커널 없음 (arm64: 융합하지 않는 커널)
+make CFLAGS=-DPII_NO_AVX2   # x86-64: 4폭 커널만
 make asan            # AddressSanitizer + UndefinedBehaviorSanitizer로 build/asan/pii_cli
+make tsan            # ThreadSanitizer로 build/tsan/pii_cli (pii_cli race: 커널 선택의 첫 호출 16개를 동시에)
 
 cmake -S native/core -B build && cmake --build build      # 타깃 newmean::pii (정적), newmean::pii_shared
 #   -DPII_FMA=ON  -DPII_NO_FMA=ON  -DPII_BUILD_SHARED=OFF  -DPII_BUILD_TESTS=ON  -DPII_SANITIZE=ON
@@ -141,12 +144,22 @@ SSE로 컴파일됩니다. 그 밖의 컴파일러(MSVC)는 같은 IEEE 연산�
 `-ffp-contract=off`(MSVC는 `/fp:precise`)는 빌드의 일부입니다. WebAssembly 엔진처럼 곱셈과 덧셈을 따로 계산하게 합니다.
 리틀 엔디언 대상만 지원합니다(모델 파일이 리틀 엔디언).
 
-**커널.** arm64에서는 행렬 커널이 곱셈과 덧셈을 융합하고(NEON에 항상 있음) 출력 16열씩 계산합니다(`pii_build_info()`:
-`neon+fma`). npm 패키지의 relaxed-SIMD 빌드(Chrome, Edge, Firefox에서 쓰임)와 같은 방식이며, 1.5.0부터 arm64의 기본이고
-Apple M5에서 융합하지 않는 커널보다 약 1.5배 빠릅니다. 그 밖의
-CPU에서는 곱셈과 덧셈을 따로 하므로 그런 CPU끼리는 로짓이 비트 단위로 같고, npm 패키지의 기본(SIMD128) WebAssembly 빌드와도
-같습니다. `PII_NO_FMA`는 arm64에서도 그 커널을 쓰고, `PII_FMA`는 FMA3가 있는 x86-64(`-mfma`)에서 융합 커널을 씁니다. 두
-커널의 로짓은 마지막 비트에서 다르지만, 확인한 모든 픽스처 행에서 구간은 같았습니다.
+**커널.** `pii_build_info()`는 그 프로세스가 쓰는 행렬 커널의 이름입니다. `+fma`가 없는 커널은 모두 곱셈과 덧셈을 따로
+하므로 어느 CPU에서나 서로 로짓이 비트 단위로 같고, npm 패키지의 기본(SIMD128) WebAssembly 빌드와도 같습니다. `+fma`
+커널은 곱셈과 덧셈을 융합하며 서로 로짓이 같고, relaxed-SIMD 빌드가 융합하는 곳(예: arm64의 Chrome)에서는 그 빌드와도
+같습니다. 두 종류의 로짓은 마지막 비트에서 다르지만, 확인한 모든 픽스처 행에서 구간은 같았습니다.
+
+- arm64: `neon+fma`, 출력 16열씩, 1.5.0부터 기본(Apple M5에서 융합하지 않는 커널보다 약 1.5배 빠름). `PII_NO_FMA`
+  빌드는 `neon`.
+- GCC나 Clang으로 만든 x86-64(1.7.2부터, 그전에는 `sse`): 커널이 필요한 첫 호출(모델 실행이나 `pii_build_info()`)이
+  CPUID leaf 1과 7, 그리고 OSXSAVE가 있을 때만 XGETBV를 읽어 프로세스마다 한 번 정합니다(가장 높은 leaf보다 위의
+  leaf는 0으로 봄). CPU에 AVX와 AVX2가 있고 운영체제가 XMM·YMM 레지스터를 저장하면 `avx2`(벡터 하나에 8열), 아니면 `sse`(4열)입니다. 그 첫 호출 전에
+  환경 변수 `NEWMEAN_PII_KERNEL`로 다른 커널을 고를 수 있습니다: `avx2+fma`(FMA3도 필요), `avx2`, `sse`. 모르는 이름이나
+  CPU 또는 빌드에 없는 커널이면 기본을 쓰고, 나중에 바꿔도 효과가 없습니다. `PII_FMA` 빌드(`-mfma`)는 융합 커널이
+  기본입니다(`avx2+fma`, 안 되면 `sse+fma`이며 `NEWMEAN_PII_KERNEL=sse+fma`로도 고름). `PII_NO_FMA` 빌드에는 융합 커널이
+  없고, `-DPII_NO_AVX2`는 4폭 커널만 컴파일합니다. AVX2·FMA 명령은 target 속성을 단 8폭 커널 안에만 있으므로, 기본
+  x86-64용 빌드는 어느 x86-64 CPU에서나 돕니다.
+- MSVC(Windows): `scalar`. 그 밖의 컴파일러와 대상: `vector`나 `scalar`.
 
 ## 테스트
 
@@ -161,7 +174,7 @@ Python 표준 라이브러리만 씁니다. 픽스처와 모델 사본은 비공
 | 테스트 | 확인 내용 | 목표 |
 |---|---|---|
 | pins | 모델 파일이 고정된 크기·SHA-256과 일치 | 전부 |
-| selftest | `js/test/combine.test.ts`의 `combine` 사례; 인자, 라벨 필터, UTF-16 단위 `extra` 구간, 잘못된 UTF-8, 긴 글; 잘리거나 변조된 모델·토크나이저 파일이 오류로 끝남 | 전부 |
+| selftest | `js/test/combine.test.ts`의 `combine` 사례; 인자, 라벨 필터, UTF-16 단위 `extra` 구간, 잘못된 UTF-8, 긴 글; 잘리거나 변조된 모델·토크나이저 파일이 오류로 끝남; 이름 붙인 CPU와 CPUID 경계 사례에서 x86-64 커널 선택 | 전부 |
 | tokenizer | `tokenize.jsonl`(3,273행)에서 npm 패키지의 `Tokenizer`(node + `js/dist`), Hugging Face `tokenizers`와 id·오프셋 비교 | npm: 100%; Hugging Face: id 100%, 오프셋은 많아야 3행까지 다를 수 있음(npm 테스트와 같음) |
 | offsets | 까다로운 글에서 UTF-8·코드 포인트·UTF-16 오프셋을 Python과 비교: 이모지와 ZWJ 연쇄, 국기, 결합 문자, CJK, RTL과 양방향 제어 문자, 폭 없는 문자, CRLF, NUL, 짝 없는 서로게이트, 잘못된 UTF-8, 빈 글과 공백뿐인 글, 특수 토큰 문자열, 10,000토큰 이상; 구간이 정렬되고 글 안에 있음 | 전부 |
 | predict | `js/test/predict.test.ts`의 모든 실행(각 412행)에서 Python 평가기와 구간 비교 | npm 테스트처럼 99% 이상 |
@@ -186,6 +199,7 @@ Apple M5 Pro(macOS, Apple clang 21, 기본 빌드) 결과, 2026-10-31:
 | fuzz (ASan + UBSan) | nano q4·q4e: 변조한 모델 파일 800개와 토크나이저 파일 550개가 모두 로드되거나 메시지와 함께 실패; 무작위 바이트열 1,800개에서 구간과 토큰이 입력 안; 보고 없음. 메모리 누수 없음(`leaks --atExit`, 변조 파일 900개 추가) |
 | logits | 윈도 13개 × nano q4, medium q4e, large q4(각 로짓 30,294개): 기본 빌드는 wasm SIMD128 빌드와, `FMA=1`은 wasm relaxed-SIMD 빌드(Node, arm64)와 비트 단위로 같음 |
 | 다른 빌드 | GCC 16(NEON, `-DPII_SCALAR`)이 nano q4 412행 모두에서 Apple clang과 바이트 단위로 같은 출력; x86-64(`-target x86_64-apple-macos12`, `-mfma -DPII_FMA` 유무)는 경고 없이 컴파일되나 실행하지 않음 |
+| x86-64 커널(2026-11-25) | 여기서는 컴파일만: Apple clang 21, LLVM 23, GCC 16이 모든 플래그 조합에서 `-Werror`로 통과; AVX2·FMA 명령은 8폭 커널 안에만 있고 `avx2`에는 융합 곱셈-덧셈이 없음. x86-64 GitHub Actions 러너에서는 `python-wheels.yml`의 커널 게이트로 실행: 로짓 다이제스트가 변경 전 코드와 같고, `avx2`가 `sse`보다 약 1.8~2.3배 빠름 |
 
 Python 평가기와 다른 행은 npm 패키지에서도 다릅니다. 평가기는 라벨이 다른 두 구간을 겹친 채 내놓고(예:
 `20-21:ADDRESS 20-22:ORG`), `detect()`는 두 패키지 모두 겹친 구간을 한 영역으로 병합(`combine`)하기 때문입니다.

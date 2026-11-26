@@ -120,6 +120,7 @@ class RegexTest {
 
     @Test
     fun longInputsTakeTimeInProportionToTheirLength() {
+        skipTiming()
         // 1.6.0 needed many seconds for the first text
         val start = System.nanoTime()
         for (t in listOf("a".repeat(100000), "a@" + "b".repeat(100000), "@".repeat(100000), "a.".repeat(50000), "1".repeat(100000))) {

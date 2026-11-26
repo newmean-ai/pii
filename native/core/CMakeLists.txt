@@ -3,13 +3,15 @@
 #
 #   cmake -S native/core -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 #   options: PII_FMA (fused multiply-add kernel; default on arm64), PII_NO_FMA, PII_BUILD_SHARED, PII_BUILD_TESTS, PII_SANITIZE (ASan + UBSan)
+#   x86-64 (GCC, Clang): the matrix kernel is chosen at run time ("avx2" or "sse"; see pii_build_info in pii.h);
+#   -DCMAKE_C_FLAGS=-DPII_NO_AVX2 builds the 4-wide kernel only
 #
 # Other projects: add_subdirectory(native/core) and link newmean::pii (static) or newmean::pii_shared.
 cmake_minimum_required(VERSION 3.16)
 project(newmean_pii VERSION 1.0.0 LANGUAGES C)
 
-option(PII_FMA "Fused multiply-add in the matrix kernel (like the relaxed-SIMD wasm build; x86-64 gets -mfma; arm64 has it by default)" OFF)
-option(PII_NO_FMA "arm64: the plain kernel, bit-identical to the baseline wasm build" OFF)
+option(PII_FMA "Fused multiply-add kernels by default (like the relaxed-SIMD wasm build; x86-64 gets -mfma; arm64 has them by default)" OFF)
+option(PII_NO_FMA "No fused kernel (arm64: the plain kernel, bit-identical to the baseline wasm build)" OFF)
 option(PII_BUILD_SHARED "Build the shared library too" ON)
 option(PII_BUILD_TESTS "Build the test CLI (pii_cli)" ${PROJECT_IS_TOP_LEVEL})
 option(PII_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)

@@ -2,8 +2,19 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>newmean-pii demo</title>
-<meta name="description" content="Open-source SDK that masks personal information in the browser or on the device before sending. 54 languages, 2.6–15.5 MB models; JavaScript, Python, iOS, Android, Flutter.">
+<title>newmean-pii: mask PII in the browser before it reaches your LLM</title>
+<meta name="description" content="Open-source SDK that masks personal information (names, phone numbers, emails, addresses, IDs) in the browser or on the device before text reaches an LLM. 54 languages, 2.6–15.5 MB models; JavaScript, Python, iOS, Android, Flutter, Rust.">
+<link rel="canonical" href="https://pii.newmean.ai/">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "SoftwareSourceCode", "name": "newmean-pii",
+ "description": "Open-source SDK and small on-device models (2.6–15.5 MB) that detect and mask personal information in text before it reaches an LLM, in 54 languages.",
+ "url": "https://pii.newmean.ai/", "codeRepository": "https://github.com/newmean-ai/pii",
+ "license": "https://www.apache.org/licenses/LICENSE-2.0",
+ "programmingLanguage": ["TypeScript", "Python", "Swift", "Kotlin", "Dart", "Rust", "C"],
+ "runtimePlatform": ["Web browser", "Node.js", "Python", "iOS", "macOS", "Android", "Flutter"],
+ "keywords": "PII detection, PII redaction, data masking, LLM privacy, on-device",
+ "author": {"@type": "Organization", "name": "newmean.ai", "url": "https://newmean.ai"}}
+</script>
 <!-- link previews (KakaoTalk, Slack, X, …): Korean text, language-neutral image (og-image.html) -->
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://pii.newmean.ai/">
@@ -70,6 +81,7 @@
   .local { display: flex; align-items: flex-start; gap: 6px; color: var(--muted); font-size: 0.82rem; }
   .local span { min-width: 0; text-wrap: pretty; }
   .local svg.i { width: 16px; height: 16px; color: var(--accent); margin-top: 1px; }
+  .local a { color: inherit; white-space: nowrap; }
   .facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 6px; }
   .facts > * { display: grid; justify-items: start; gap: 1px; padding: 8px 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: inherit; text-decoration: none; min-width: 0; }
   .facts a:hover { border-color: var(--accent); }
@@ -112,11 +124,16 @@
   #legend span { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 0.7rem; padding: 2px 7px; border-radius: 6px; }
   #legend:empty { display: none; }
   #stats { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); }
+  .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+  #missed { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; color: var(--muted); text-decoration: none; }
+  #missed:hover { color: var(--accent); }
+  #missed svg.i { width: 14px; height: 14px; }
   #loading { display: grid; gap: 6px; }
   #load-label { font-size: 0.8rem; color: var(--muted); }
   .track { height: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
   #load-bar { height: 100%; background: var(--accent); transform-origin: left; transform: scaleX(0); transition: transform 0.2s; }
   #note { margin: 0; font-size: 0.9rem; color: var(--muted); }
+  #hint { margin: -4px 0 0; font-size: 0.82rem; color: var(--accent); }
   details { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 0 14px; }
   summary { display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; color: var(--muted); font-size: 0.88rem; list-style: none; }
   summary::-webkit-details-marker { display: none; }
@@ -155,6 +172,7 @@
   <symbol id="i-book" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H19v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H19"/></symbol>
   <symbol id="i-scale" viewBox="0 0 24 24"><path d="M12 4v16M8 20h8M5 8h14"/><path d="M5 8l-2.5 6a3 3 0 0 0 5 0zM19 8l-2.5 6a3 3 0 0 0 5 0z"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V4h12l-2 4 2 4H5"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a1 1 0 0 1 1-1h10"/></symbol>
   <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
   <symbol id="l-person" viewBox="0 0 16 16"><circle cx="8" cy="5" r="3"/><path d="M2 15c0-3.3 2.7-5.5 6-5.5s6 2.2 6 5.5z"/></symbol>
@@ -179,23 +197,24 @@
 
   <div class="hero">
     <p class="tagline" data-i18n="tagline"></p>
-    <p class="local"><svg class="i"><use href="#i-device"/></svg><span data-i18n="local"></span></p>
+    <p class="local"><svg class="i"><use href="#i-device"/></svg><span><span data-i18n="local"></span> <a id="fields" href="https://github.com/newmean-ai/pii/blob/main/site/README.md" data-i18n="fields"></a></span></p>
     <div class="facts">
       <div><svg class="i"><use href="#i-globe"/></svg><b id="fact-lang">54</b><span data-i18n="factLang"></span></div>
       <div><svg class="i"><use href="#i-box"/></svg><b id="fact-size"></b><span data-i18n="factSize"></span></div>
-      <a id="fact-speed" href="https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md#5-models" title="medium · built-in engine · mean of 4 phones"><svg class="i"><use href="#i-gauge"/></svg><b id="fact-ms"></b><span data-i18n="factSpeed"></span></a>
+      <a id="fact-speed" data-t="fact-speed" href="https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md#5-models" title="medium · built-in engine · mean of 4 phones"><svg class="i"><use href="#i-gauge"/></svg><b id="fact-ms"></b><span data-i18n="factSpeed"></span></a>
     </div>
   </div>
 
   <nav class="go top">
-    <a class="star" href="https://github.com/newmean-ai/pii"><svg class="gh" aria-hidden="true"><use href="#gh"/></svg><span class="lbl" data-i18n="starShort"></span><span class="stars" hidden></span></a>
-    <a href="https://huggingface.co/newmean-ai"><span class="hf" aria-hidden="true">🤗</span><span class="lbl" data-i18n="models"></span></a>
-    <a class="bench" href="https://pii.newmean.ai/mobile-bench/"><svg class="i"><use href="#i-gauge"/></svg><span class="lbl" data-i18n="bench"></span></a>
+    <a class="star" data-t="star-top" href="https://github.com/newmean-ai/pii"><svg class="gh" aria-hidden="true"><use href="#gh"/></svg><span class="lbl" data-i18n="starShort"></span><span class="stars" hidden></span></a>
+    <a data-t="hf" href="https://huggingface.co/newmean-ai"><span class="hf" aria-hidden="true">🤗</span><span class="lbl" data-i18n="models"></span></a>
+    <a class="bench" data-t="bench" href="https://pii.newmean.ai/mobile-bench/"><svg class="i"><use href="#i-gauge"/></svg><span class="lbl" data-i18n="bench"></span></a>
   </nav>
 
   <section class="card">
     <div class="chips" id="samples"></div>
     <textarea id="input" spellcheck="false" aria-label="Text"></textarea>
+    <p id="hint" hidden data-i18n="tryOwn"></p>
     <div class="sizes" id="sizes" role="group" aria-label="Model size"></div>
   </section>
 
@@ -206,13 +225,13 @@
         <button id="view-masked" type="button" aria-pressed="false" title="Masked"><svg class="i"><use href="#i-eyeoff"/></svg></button>
       </div>
       <span id="count"></span>
-      <button id="copy" type="button"><svg class="i"><use href="#i-copy"/></svg><span id="copy-label" data-i18n="copy"></span></button>
+      <button id="copy" data-t="copy-result" type="button"><svg class="i"><use href="#i-copy"/></svg><span id="copy-label" data-i18n="copy"></span></button>
     </div>
     <div id="loading" hidden><span id="load-label"></span><div class="track"><div id="load-bar"></div></div></div>
     <p id="note" hidden></p>
     <div id="output"></div>
     <div id="legend"></div>
-    <div id="stats"></div>
+    <div class="meta"><div id="stats"></div><a id="missed" data-t="missed" href="https://github.com/newmean-ai/pii/issues/new?template=missed-pii.yml"><svg class="i"><use href="#i-flag"/></svg><span data-i18n="missed"></span></a></div>
   </section>
   <details>
     <summary><svg class="i"><use href="#i-sliders"/></svg><span data-i18n="options"></span></summary>
@@ -228,22 +247,22 @@
   <section class="card inst">
     <h2><svg class="i"><use href="#i-download"/></svg><span data-i18n="install"></span></h2>
     <div class="chips" id="plats" role="group" aria-label="Platform"></div>
-    <div class="cmd"><code id="cmd"></code><button id="cmd-copy" type="button" aria-label="Copy"><svg class="i"><use href="#i-copy"/></svg><svg class="i ok"><use href="#i-check"/></svg></button></div>
-    <div class="req"><span id="req"></span><a id="guide" href="https://github.com/newmean-ai/pii"><svg class="i"><use href="#i-book"/></svg><span data-i18n="guide"></span></a></div>
+    <div class="cmd"><code id="cmd"></code><button id="cmd-copy" data-t="install" type="button" aria-label="Copy"><svg class="i"><use href="#i-copy"/></svg><svg class="i ok"><use href="#i-check"/></svg></button></div>
+    <div class="req"><span id="req"></span><a id="guide" data-t="guide" href="https://github.com/newmean-ai/pii"><svg class="i"><use href="#i-book"/></svg><span data-i18n="guide"></span></a></div>
   </section>
 
   <nav class="go more">
-    <a href="https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md#5-models"><svg class="i"><use href="#i-gauge"/></svg><span data-i18n="phones"></span></a>
-    <a href="https://github.com/newmean-ai/pii#results"><svg class="i"><use href="#i-chart"/></svg><span data-i18n="results"></span></a>
+    <a data-t="phones" href="https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md#5-models"><svg class="i"><use href="#i-gauge"/></svg><span data-i18n="phones"></span></a>
+    <a data-t="results" href="https://github.com/newmean-ai/pii#results"><svg class="i"><use href="#i-chart"/></svg><span data-i18n="results"></span></a>
     <a href="LICENSE.txt"><svg class="i"><use href="#i-scale"/></svg><span>Apache-2.0</span></a>
   </nav>
 
   <section class="card ask">
     <p data-i18n="starAsk"></p>
-    <nav class="go"><a class="star" href="https://github.com/newmean-ai/pii"><svg class="i" style="fill:currentColor;stroke:none"><use href="#i-star"/></svg><span data-i18n="star"></span><span class="stars" hidden></span></a></nav>
+    <nav class="go"><a class="star" data-t="star-bottom" href="https://github.com/newmean-ai/pii"><svg class="i" style="fill:currentColor;stroke:none"><use href="#i-star"/></svg><span data-i18n="star"></span><span class="stars" hidden></span></a></nav>
   </section>
 
 
-  <footer><a href="https://www.npmjs.com/package/@newmean-ai/pii">npm</a><span>·</span><a href="LICENSE.txt">Apache-2.0</a><span>·</span><a href="NOTICE.txt">Licenses</a><span>·</span><a href="https://newmean.ai">newmean.ai</a></footer>
+  <footer><a data-t="npm" href="https://www.npmjs.com/package/@newmean-ai/pii">npm</a><span>·</span><a href="LICENSE.txt">Apache-2.0</a><span>·</span><a href="NOTICE.txt">Licenses</a><span>·</span><a href="https://newmean.ai">newmean.ai</a></footer>
 </main>
 <script type="module" src="app/main.js"></script>

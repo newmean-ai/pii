@@ -113,7 +113,7 @@ def test_langfuse_mask(nano):
     masked = nano.redact(TEXT).text
     data = {"messages": [{"role": "user", "content": TEXT}, {"role": "user", "content": ""}], "n": 3, "pair": (TEXT, None), TEXT: 1.5}
     out = mask(data=data, extra="ignored")
-    assert out == {"messages": [{"role": "user", "content": masked}, {"role": "user", "content": ""}], "n": 3, "pair": (masked, None), TEXT: 1.5}
+    assert out == {"messages": [{"role": "user", "content": masked}, {"role": "user", "content": ""}], "n": 3, "pair": (masked, None), masked: 1.5}
     assert data["messages"][0]["content"] == TEXT  # the input is not changed
     assert mask(data=TEXT) == masked and mask(data=None) is None and mask(data=7) == 7
     assert "*" in pii_mask(nano, mode="mask")(data=TEXT)

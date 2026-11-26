@@ -19,6 +19,7 @@ export interface Span {
   end: number;
   label: Label | string;
   /** "model", "regex", "model+regex" when both found it, "table" when table mode propagated it down a column, or "block"
-   *  for an entry of the option `block` (since 1.4.0) */
-  source: "model" | "regex" | "model+regex" | "table" | "block";
+   *  for an entry of the option `block` (since 1.4.0), "vault" for a value a vault already holds, found again by `redact`
+   *  with the option `vault` (since 1.7.2) */
+  source: "model" | "regex" | "model+regex" | "table" | "block" | "vault";
 }

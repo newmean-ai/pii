@@ -9,7 +9,7 @@ dependencies (a C compiler is needed at build time).
 
 ```toml
 [dependencies]
-newmean-pii = "1.6"
+newmean-pii = "1.7"
 ```
 
 ```rust
@@ -110,6 +110,57 @@ Extracted::new(text, spans);                // extract from spans you filtered y
   [Python README, Lists](https://github.com/newmean-ai/pii/blob/main/python/README.md#lists).
 - **Tables**: `TableOptions { delimiter, header, vote, context }` as in the other packages:
   [Python README, Tables](https://github.com/newmean-ai/pii/blob/main/python/README.md#tables).
+
+## Putting the values back (vault)
+
+Since 1.7.2. A vault keeps a local map from numbered placeholders to the values they replace, so a model's answer can get
+the values back. Nothing in it is sent anywhere.
+
+```rust
+let mut vault = Vault::new(); // one per user or conversation
+let masked = redactor.redact_vault("Call Kim Minsu on 010-1234-5678", &mut vault)?.text; // "Call [PERSON_1] on [PHONE_1]"
+assert_eq!(vault.restore("I called [PERSON_1]."), "I called Kim Minsu.");
+```
+
+The same value always gets the same placeholder in a vault, and a value the vault holds is masked again where it
+reappears, in the same text or a later one, also where the model would miss it there (source `vault`). What the
+model finds is learned without the white space, sentence punctuation, brackets and quotation marks its span took from
+around the value, and a date of birth without the time of its ISO timestamp.
+Placeholder-like text already in the input is sent as "［PERSON_1]" and never restored. A restorer undoes a streamed
+answer; `bindings` takes a snapshot of values for one model call; `entries` keeps a vault between requests (they hold
+the original values). **Never share a vault between users.**
+
+How a known value is found, the same in all six packages (shared cases in `python/tests/vault_cases.json`):
+
+- 3 characters or more; 2 when one of them is in a script written without spaces (Han, kana, Thai, Lao, Khmer,
+  Myanmar, Tai Tham, Balinese, Javanese) or both are Hangul syllables. A shorter value the model found is given back in
+  answers but not looked for elsewhere; one the application tags is found where `hide_value` meets it as a whole string.
+- At word edges. A vowel sign or another mark after a value belongs to it (`สม` is not found in `สมัคร`). Korean
+  particles may follow a Hangul value, and Hangul right before it is not an edge. After a value of two Hangul
+  syllables, only particles, the honorifics 님 and 씨 or the copula may follow in the same word (`지원님께` is the name,
+  `지원금` another word). Letters glued to a name (an Arabic prefix, a case ending) make another word.
+- An e-mail address, a user name and a value of two or more words match in any ASCII case, a URL's scheme and host in
+  any case, and any value in capitals: its full Unicode uppercase (`WEISS` for `Weiß`), and as Turkish and Azerbaijani
+  (`EMİNE`), Greek (without accents and breathings: `ΝΙΚΟΣ` for `Νίκος`) and German (`WEIẞ` for `Weiß`) write
+  capitals. A one-word value in another case is another word (`Will` and `will`).
+- A value found takes in the combining marks, variation selectors and joiners right after it, so its span never ends
+  inside a grapheme cluster.
+- Hangul written as conjoining jamo (NFD) is read as syllables, and full-width ASCII and U+3000 as ASCII. A value found
+  this way keeps the known value's placeholder.
+- A dot between digits joins them: a value that starts or ends with a digit is not found where a dot joins it to more
+  digits (4524 in 4524.7, also `12 Main St` in `Unit 4.12 Main St`). An exponent joins only numbers: 4524 is not found
+  in 1e+4524, while an address after `4E+` is found.
+- What the model marks is learned without the white space, punctuation, brackets and quotation marks at its edges that
+  are not part of the value (`Kim Minsu.`, `"Kim Minsu"` and `(Kim Minsu` are learned as `Kim Minsu`, and those
+  characters stay in the text), unless what is left is too short to be found (then only the white space goes). A
+  bracket whose partner is in the value stays (`(02) 1234-5678`), and so do a `.` at the start of a value and the `.`
+  at the end of an ORG (`Tiffany & Co.`); a SECRET loses only its white space.
+
+Otherwise a value is found as it is written. White space written another way, numbers in another spelling, dates,
+escapes and URL encodings are read only by the npm and Python packages, which also have middlewares that restore
+answers and allowed tool calls ([js/README.md](../js/README.md#how-a-known-value-is-found-again)). Placeholders are
+`[<FAMILY>_<n>]` (a family of up to 32 characters, 1 to 12 digits); a family that has used its numbers goes on as
+`[PERSON__1]`, and an empty value gets no placeholder. Word characters come from a table of Unicode 16.0 in the crate.
 
 ## Extraction
 

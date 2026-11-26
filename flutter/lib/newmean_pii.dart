@@ -11,3 +11,13 @@ export 'src/newmean_pii.dart' show NewmeanPii, PiiRedactorInfo;
 export 'src/redaction.dart' show PiiRedaction, RedactMode, applyRedaction;
 export 'src/regex.dart' show regexRules, regexSpans;
 export 'src/span.dart' show PiiSpan, labelFamily, level1Labels, piiLabels;
+export 'src/vault.dart'
+    show
+        PiiVault,
+        PiiVaultEntry,
+        PiiVaultHit,
+        PiiVaultRestorer,
+        applyVaultRedaction,
+        escapeTags,
+        redactWithVault,
+        vaultTags;

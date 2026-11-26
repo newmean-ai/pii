@@ -1,6 +1,7 @@
 # Android library ai.newmean:pii (android/): JVM unit tests on Linux and macOS (the JNI library is also built for the host
 # from the same CMakeLists.txt, so the native path runs without an emulator), lint, and the release AAR for arm64-v8a,
-# armeabi-v7a and x86_64. The parity tests skip here: their fixtures and model copies are private.
+# armeabi-v7a and x86_64. The parity tests skip here: their fixtures and model copies are private. rc.yml calls this
+# workflow for a release candidate.
 name: android
 
 on:
@@ -10,9 +11,22 @@ on:
   pull_request:
     paths: [android/**, native/core/**, .github/workflows/android.yml]
   workflow_dispatch:
+    inputs:
+      os:
+        description: "Runners outside newmean-ai/pii (the public repository always runs all): Linux x64 only, plus Windows (none here), or all"
+        type: choice
+        options: [linux, linux-windows, all]
+        default: linux
+  workflow_call:
 
 permissions:
   contents: read
+
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event and ref. A push run
+# and a run called by rc.yml (github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: android-${{ (github.workflow == 'android' && github.event_name != 'push') && format('{0}-{1}', github.event_name, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'android' && github.event_name != 'push' }}
 
 env:
   NDK_VERSION: 29.0.14206865
@@ -24,8 +38,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # every runner in the public repository; elsewhere the dispatch input os chooses (default: Linux x64 only)
+        os: >-
+          ${{ fromJSON((github.repository == 'newmean-ai/pii' || inputs.os == 'all')
+          && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PII_SKIP_TIMING: "1"  # every step but the timing step: timing tests never share a step (CI3)
     defaults:
       run:
         working-directory: android
@@ -43,10 +63,19 @@ jobs:
       - run: ./gradlew :pii:testDebugUnitTest --tests '*ModelStoreTest*' --rerun --console=plain
         env:
           PII_DOWNLOAD: "1"
+      # the five tests with an assertion on measured time (the 1.7.2 release standard, CI3), alone: the two Growth classes
+      # and the regex time limit; none may be skipped
+      - name: Timing tests
+        env:
+          PII_SKIP_TIMING: "0"
+        run: |
+          ./gradlew :pii:testDebugUnitTest --tests '*Growth*' --tests '*RegexTest.longInputsTakeTimeInProportionToTheirLength' --rerun --console=plain
+          ! grep -l "<skipped" pii/build/test-results/testDebugUnitTest/*.xml
 
   aar:
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: android
@@ -67,3 +96,4 @@ jobs:
           path: |
             android/pii/build/outputs/aar/pii-release.aar
             android/pii/build/repo/
+          retention-days: ${{ github.repository == 'newmean-ai/pii' && 7 || 3 }}

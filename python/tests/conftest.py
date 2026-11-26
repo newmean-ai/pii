@@ -14,6 +14,22 @@ MODELS = Path(os.environ.get("PII_MODELS", REPO / "js" / "test" / "models"))
 SIZES = os.environ["PII_SIZES"].split(",") if os.environ.get("PII_SIZES") else None
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "timing: an assertion on measured time (a doubling ratio or a time limit); PII_SKIP_TIMING=1 skips it")
+
+
+# A timing test runs alone, never inside a functional step (the 1.7.2 release standard, CI3): the functional steps of
+# public CI set PII_SKIP_TIMING=1, and vault.yml's timing job runs these with -m timing, one file per step.
+def pytest_collection_modifyitems(config, items):
+    if os.environ.get("PII_SKIP_TIMING") != "1":
+        return
+    skip = pytest.mark.skip(reason="timing test (PII_SKIP_TIMING=1): it runs alone in a timing step")
+    for item in items:
+        if item.get_closest_marker("timing"):
+            item.add_marker(skip)
+
+
 def read_jsonl(path):
     # not splitlines(): texts hold U+2028 and other line separators
     return [json.loads(l) for l in path.read_text(encoding="utf-8").split("\n") if l.strip()]

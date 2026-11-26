@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.newmean"
-version = "1.6.1"
+version = "1.7.2"
 
 // The native core lives in the repository's native/core and is compiled from there (never copied).
 val coreDir = rootProject.layout.projectDirectory.dir("../native/core")
@@ -164,7 +164,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("pii.fixtures", System.getenv("PII_FIXTURES") ?: repoJsTest.dir("fixtures").asFile.absolutePath)
     systemProperty("pii.models", System.getenv("PII_MODELS") ?: repoJsTest.dir("models").asFile.absolutePath)
     systemProperty("pii.jsModels", rootProject.layout.projectDirectory.file("../js/src/models.ts").asFile.absolutePath)
-    listOf("PII_SIZES", "PII_DOWNLOAD", "PII_NPM_SPANS").forEach { k -> System.getenv(k)?.let { systemProperty("pii.env.$k", it) } }
+    listOf("PII_SIZES", "PII_DOWNLOAD", "PII_NPM_SPANS", "PII_SKIP_TIMING").forEach { k -> System.getenv(k)?.let { systemProperty("pii.env.$k", it) } }
     maxHeapSize = "2g"
     testLogging {
         events("passed", "skipped", "failed")

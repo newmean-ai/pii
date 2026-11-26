@@ -1,0 +1,31 @@
+# newmean-pii
+
+> Open-source SDK and small models that detect and mask personal information (names, phone numbers, emails, addresses,
+> ID numbers, account numbers, secrets) in text before it reaches an LLM, a log or a trace. The models run where the
+> code runs: in the browser (WebAssembly), on iOS and Android, or on a server. Nothing is sent to another service and no
+> API key is needed. Apache-2.0.
+
+- 54 languages, 13 labels (11 plus 2 level-2 labels for indirect identifiers)
+- Four model sizes: nano 2.6 MB, small 7.1 MB, medium 11.3 MB (default), large 15.5 MB
+- Published miss rates per label, format and language: https://github.com/newmean-ai/pii/blob/main/docs/results/models-v1.1-public-test.md
+- Miss and over-masking of every model size per language and per label, on the public test and four external datasets:
+  https://pii.newmean.ai/results/
+- Integrations: LangChain (Python and JavaScript), Vercel AI SDK, LiteLLM, Microsoft Presidio, Langfuse
+- Numbered placeholders that can be restored in the model's answer ("vault", since 1.7.2)
+
+## Install
+
+- Browser, Node.js: `npm install @newmean-ai/pii`
+- Python 3.9+: `pip install newmean-pii`
+- iOS 15+, macOS 12+: Swift Package Manager, `https://github.com/newmean-ai/pii`
+- Android 7.0+: `implementation("ai.newmean:pii:1.7.2")`
+- Flutter, Dart: `flutter pub add newmean_pii`
+- Rust: `cargo add newmean-pii`
+
+## Docs
+
+- [README](https://github.com/newmean-ai/pii/blob/main/README.md): install, results, what each release changes
+- [JavaScript API](https://github.com/newmean-ai/pii/blob/main/js/README.md), including the AI SDK and LangChain.js middlewares
+- [Python API](https://github.com/newmean-ai/pii/blob/main/python/README.md), including LangChain, LiteLLM, Presidio and Langfuse
+- [Technical report](https://github.com/newmean-ai/pii/blob/main/docs/report/REPORT.md): data, models, evaluation
+- [Demo](https://pii.newmean.ai/): try it in the browser; the text stays on the device

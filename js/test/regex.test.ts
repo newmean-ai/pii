@@ -3,6 +3,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { REGEX_RULES, regexSpans } from "../src/regex";
 import type { Span } from "../src/types";
 
+// A test with an assertion on measured time (a doubling ratio or a time limit) runs alone, never inside a functional
+// step (the 1.7.2 release standard, CI3): PII_SKIP_TIMING=1 skips it (the functional steps of public CI), and
+// PII_TIMING_ONLY=1 runs it and none of this file's other tests (vault.yml's timing job, with --allowOnly).
+const timingIt = process.env.PII_SKIP_TIMING === "1" ? it.skip : process.env.PII_TIMING_ONLY === "1" ? it.only : it;
+
 const FILE = new URL("./fixtures/regex.jsonl", import.meta.url);
 
 describe.skipIf(!existsSync(FILE))("regex parity with the Python baseline", () => {
@@ -125,7 +130,7 @@ describe("regexSpans equals the 1.6.0 matcher", () => {
 
 describe("regexSpans on long inputs", () => {
   // 1.6.0 needed about 5 s for the first text and 3 s for the last on the machine that takes a few ms here
-  it("takes time in proportion to the length", () => {
+  timingIt("takes time in proportion to the length", () => {
     const t0 = performance.now();
     for (const text of ["a".repeat(100000), "a@" + "b".repeat(100000), "@".repeat(100000), "a.".repeat(50000), "1".repeat(100000)]) {
       expect(regexSpans(text).filter((s) => s.label === "EMAIL")).toEqual([]);

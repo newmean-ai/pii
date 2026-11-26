@@ -1,6 +1,7 @@
 # Rust crate newmean-pii (rust/, compiles native/core): tests on Linux (x86-64 and arm64), macOS and Windows with the nano
 # and medium models downloaded from Hugging Face, the minimum supported Rust version, and a build of the crate as
 # published (with the core vendored). The parity tests against the other packages are run by hand: their fixtures are private.
+# rc.yml calls this workflow for a release candidate.
 name: rust
 
 on:
@@ -10,9 +11,22 @@ on:
   pull_request:
     paths: [rust/**, native/core/**, .github/workflows/rust.yml]
   workflow_dispatch:
+    inputs:
+      os:
+        description: "Runners outside newmean-ai/pii (the public repository always runs all): Linux x64 only, plus Windows, or all"
+        type: choice
+        options: [linux, linux-windows, all]
+        default: linux
+  workflow_call:
 
 permissions:
   contents: read
+
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event and ref. A push run
+# and a run called by rc.yml (github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: rust-${{ (github.workflow == 'rust' && github.event_name != 'push') && format('{0}-{1}', github.event_name, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'rust' && github.event_name != 'push' }}
 
 jobs:
   test:
@@ -21,8 +35,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        # every runner in the public repository; elsewhere the dispatch input os chooses (default: Linux x64 only)
+        os: >-
+          ${{ fromJSON((github.repository == 'newmean-ai/pii' || inputs.os == 'all')
+          && '["ubuntu-latest", "ubuntu-24.04-arm", "macos-latest", "windows-latest"]'
+          || inputs.os == 'linux-windows' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      PII_SKIP_TIMING: "1"  # every step but the timing step: timing tests never share a step (CI3)
     defaults:
       run:
         shell: bash
@@ -48,10 +69,23 @@ jobs:
           cargo test -- --nocapture 2>&1 | tee "$RUNNER_TEMP/test.log"
           ! grep -q "skipped: no" "$RUNNER_TEMP/test.log"
       - run: cargo run --release --example extract -- "$PII_MODELS/pii-medium" "Call Maria Lopez on +1 415 555 0142"
+      # the four tests with an assertion on measured time (the 1.7.2 release standard, CI3), alone, one at a time; each
+      # must show as passed, and none may have skipped itself
+      - name: Timing tests
+        env:
+          PII_SKIP_TIMING: "0"
+        run: |
+          set -o pipefail
+          tests="fourth_review_fixes growth_with_vault_spans_and_redact growth_long_values_that_repeat_themselves span_edges_growth"
+          # shellcheck disable=SC2086  # one filter per test name
+          cargo test --test vault --test review_docs -- --exact --test-threads=1 --show-output $tests 2>&1 | tee "$RUNNER_TEMP/timing.log"
+          for t in $tests; do grep -qF "test $t ... ok" "$RUNNER_TEMP/timing.log" || { echo "$t did not pass"; exit 1; }; done
+          ! grep -q "not run here (PII_SKIP_TIMING=1)" "$RUNNER_TEMP/timing.log"
 
   msrv:
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: rust
@@ -63,6 +97,7 @@ jobs:
   package:
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: rust

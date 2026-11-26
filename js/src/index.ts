@@ -1,6 +1,7 @@
 export {
   createRedactor,
   applyRedaction,
+  withVaultSpans,
   combine,
   TAGS,
   LABELS,
@@ -13,6 +14,7 @@ export {
   type RunStats,
 } from "./redactor.js";
 export { regexSpans, REGEX_RULES } from "./regex.js";
+export { createVault, escapeTags, vaultTags, type RestoreOptions, type Vault, type VaultEntry, type VaultRestorer, type VaultState } from "./vault.js";
 export type { TableOptions, TableDelimiter } from "./table.js";
 export { ListError, type AllowEntry, type BlockEntry, type ListErrorReason } from "./lists.js";
 export { Tokenizer, type Encoding, type WebTokenizerFile } from "./tokenizer.js";

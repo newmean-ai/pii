@@ -1,6 +1,6 @@
 # Flutter/Dart package (flutter/): analyze and test on the three desktop hosts (the build hook compiles native/core with
 # clang, gcc and MSVC), and build the example app for Android and iOS. The parity tests skip here: their fixtures and
-# model copies are private.
+# model copies are private. rc.yml calls this workflow for a release candidate.
 name: flutter
 
 on:
@@ -10,9 +10,22 @@ on:
   pull_request:
     paths: [flutter/**, native/core/**, .github/workflows/flutter.yml]
   workflow_dispatch:
+    inputs:
+      os:
+        description: "Runners outside newmean-ai/pii (the public repository always runs all): Linux x64 only, plus Windows, or all"
+        type: choice
+        options: [linux, linux-windows, all]
+        default: linux
+  workflow_call:
 
 permissions:
   contents: read
+
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event and ref. A push run
+# and a run called by rc.yml (github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: flutter-${{ (github.workflow == 'flutter' && github.event_name != 'push') && format('{0}-{1}', github.event_name, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'flutter' && github.event_name != 'push' }}
 
 jobs:
   test:
@@ -21,8 +34,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        # every runner in the public repository; elsewhere the dispatch input os chooses (default: Linux x64 only)
+        os: >-
+          ${{ fromJSON((github.repository == 'newmean-ai/pii' || inputs.os == 'all')
+          && '["macos-latest", "ubuntu-latest", "windows-latest"]'
+          || inputs.os == 'linux-windows' && '["ubuntu-latest", "windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      PII_SKIP_TIMING: "1"  # every step but the timing step: timing tests never share a step (CI3)
     defaults:
       run:
         working-directory: flutter
@@ -41,10 +61,23 @@ jobs:
       - run: dart test test/loader_test.dart
         env:
           PII_DOWNLOAD: "1"
+      # the tests with an assertion on measured time (the 1.7.2 release standard, CI3), alone, one file at a time: the
+      # two growth files and the regex time limit
+      - name: Timing tests (growth files)
+        run: dart test -j 1 test/vault_growth_test.dart test/review_docs_growth_test.dart
+        env:
+          PII_SKIP_TIMING: "0"
+      - name: Timing tests (the regex time limit)
+        run: dart test test/regex_test.dart --plain-name "regexSpans takes time in proportion to the length of long inputs"
+        env:
+          PII_SKIP_TIMING: "0"
 
   android:
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PII_SKIP_TIMING: "1"  # every step but the timing step: timing tests never share a step (CI3)
     defaults:
       run:
         working-directory: flutter/example
@@ -65,8 +98,10 @@ jobs:
       - run: flutter build apk --debug
 
   ios:
-    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    # macOS only: outside the public repository only when dispatched with os: all
+    if: github.repository == 'newmean-ai/pii' || inputs.os == 'all'
     runs-on: macos-latest
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: flutter/example
@@ -84,6 +119,7 @@ jobs:
   publish-check:
     if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: flutter

@@ -108,7 +108,8 @@ final class RegexTests: XCTestCase {
     }
   }
 
-  func testLongInputsTakeTimeInProportionToTheirLength() {
+  func testLongInputsTakeTimeInProportionToTheirLength() throws {
+    try skipTiming()
     // 1.6.0 needed minutes for the first text
     let start = Date()
     for t in [

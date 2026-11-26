@@ -12,7 +12,8 @@ await build({
   format: "esm",
   target: "es2022",
   platform: "neutral",
-  external: ["onnxruntime-web", "onnxruntime-web/*", "langchain"],
+  // (@langchain/core comes with langchain, as its peer dependency)
+  external: ["onnxruntime-web", "onnxruntime-web/*", "langchain", "@langchain/core", "@langchain/core/*"],
   outdir: "dist",
   splitting: true,
   chunkNames: "[name]-[hash]",

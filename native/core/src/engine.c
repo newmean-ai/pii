@@ -1,14 +1,18 @@
 // Inference engine: a native port of js/engine/pii.c (the npm package's WebAssembly engine). Same architecture, same
 // .piiw layout, same kernels and the same order of floating-point operations, so logits are bit-identical to the
 // baseline wasm build (built with -ffp-contract=off), or to its relaxed-SIMD build where the kernel fuses multiply and
-// add (arm64 by default, see below). Differences from pii.c: wasm SIMD128 intrinsics -> simd.h, the
-// bump allocator -> malloc, global model state -> an immutable pii_engine plus per-call scratch (pii_ws), so one model
-// can serve several threads.
+// add (arm64 by default; on x86-64 an opt-in, see "kernel choice"). Differences from pii.c: wasm SIMD128 intrinsics ->
+// simd.h (and 8-wide AVX2 for the matrix kernel on x86-64), the bump allocator -> malloc, global model state -> an
+// immutable pii_engine plus per-call scratch (pii_ws), so one model can serve several threads.
 #include <stdlib.h>
 #include <string.h>
 
 #include "internal.h"
 #include "simd.h"
+
+#if defined(PII_FMA) && defined(PII_NO_FMA)
+#error "PII_FMA and PII_NO_FMA exclude each other"
+#endif
 
 #define HEAD 32
 // One sqrt instruction (correctly rounded everywhere). The build passes -fno-math-errno so that GCC and Clang on Linux
@@ -38,6 +42,13 @@
 #else
 #define TILE_M 4  // with 16 columns: 16 accumulators (fastest on Apple M5 with and without FMA)
 #endif
+#endif
+// x86-64 (GCC, Clang): the matrix kernel is chosen at run time, once per process; see "kernel choice" below. -DPII_NO_AVX2
+// compiles only the 4-wide kernel. The other kernels (layer norm, softmax, GELU, dequantization) stay 4-wide everywhere.
+#if PII_VEC && defined(__x86_64__) && !defined(PII_NO_AVX2)
+#define PII_X86 1
+#else
+#define PII_X86 0
 #endif
 
 // ---------------------------------------------------------------- loading
@@ -310,7 +321,8 @@ static VI f4 vexp(f4 x) {
 
 // Multiply-add of the gemm kernel: separate mul and add by default (bit-identical to the baseline wasm build on every
 // CPU); with PII_FMA one fused multiply-add, as f32x4.relaxed_madd in the relaxed-SIMD wasm build (identical to it where
-// that build runs FMA, e.g. Chrome on arm64). Default on arm64 (NEON); x86-64 needs FMA3 (-mfma) and stays opt-in.
+// that build runs FMA, e.g. Chrome on arm64). Default on arm64 (NEON). This is the 4-wide kernel; on x86-64 it fuses only
+// in a PII_FMA build (FMA3, -mfma). The 8-wide x86-64 kernels are under "kernel choice".
 #if defined(PII_FMA) && PII_VEC && defined(__aarch64__)
 #include <arm_neon.h>
 #define MADD(c, a, b) ((f4)vfmaq_f32((float32x4_t)(c), (float32x4_t)(a), (float32x4_t)(b)))
@@ -367,6 +379,7 @@ static void gemm(float *C, int ldc, const float *A, int lda, const float *B, int
   }
 }
 
+#if PII_WIDE
 // Two 8-column panels at once: TILE_M rows x 16 columns (4 x TILE_M accumulators); each output still sums k in order.
 static void gemm16(float *C, int ldc, const float *A, int lda, const float *P0, const float *P1, int Mr, int K) {
   int r = 0;
@@ -395,32 +408,220 @@ static void gemm16(float *C, int ldc, const float *A, int lda, const float *P0, 
     gemm(C + (size_t)r * ldc + 8, ldc, A + (size_t)r * lda, lda, P1, 8, Mr - r, 8, K);
   }
 }
+#endif
 
-// out[L, ldo] (columns 0..N-1) = A[L, lda] (columns 0..K-1) x W + bias, one dequantized 8-column panel at a time.
-static void matmul(pii_ws *ws, float *out, int ldo, const float *A, int lda, int L, const pii_q4 *w, const float *bias) {
-  int p = 0;
+// ---------------------------------------------------------------- kernel choice
+// The 4-wide kernel's name: "neon", "sse", "vector" or "scalar", with "+fma" where it fuses multiply and add.
+#if !PII_VEC
+#define PII_ISA "scalar"
+#elif defined(__aarch64__) || defined(__ARM_NEON)
+#define PII_ISA "neon"
+#elif defined(__x86_64__) || defined(__i386__)
+#define PII_ISA "sse"
+#else
+#define PII_ISA "vector"
+#endif
+#ifdef PII_FMA
+#define PII_ISA_NAME PII_ISA "+fma"
+#define PII_BUILD_BITS PII_KERNEL_BUILD_FUSED
+#elif defined(PII_NO_FMA)
+#define PII_ISA_NAME PII_ISA
+#define PII_BUILD_BITS PII_KERNEL_BUILD_NO_FUSED
+#else
+#define PII_ISA_NAME PII_ISA
+#define PII_BUILD_BITS 0
+#endif
+
+// x86-64: which matrix kernel runs (internal.h). Pure, so tests check its truth table on every platform.
+//   "avx2" (8 columns per vector, multiply then add): CPUID leaf 1 ECX OSXSAVE (bit 27) and AVX (bit 28), XCR0 bits 1 and 2
+//     (the operating system saves the XMM and YMM registers), leaf 7 subleaf 0 EBX AVX2 (bit 5). A leaf above the highest
+//     one (leaf 0 EAX) counts as all zeros, and XCR0 counts only with OSXSAVE (XGETBV faults without it).
+//   "avx2+fma" (8 columns, fused multiply-add): the same plus FMA3 (leaf 1 ECX bit 12), in a build with the fused kernel
+//     (not PII_NO_FMA).
+//   the 4-wide kernel ("sse", or "sse+fma" in a PII_FMA build): every x86-64 CPU.
+// The default is "avx2" where the CPU allows it, else "sse": the same logits bit for bit, equal to every build without
+// "+fma" on any CPU and to the npm package's baseline wasm build. Fused multiply-add is an opt-in: in a PII_FMA build
+// "avx2+fma" is the default where the CPU allows it, else "sse+fma" (equal bit for bit; also to "neon+fma" and to the
+// relaxed-SIMD wasm build where that fuses). request (NEWMEAN_PII_KERNEL) picks a kernel by its name; an unknown name, or
+// a kernel the CPU or the build lacks, leaves the default.
+int pii_kernel_select(uint32_t max_leaf, uint32_t leaf1_ecx, uint32_t leaf7_ebx, uint64_t xcr0, const char *request, int build) {
+  const int fused_build = (build & PII_KERNEL_BUILD_FUSED) != 0;
+  const int avx = max_leaf >= 1 && (leaf1_ecx >> 27 & 1) && (leaf1_ecx >> 28 & 1) && (xcr0 & 6) == 6;
+  const int avx2 = avx && max_leaf >= 7 && (leaf7_ebx >> 5 & 1);
+  const int fma = avx2 && (leaf1_ecx >> 12 & 1) && !(build & PII_KERNEL_BUILD_NO_FUSED);
+  const int dflt = fused_build ? (fma ? PII_KERNEL_AVX2_FMA : PII_KERNEL_SSE) : (avx2 ? PII_KERNEL_AVX2 : PII_KERNEL_SSE);
+  if (!request) return dflt;
+  if (!strcmp(request, fused_build ? "sse+fma" : "sse")) return PII_KERNEL_SSE;
+  if (avx2 && !strcmp(request, "avx2")) return PII_KERNEL_AVX2;
+  if (fma && !strcmp(request, "avx2+fma")) return PII_KERNEL_AVX2_FMA;
+  return dflt;
+}
+
+// The matrix kernel: gemm as above (N a multiple of 8, any ldb); gemm16 two 8-column panels at once, or NULL.
+typedef struct {
+  void (*gemm)(float *C, int ldc, const float *A, int lda, const float *B, int ldb, int Mr, int N, int K);
+  void (*gemm16)(float *C, int ldc, const float *A, int lda, const float *P0, const float *P1, int Mr, int K);
+  const char *name;  // pii_build_info
+} pii_kernel;
+
+#if PII_X86
+#include <cpuid.h>
+#include <immintrin.h>
+#define TARGET(t) __attribute__((target(t)))
+#define FORCE_INLINE static inline __attribute__((always_inline))
+
+// 8-wide kernels: AVX2_ROWS rows x 16 columns per register tile (12 accumulators, 2 weight vectors and 1 broadcast of the
+// 16 ymm registers). tile_*: R rows x 8 * NB columns (NB = 1 or 2: columns 0..7 from B0, 8..15 from B1, row k at
+// B + k * ldb), R and NB constant once inlined. Each output sums k in order with MADD8, as the 4-wide kernel does with
+// MADD, so "avx2" (multiply, then add) gives the logits of "sse" bit for bit and "avx2+fma" those of the fused 4-wide
+// kernels ("sse+fma", "neon+fma"). Unaligned loads and stores; the compiler places vzeroupper. Every build passes
+// -ffp-contract=off, and outside a build for an FMA target (-mfma, -march=x86-64-v3) the plain kernel's target has no FMA
+// instruction to contract to.
+#define AVX2_ROWS 6
+#define AVX2_KERNEL(SUF, TGT)                                                                                              \
+  FORCE_INLINE TARGET(TGT) void tile_##SUF(float *C, int ldc, const float *A, int lda, const float *B0, const float *B1,  \
+                                           int ldb, const int R, const int NB, int K) {                                   \
+    __m256 c[AVX2_ROWS][2];                                                                                               \
+    UNROLL for (int i = 0; i < R; i++) c[i][0] = c[i][1] = _mm256_setzero_ps();                                           \
+    for (int k = 0; k < K; k++) {                                                                                         \
+      const __m256 w0 = _mm256_loadu_ps(B0 + (size_t)k * ldb);                                                            \
+      const __m256 w1 = NB == 2 ? _mm256_loadu_ps(B1 + (size_t)k * ldb) : w0;                                             \
+      UNROLL for (int i = 0; i < R; i++) {                                                                                \
+        const __m256 x = _mm256_set1_ps(A[(size_t)i * lda + k]);                                                          \
+        c[i][0] = MADD8(c[i][0], x, w0);                                                                                  \
+        if (NB == 2) c[i][1] = MADD8(c[i][1], x, w1);                                                                     \
+      }                                                                                                                   \
+    }                                                                                                                     \
+    UNROLL for (int i = 0; i < R; i++) {                                                                                  \
+      _mm256_storeu_ps(C + (size_t)i * ldc, c[i][0]);                                                                     \
+      if (NB == 2) _mm256_storeu_ps(C + (size_t)i * ldc + 8, c[i][1]);                                                    \
+    }                                                                                                                     \
+  }                                                                                                                       \
+  /* Mr rows: tiles of AVX2_ROWS, then one tile of the 1 to 5 rows left */                                                \
+  FORCE_INLINE TARGET(TGT) void rows_##SUF(float *C, int ldc, const float *A, int lda, const float *B0, const float *B1,  \
+                                           int ldb, int Mr, const int NB, int K) {                                        \
+    int r = 0;                                                                                                            \
+    for (; r + AVX2_ROWS <= Mr; r += AVX2_ROWS)                                                                           \
+      tile_##SUF(C + (size_t)r * ldc, ldc, A + (size_t)r * lda, lda, B0, B1, ldb, AVX2_ROWS, NB, K);                      \
+    C += (size_t)r * ldc;                                                                                                 \
+    A += (size_t)r * lda;                                                                                                 \
+    switch (Mr - r) {                                                                                                     \
+      case 5: tile_##SUF(C, ldc, A, lda, B0, B1, ldb, 5, NB, K); break;                                                   \
+      case 4: tile_##SUF(C, ldc, A, lda, B0, B1, ldb, 4, NB, K); break;                                                   \
+      case 3: tile_##SUF(C, ldc, A, lda, B0, B1, ldb, 3, NB, K); break;                                                   \
+      case 2: tile_##SUF(C, ldc, A, lda, B0, B1, ldb, 2, NB, K); break;                                                   \
+      case 1: tile_##SUF(C, ldc, A, lda, B0, B1, ldb, 1, NB, K); break;                                                   \
+      default: break;                                                                                                     \
+    }                                                                                                                     \
+  }                                                                                                                       \
+  static TARGET(TGT) void gemm_##SUF(float *C, int ldc, const float *A, int lda, const float *B, int ldb, int Mr, int N,  \
+                                     int K) {                                                                             \
+    int n0 = 0;                                                                                                           \
+    for (; n0 + 16 <= N; n0 += 16) rows_##SUF(C + n0, ldc, A, lda, B + n0, B + n0 + 8, ldb, Mr, 2, K);                    \
+    if (n0 < N) rows_##SUF(C + n0, ldc, A, lda, B + n0, B + n0, ldb, Mr, 1, K);                                           \
+  }                                                                                                                       \
+  static TARGET(TGT) void gemm16_##SUF(float *C, int ldc, const float *A, int lda, const float *P0, const float *P1,      \
+                                       int Mr, int K) {                                                                   \
+    rows_##SUF(C, ldc, A, lda, P0, P1, 8, Mr, 2, K);                                                                      \
+  }
+
+#define MADD8(c, a, b) _mm256_add_ps(c, _mm256_mul_ps(a, b))
+AVX2_KERNEL(avx2, "avx2")
+#undef MADD8
+#ifndef PII_NO_FMA
+#define MADD8(c, a, b) _mm256_fmadd_ps(a, b, c)
+AVX2_KERNEL(avx2fma, "avx2,fma")
+#undef MADD8
+#endif
+
+int pii_kernel_inputs(uint32_t *max_leaf, uint32_t *leaf1_ecx, uint32_t *leaf7_ebx, uint64_t *xcr0) {
+  unsigned a, b, c, d;
+  __cpuid(0, a, b, c, d);
+  *max_leaf = a;
+  *leaf1_ecx = *leaf7_ebx = 0;
+  *xcr0 = 0;
+  if (*max_leaf >= 1) {
+    __cpuid(1, a, b, c, d);
+    *leaf1_ecx = c;
+  }
+  if (*max_leaf >= 7) {
+    __cpuid_count(7, 0, a, b, c, d);
+    *leaf7_ebx = b;
+  }
+  if (*leaf1_ecx >> 27 & 1) {  // OSXSAVE: XGETBV is there and enabled
+    unsigned lo, hi;
+    __asm__ __volatile__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    *xcr0 = (uint64_t)hi << 32 | lo;
+  }
+  return PII_BUILD_BITS;
+}
+
+static const pii_kernel KERNELS[4] = {
+    [PII_KERNEL_SSE] = {gemm, NULL, PII_ISA_NAME},
+    [PII_KERNEL_AVX2] = {gemm_avx2, gemm16_avx2, "avx2"},
+#ifndef PII_NO_FMA
+    [PII_KERNEL_AVX2_FMA] = {gemm_avx2fma, gemm16_avx2fma, "avx2+fma"},
+#endif
+};
+
+// 0 until the first call that needs the kernel (a model run or pii_build_info), which fixes it for the process. Threads
+// that get here at once may each work it out; the first store wins and every caller uses the stored kernel.
+static int kernel_id;
+static const pii_kernel *pii_kernel_get(void) {
+  int k = __atomic_load_n(&kernel_id, __ATOMIC_ACQUIRE);
+  if (!k) {
+    uint32_t max_leaf, ecx, ebx;
+    uint64_t xcr0;
+    const int build = pii_kernel_inputs(&max_leaf, &ecx, &ebx, &xcr0);
+    const int choice = pii_kernel_select(max_leaf, ecx, ebx, xcr0, getenv("NEWMEAN_PII_KERNEL"), build);
+    int expected = 0;
+    k = __atomic_compare_exchange_n(&kernel_id, &expected, choice, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE) ? choice : expected;
+  }
+  return &KERNELS[k];
+}
+#else
+int pii_kernel_inputs(uint32_t *max_leaf, uint32_t *leaf1_ecx, uint32_t *leaf7_ebx, uint64_t *xcr0) {
+  *max_leaf = *leaf1_ecx = *leaf7_ebx = 0;
+  *xcr0 = 0;
+  return -1;  // one kernel, fixed when compiled
+}
+static const pii_kernel KERNEL = {gemm,
 #if PII_WIDE
-  float *panel2 = ws->panel + (size_t)w->K * 8;
-  for (; (p + 2) * 8 <= w->N; p += 2) {
-    const int n0 = p * 8;
-    dequant_panel(w, p, ws->panel);
-    dequant_panel(w, p + 1, panel2);
-    gemm16(out + n0, ldo, A, lda, ws->panel, panel2, L, w->K);
-    if (bias) {
-      f4 b0 = v_load(bias + n0), b1 = v_load(bias + n0 + 4), b2 = v_load(bias + n0 + 8), b3 = v_load(bias + n0 + 12);
-      for (int r = 0; r < L; r++) {
-        float *o = out + (size_t)r * ldo + n0;
-        v_store(o, v_add(v_load(o), b0)); v_store(o + 4, v_add(v_load(o + 4), b1));
-        v_store(o + 8, v_add(v_load(o + 8), b2)); v_store(o + 12, v_add(v_load(o + 12), b3));
+                                  gemm16,
+#else
+                                  NULL,
+#endif
+                                  PII_ISA_NAME};
+static VI const pii_kernel *pii_kernel_get(void) { return &KERNEL; }
+#endif
+
+// out[L, ldo] (columns 0..N-1) = A[L, lda] (columns 0..K-1) x W + bias, one dequantized 8-column panel at a time, or two
+// with a kernel that has gemm16.
+static void matmul(const pii_kernel *kn, pii_ws *ws, float *out, int ldo, const float *A, int lda, int L, const pii_q4 *w,
+                   const float *bias) {
+  int p = 0;
+  if (kn->gemm16) {
+    float *panel2 = ws->panel + (size_t)w->K * 8;
+    for (; (p + 2) * 8 <= w->N; p += 2) {
+      const int n0 = p * 8;
+      dequant_panel(w, p, ws->panel);
+      dequant_panel(w, p + 1, panel2);
+      kn->gemm16(out + n0, ldo, A, lda, ws->panel, panel2, L, w->K);
+      if (bias) {
+        f4 b0 = v_load(bias + n0), b1 = v_load(bias + n0 + 4), b2 = v_load(bias + n0 + 8), b3 = v_load(bias + n0 + 12);
+        for (int r = 0; r < L; r++) {
+          float *o = out + (size_t)r * ldo + n0;
+          v_store(o, v_add(v_load(o), b0)); v_store(o + 4, v_add(v_load(o + 4), b1));
+          v_store(o + 8, v_add(v_load(o + 8), b2)); v_store(o + 12, v_add(v_load(o + 12), b3));
+        }
       }
     }
   }
-#endif
   for (; p < w->Np / 8; p++) {
     const int n0 = p * 8;
     dequant_panel(w, p, ws->panel);
     if (n0 + 8 <= w->N) {
-      gemm(out + n0, ldo, A, lda, ws->panel, 8, L, 8, w->K);
+      kn->gemm(out + n0, ldo, A, lda, ws->panel, 8, L, 8, w->K);
       if (bias) {
         f4 b0 = v_load(bias + n0), b1 = v_load(bias + n0 + 4);
         for (int r = 0; r < L; r++) {
@@ -430,7 +631,7 @@ static void matmul(pii_ws *ws, float *out, int ldo, const float *A, int lda, int
         }
       }
     } else {  // last, partial panel (the classifier): through a scratch block
-      gemm(ws->tail, 8, A, lda, ws->panel, 8, L, 8, w->K);
+      kn->gemm(ws->tail, 8, A, lda, ws->panel, 8, L, 8, w->K);
       for (int r = 0; r < L; r++)
         for (int j = 0; n0 + j < w->N; j++) out[(size_t)r * ldo + n0 + j] = ws->tail[r * 8 + j] + (bias ? bias[n0 + j] : 0.f);
     }
@@ -447,7 +648,7 @@ static VI float hmax(f4 v) {
 
 // Multi-head self attention without a mask (one unpadded sequence): ctx = softmax(q k^T) v per head;
 // q and k are each scaled by 32^-1/4, as in the exported graph. Scores and P.V use the gemm kernel.
-static void attention(const pii_engine *m, pii_ws *w, int L) {
+static void attention(const pii_kernel *kn, const pii_engine *m, pii_ws *w, int L) {
   const int H = m->H;
   const int Lp = (L + 7) & ~7;  // keys padded to 8 (padded scores are dropped before the softmax)
   const f4 qs = v_splat(0.4204482138156891f);
@@ -462,7 +663,7 @@ static void attention(const pii_engine *m, pii_ws *w, int L) {
       for (int j = 0; j < L; j++) kt[d * Lp + j] = w->k[(size_t)j * H + o + d];
       for (int j = L; j < Lp; j++) kt[d * Lp + j] = 0.f;
     }
-    gemm(S, Lp, w->q + o, H, kt, Lp, L, Lp, HEAD);
+    kn->gemm(S, Lp, w->q + o, H, kt, Lp, L, Lp, HEAD);
     for (int i = 0; i < L; i++) {
       float *s = S + (size_t)i * Lp;
       for (int j = L; j < Lp; j++) s[j] = -3.0e38f;
@@ -484,7 +685,7 @@ static void attention(const pii_engine *m, pii_ws *w, int L) {
       const f4 inv = v_splat(1.0f / hsum(sum));
       for (int j = 0; j < Lp; j += 4) v_store(s + j, v_mul(v_load(s + j), inv));
     }
-    gemm(w->ctx + o, H, S, Lp, w->v + o, H, L, HEAD, L);
+    kn->gemm(w->ctx + o, H, S, Lp, w->v + o, H, L, HEAD, L);
   }
 }
 
@@ -509,26 +710,13 @@ static void gelu(float *x, size_t n) {
 }
 
 // ---------------------------------------------------------------- build
-const char *pii_build_info(void) {
-#if !PII_VEC
-#define PII_ISA "scalar"
-#elif defined(__aarch64__) || defined(__ARM_NEON)
-#define PII_ISA "neon"
-#elif defined(__x86_64__) || defined(__i386__)
-#define PII_ISA "sse"
-#else
-#define PII_ISA "vector"
-#endif
-#ifdef PII_FMA
-  return PII_ISA "+fma";
-#else
-  return PII_ISA;
-#endif
-}
+// The matrix kernel this process runs (x86-64: fixed by the first call that needs it, see "kernel choice").
+const char *pii_build_info(void) { return pii_kernel_get()->name; }
 
 // ---------------------------------------------------------------- forward
 const float *pii_engine_run(const pii_engine *m, pii_ws *w, const int32_t *ids, int L) {
   if (L <= 0 || L > pii_engine_max_len(m) || L > w->cap) return NULL;
+  const pii_kernel *kn = pii_kernel_get();
   const int H = m->H, E = m->E;
   // embeddings: word (+ projection) + token type 0 + position (RoBERTa positions: padding_idx + 1 + index)
   for (int i = 0; i < L; i++) {
@@ -536,7 +724,7 @@ const float *pii_engine_run(const pii_engine *m, pii_ws *w, const int32_t *ids, 
     if (id < 0 || id >= m->V) id = 0;
     emb_row(&m->word, id, w->emb + (size_t)i * E);
   }
-  if (m->has_proj) matmul(w, w->x2, H, w->emb, E, L, &m->proj, 0);
+  if (m->has_proj) matmul(kn, w, w->x2, H, w->emb, E, L, &m->proj, 0);
   else
     for (int i = 0; i < L * H; i++) w->x2[i] = w->emb[i];
   int p = m->pad;
@@ -550,17 +738,17 @@ const float *pii_engine_run(const pii_engine *m, pii_ws *w, const int32_t *ids, 
   add_layernorm(m, w->x, w->x2, 0, L, m->elng, m->elnb);
   for (int a = 0; a < m->NA; a++) {
     const pii_layer *y = &m->layers[m->apply[a]];
-    matmul(w, w->q, H, w->x, H, L, &y->wq, y->bq);
-    matmul(w, w->k, H, w->x, H, L, &y->wk, y->bk);
-    matmul(w, w->v, H, w->x, H, L, &y->wv, y->bv);
-    attention(m, w, L);
-    matmul(w, w->x2, H, w->ctx, H, L, &y->wo, y->bo);
+    matmul(kn, w, w->q, H, w->x, H, L, &y->wq, y->bq);
+    matmul(kn, w, w->k, H, w->x, H, L, &y->wk, y->bk);
+    matmul(kn, w, w->v, H, w->x, H, L, &y->wv, y->bv);
+    attention(kn, m, w, L);
+    matmul(kn, w, w->x2, H, w->ctx, H, L, &y->wo, y->bo);
     add_layernorm(m, w->x, w->x2, w->x, L, y->ln1g, y->ln1b);
-    matmul(w, w->ff, m->I, w->x, H, L, &y->wi, y->bi);
+    matmul(kn, w, w->ff, m->I, w->x, H, L, &y->wi, y->bi);
     gelu(w->ff, (size_t)L * m->I);
-    matmul(w, w->x2, H, w->ff, m->I, L, &y->wout, y->bout);
+    matmul(kn, w, w->x2, H, w->ff, m->I, L, &y->wout, y->bout);
     add_layernorm(m, w->x, w->x2, w->x, L, y->ln2g, y->ln2b);
   }
-  matmul(w, w->logits, m->T, w->x, H, L, &m->cls, m->bcls);
+  matmul(kn, w, w->logits, m->T, w->x, H, L, &m->cls, m->bcls);
   return w->logits;
 }

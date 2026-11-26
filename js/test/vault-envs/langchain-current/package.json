@@ -1,0 +1,15 @@
+{
+  "name": "vault-env-langchain-current",
+  "private": true,
+  "description": "The LangChain.js environment current of the public vault workflow (.github/workflows/vault.yml): the tested current release, langchain 1.6.8 with @langchain/core 1.5.1, and the test tools of js/package.json. npm ci installs exactly the versions of package-lock.json, those of the local gate run.",
+  "type": "module",
+  "dependencies": {
+    "langchain": "1.6.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "onnxruntime-web": "1.31.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

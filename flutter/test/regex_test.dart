@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:newmean_pii/newmean_pii.dart';
 import 'package:test/test.dart';
 
+import 'growth.dart';
 import 'paths.dart';
 
 void main() {
@@ -181,6 +182,7 @@ void main() {
 
   // 1.6.0 needed many seconds for the first text
   test('regexSpans takes time in proportion to the length of long inputs', () {
+    if (skipTiming()) return;
     final watch = Stopwatch()..start();
     for (final t in ['a' * 100000, 'a@${'b' * 100000}', '@' * 100000, 'a.' * 50000, '1' * 100000]) {
       expect(regexSpans(t).where((s) => s.label == 'EMAIL'), isEmpty);

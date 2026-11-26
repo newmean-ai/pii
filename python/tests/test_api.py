@@ -1,4 +1,5 @@
 import json
+import os
 import re
 
 import pytest
@@ -33,8 +34,8 @@ def test_constants_match_the_npm_package():
     assert LEVEL1_LABELS == [l for l in LABELS if l not in ("PERSON_L2", "URL_L2")]
     assert len(TAGS) == 27 and TAGS[:3] == ["O", "B-PERSON", "I-PERSON"]
     assert MODEL_VERSION == "1.1.0"
-    assert _core.version() == "1.6.1"
-    assert re.fullmatch(r"(neon|sse|vector|scalar)(\+fma)?", _core.build_info())
+    assert _core.version() == "1.7.2"
+    assert re.fullmatch(r"(neon|avx2|sse|vector|scalar)(\+fma)?", _core.build_info())
 
 
 def test_pins_match_js_models_ts():
@@ -141,6 +142,24 @@ def test_keep_emoji(nano):
         assert isinstance(r.detect(text), list)
 
 
+def ends_with_pinned_path(local_path, pinned, sep=os.sep):
+    """local_path (as the platform writes it) ends with the pinned path, which is written with "/" on every platform.
+    test_info compared them as written and failed on Windows, where local_path has backslashes."""
+    return local_path.endswith(sep + sep.join(pinned.split("/")))
+
+
+def test_ends_with_pinned_path_uses_the_platform_separator():
+    bs = chr(92)
+    windows = bs.join(["C:", "cache", "newmean-pii", "nano", "onnx", "model_q4.onnx"])
+    assert not windows.endswith("onnx/model_q4.onnx")  # the comparison that failed on Windows
+    assert ends_with_pinned_path(windows, "onnx/model_q4.onnx", sep=bs)
+    assert ends_with_pinned_path(bs.join(["C:", "cache", "tokenizer.web.json"]), "tokenizer.web.json", sep=bs)
+    assert ends_with_pinned_path("/cache/newmean-pii/nano/onnx/model_q4.onnx", "onnx/model_q4.onnx", sep="/")
+    assert not ends_with_pinned_path(windows, "onnx/model_q4e.onnx", sep=bs)
+    assert not ends_with_pinned_path(bs.join(["C:", "nano", "xonnx", "model_q4.onnx"]), "onnx/model_q4.onnx", sep=bs)
+    assert not ends_with_pinned_path("/cache/nano/onnx/model_q4.onnx", "onnx/model_q4.onnx", sep=bs)
+
+
 def test_info(nano):
     i = nano.info()
     assert i["package_version"] == newmean_pii.__version__
@@ -150,7 +169,7 @@ def test_info(nano):
         pin = model_file("nano", file)
         f = i["files"][key]
         assert (f["path"], f["bytes"], f["sha256"]) == (pin.path, pin.bytes, pin.sha256)
-        assert f["local_path"].endswith(pin.path)
+        assert ends_with_pinned_path(f["local_path"], pin.path), (f["local_path"], pin.path)
     assert i["layers"] > 0 and i["build"] == _core.build_info()
 
 

@@ -1,6 +1,6 @@
 # Swift package NewmeanPII (Package.swift at the repository root, sources in swift/ and native/core): test on macOS and
 # build for iOS devices and the iOS Simulator (no simulator is booted). The parity tests skip here: their fixtures and
-# model copies are private.
+# model copies are private. rc.yml calls this workflow for a release candidate.
 name: swift
 
 on:
@@ -10,15 +10,31 @@ on:
   pull_request:
     paths: [Package.swift, swift/**, native/core/**, .github/workflows/swift.yml]
   workflow_dispatch:
+    inputs:
+      os:
+        description: "Runners outside newmean-ai/pii (the public repository always runs all): every job here is macOS, so only all runs anything"
+        type: choice
+        options: [linux, linux-windows, all]
+        default: linux
+  workflow_call:
 
 permissions:
   contents: read
 
+# Only this workflow's own dispatch or pull-request run is cancelled by a newer one for the same event and ref. A push run
+# and a run called by rc.yml (github.workflow is then the caller's name) get a group of their own, so nothing cancels them.
+concurrency:
+  group: swift-${{ (github.workflow == 'swift' && github.event_name != 'push') && format('{0}-{1}', github.event_name, github.ref) || github.run_id }}
+  cancel-in-progress: ${{ github.workflow == 'swift' && github.event_name != 'push' }}
+
 jobs:
   test:
-    # on push only in the public repository; other copies of it run these by hand (workflow_dispatch)
-    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    # on push only in the public repository; elsewhere (macOS) only when dispatched with os: all
+    if: github.repository == 'newmean-ai/pii' || inputs.os == 'all'
     runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      PII_SKIP_TIMING: "1"  # every step but the timing step: timing tests never share a step (CI3)
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
@@ -28,10 +44,20 @@ jobs:
       - run: swift test -c release --filter ModelTests/testDownload
         env:
           PII_DOWNLOAD: "1"
+      # the six tests with an assertion on measured time (the 1.7.2 release standard, CI3), alone: the two Growth classes
+      # and the two time limits; all six must pass, none skipped
+      - name: Timing tests
+        env:
+          PII_SKIP_TIMING: "0"
+        run: |
+          set -o pipefail
+          swift test -c release --filter 'RegexTests/testLongInputsTakeTimeInProportionToTheirLength|VaultTests/testFourthReviewFixes|ReviewDocsGrowthTests|VaultGrowthTests' 2>&1 | tee "$RUNNER_TEMP/timing.log"
+          grep -q "Executed 6 tests, with 0 failures" "$RUNNER_TEMP/timing.log"
 
   ios:
-    if: github.repository == 'newmean-ai/pii' || github.event_name == 'workflow_dispatch'
+    if: github.repository == 'newmean-ai/pii' || inputs.os == 'all'
     runs-on: macos-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

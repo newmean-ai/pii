@@ -10,6 +10,7 @@
 #include <stdlib.h>
 
 #include "pii.h"
+#include "internal.h" /* pii_model_logits, pii_kernel_inputs, pii_kernel_select (tests only) */
 
 typedef struct {
   PyObject_HEAD
@@ -238,6 +239,33 @@ static PyObject *Model_tokenize(PyObject *obj, PyObject *args) {
   return out;
 }
 
+/* _logits(text) -> bytes: float32 logits of every window, as pii_model_logits gives them (tests compare kernels bit for
+ * bit; not part of the API). */
+static PyObject *Model_logits(PyObject *obj, PyObject *args) {
+  ModelObject *self = (ModelObject *)obj;
+  PyObject *text;
+  if (!PyArg_ParseTuple(args, "U:_logits", &text)) return NULL;
+  PyObject *bytes = encode(text);
+  if (!bytes) return NULL;
+  char *p;
+  Py_ssize_t len;
+  if (PyBytes_AsStringAndSize(bytes, &p, &len) < 0) {
+    Py_DECREF(bytes);
+    return NULL;
+  }
+  float *lg = NULL;
+  size_t n = 0;
+  int rc;
+  Py_BEGIN_ALLOW_THREADS
+  rc = pii_model_logits(self->model, p, (size_t)len, &lg, &n);
+  Py_END_ALLOW_THREADS
+  Py_DECREF(bytes);
+  if (rc != PII_OK) return raise_code(rc);
+  PyObject *out = PyBytes_FromStringAndSize((const char *)lg, (Py_ssize_t)(n * sizeof(float)));
+  free(lg);
+  return out;
+}
+
 static PyObject *Model_info(PyObject *obj, PyObject *unused) {
   (void)unused;
   pii_model_info i;
@@ -256,6 +284,7 @@ static PyMethodDef Model_methods[] = {
      "whole_words=True, strict_short_names=False, lists=None) -> [(start, end, label_id, source)]"},
     {"tokenize", Model_tokenize, METH_VARARGS, "tokenize(text) -> [(id, start, end)]"},
     {"info", Model_info, METH_NOARGS, "Model shape."},
+    {"_logits", Model_logits, METH_VARARGS, "_logits(text) -> bytes: float32 logits of every window (tests only)."},
     {NULL, NULL, 0, NULL},
 };
 
@@ -402,9 +431,34 @@ static PyObject *f_default_variant(PyObject *m, PyObject *args) {
   return PyUnicode_FromString(v);
 }
 
+/* _kernel_inputs() -> (max_leaf, leaf1_ecx, leaf7_ebx, xcr0, build): what this process passes to the x86-64 kernel choice
+ * (CPUID and XGETBV; build -1 where the build has a single kernel). Tests only; not part of the API. */
+static PyObject *f_kernel_inputs(PyObject *m, PyObject *unused) {
+  (void)m;
+  (void)unused;
+  uint32_t max_leaf, ecx, ebx;
+  uint64_t xcr0;
+  const int build = pii_kernel_inputs(&max_leaf, &ecx, &ebx, &xcr0);
+  return Py_BuildValue("(kkkKi)", (unsigned long)max_leaf, (unsigned long)ecx, (unsigned long)ebx, (unsigned long long)xcr0, build);
+}
+
+/* _kernel_select(max_leaf, leaf1_ecx, leaf7_ebx, xcr0, request, build) -> 1 (4-wide), 2 ("avx2") or 3 ("avx2+fma"): the
+ * pure function the core runs once per process (tests check its truth table). Tests only; not part of the API. */
+static PyObject *f_kernel_select(PyObject *m, PyObject *args) {
+  (void)m;
+  unsigned long max_leaf, ecx, ebx;
+  unsigned long long xcr0;
+  const char *request;
+  int build;
+  if (!PyArg_ParseTuple(args, "kkkKzi:_kernel_select", &max_leaf, &ecx, &ebx, &xcr0, &request, &build)) return NULL;
+  return PyLong_FromLong(pii_kernel_select((uint32_t)max_leaf, (uint32_t)ecx, (uint32_t)ebx, (uint64_t)xcr0, request, build));
+}
+
 static PyMethodDef module_methods[] = {
     {"version", f_version, METH_NOARGS, "Version of the native core."},
-    {"build_info", f_build_info, METH_NOARGS, "Kernel build (\"neon\", \"sse\", \"vector\" or \"scalar\", \"+fma\")."},
+    {"build_info", f_build_info, METH_NOARGS, "Matrix kernel this process runs (\"neon\", \"avx2\", \"sse\", \"vector\" or \"scalar\", \"+fma\")."},
+    {"_kernel_inputs", f_kernel_inputs, METH_NOARGS, "CPUID and XGETBV values of the x86-64 kernel choice (tests only)."},
+    {"_kernel_select", f_kernel_select, METH_VARARGS, "The x86-64 kernel choice as a pure function (tests only)."},
     {"model_file", f_model_file, METH_VARARGS, "model_file(size, file) -> (path, bytes, sha256) or None"},
     {"default_variant", f_default_variant, METH_VARARGS, "default_variant(size) -> \"q4\" | \"q4e\" | None"},
     {"lists_create", f_lists_create, METH_VARARGS, "lists_create(allow, block) -> Lists, or (list, index, reason) for an invalid entry"},

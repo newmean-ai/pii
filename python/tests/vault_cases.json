@@ -1,0 +1,2203 @@
+{
+  "about": "Vault cases every SDK must pass the same way (python/tests/test_vault.py and js/test/vault.test.ts; the Rust, Swift, Kotlin and Dart tests read it too; it lives under python/tests so the Python sdist carries it). Each group adds `values` in order with vault.tag(label, value) and checks the tags, then redact, hide, hide (escape), hide_value and restore. redact masks each text with the vault and spans a model found (redact_with_vault): each [value, label] of `found` is a span over the next place the value is written, in order; `want` is the text, `spans` (when given) the final spans as covered text, label and source (the Rust and Swift labels are enums, so a custom family is checked there as PERSON), and `entries` (when given) are the vault's values afterwards. hide_loose and hide_keep are for the packages with middlewares (npm, Python).",
+  "groups": [
+    {
+      "name": "numbering and families",
+      "values": [
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "PHONE",
+          "010-1234-5678"
+        ],
+        [
+          "PERSON_L2",
+          "Mr. Lee"
+        ],
+        [
+          "ORG",
+          "Kim Minsu"
+        ],
+        [
+          "url_l2",
+          "x.com/kim"
+        ],
+        [
+          "",
+          "???"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PHONE_1]",
+        "[PERSON_2]",
+        "[PERSON_1]",
+        "[URL_1]",
+        "[PII_1]"
+      ],
+      "restore": [
+        {
+          "text": "Call [PERSON_1] ([PERSON_2]) on [PHONE_1], not [PERSON_9], [person_1] or [note]",
+          "want": "Call Kim Minsu (Mr. Lee) on 010-1234-5678, not [PERSON_9], [person_1] or [note]"
+        },
+        {
+          "text": "[PERSON_1] [PHONE_1]",
+          "only": [
+            "[PHONE_1]"
+          ],
+          "want": "[PERSON_1] 010-1234-5678"
+        },
+        {
+          "text": "{\"to\":\"[PERSON_2]\"}",
+          "json": true,
+          "want": "{\"to\":\"Mr. Lee\"}"
+        }
+      ]
+    },
+    {
+      "name": "Latin word edges and overlapping values",
+      "values": [
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "PERSON",
+          "Kim"
+        ],
+        [
+          "ID_NUMBER",
+          "42"
+        ],
+        [
+          "EMAIL",
+          "kim@example.com"
+        ],
+        [
+          "USERNAME",
+          "kim_01"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[ID_NUMBER_1]",
+        "[EMAIL_1]",
+        "[USERNAME_1]"
+      ],
+      "hide": [
+        {
+          "text": "Kim Minsu and Kim, not Kimberly, Akim or Kim_x; 42",
+          "want": "[PERSON_1] and [PERSON_2], not Kimberly, Akim or Kim_x; 42"
+        },
+        {
+          "text": "mail kim@example.com. kim_01 kim_012",
+          "want": "mail [EMAIL_1]. [USERNAME_1] kim_012"
+        },
+        {
+          "text": "(Kim)Minsu \"Kim Minsu\"",
+          "want": "([PERSON_2])Minsu \"[PERSON_1]\""
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "to": "Kim Minsu",
+            "id": "42",
+            "ids": [
+              "42",
+              "142",
+              42
+            ],
+            "note": "id 42 for Kim"
+          },
+          "want": {
+            "to": "[PERSON_1]",
+            "id": "[ID_NUMBER_1]",
+            "ids": [
+              "[ID_NUMBER_1]",
+              "142",
+              42
+            ],
+            "note": "id 42 for [PERSON_2]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Korean particles and Hangul edges",
+      "values": [
+        [
+          "PERSON",
+          "김민수"
+        ],
+        [
+          "ADDRESS",
+          "부평구 부평대로 1"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[ADDRESS_1]"
+      ],
+      "hide": [
+        {
+          "text": "김민수님께 보냈고 이김민수는 다른 사람, 김민수.",
+          "want": "[PERSON_1]님께 보냈고 이김민수는 다른 사람, [PERSON_1]."
+        },
+        {
+          "text": "부평구 부평대로 1번지, 부평구 부평대로 12",
+          "want": "[ADDRESS_1]번지, 부평구 부평대로 12"
+        }
+      ]
+    },
+    {
+      "name": "scripts without spaces",
+      "values": [
+        [
+          "PERSON",
+          "王伟"
+        ],
+        [
+          "PERSON",
+          "タナカ"
+        ],
+        [
+          "PERSON",
+          "ﾀﾅｶ"
+        ],
+        [
+          "PERSON",
+          "สมชาย"
+        ],
+        [
+          "PERSON",
+          "𠮷田"
+        ],
+        [
+          "PERSON",
+          "李"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]",
+        "[PERSON_5]",
+        "[PERSON_6]"
+      ],
+      "hide": [
+        {
+          "text": "请联系王伟先生",
+          "want": "请联系[PERSON_1]先生"
+        },
+        {
+          "text": "タナカさんとﾀﾅｶｻﾝ",
+          "want": "[PERSON_2]さんと[PERSON_3]ｻﾝ"
+        },
+        {
+          "text": "คุณสมชายมาแล้ว",
+          "want": "คุณ[PERSON_4]มาแล้ว"
+        },
+        {
+          "text": "𠮷田さん",
+          "want": "[PERSON_5]さん"
+        },
+        {
+          "text": "李先生",
+          "want": "李先生"
+        }
+      ]
+    },
+    {
+      "name": "other scripts keep word edges",
+      "values": [
+        [
+          "PERSON",
+          "محمد"
+        ],
+        [
+          "PERSON",
+          "राहुल"
+        ],
+        [
+          "PERSON",
+          "José"
+        ],
+        [
+          "PERSON",
+          "Иван"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]"
+      ],
+      "hide": [
+        {
+          "text": "السيد محمد ومحمدي",
+          "want": "السيد [PERSON_1] ومحمدي"
+        },
+        {
+          "text": "राहुल ने राहुलजी को",
+          "want": "[PERSON_2] ने राहुलजी को"
+        },
+        {
+          "text": "José, Joséphine, Иван и Иванов",
+          "want": "[PERSON_3], Joséphine, [PERSON_4] и Иванов"
+        }
+      ]
+    },
+    {
+      "name": "overlapping known values",
+      "values": [
+        [
+          "PERSON",
+          "Alex Kim"
+        ],
+        [
+          "PERSON",
+          "Kim Lee"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]"
+      ],
+      "hide": [
+        {
+          "text": "Hi Alex Kim Lee! Kim Lee, Alex Kim.",
+          "want": "Hi [PERSON_3]! [PERSON_2], [PERSON_1]."
+        }
+      ]
+    },
+    {
+      "name": "escaped hide",
+      "values": [
+        [
+          "PERSON",
+          "Alex Kim"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]"
+      ],
+      "hide_escaped": [
+        {
+          "text": "Alex Kim wrote [PERSON_1] and [note]",
+          "want": "[PERSON_1] wrote ［PERSON_1] and [note]"
+        }
+      ]
+    },
+    {
+      "name": "empty value",
+      "values": [
+        [
+          "PERSON",
+          ""
+        ],
+        [
+          "PERSON",
+          "Kim"
+        ],
+        [
+          "EMAIL",
+          ""
+        ]
+      ],
+      "tags": [
+        "",
+        "[PERSON_1]",
+        ""
+      ],
+      "hide": [
+        {
+          "text": "Kim and nothing else",
+          "want": "[PERSON_1] and nothing else"
+        }
+      ]
+    },
+    {
+      "name": "loose search for model text",
+      "values": [
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "ID_NUMBER",
+          "42"
+        ],
+        [
+          "PERSON",
+          "王伟"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[ID_NUMBER_1]",
+        "[PERSON_2]"
+      ],
+      "hide": [
+        {
+          "text": "xKim Minsuy, id 42, x42y",
+          "want": "xKim Minsuy, id 42, x42y"
+        }
+      ],
+      "hide_loose": [
+        {
+          "text": "xKim Minsuy, id 42, x42y, 142",
+          "want": "x[PERSON_1]y, id [ID_NUMBER_1], x[ID_NUMBER_1]y, 1[ID_NUMBER_1]"
+        }
+      ]
+    },
+    {
+      "name": "kept placeholders",
+      "values": [
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "PHONE",
+          "010-1234-5678"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PHONE_1]"
+      ],
+      "hide_keep": [
+        {
+          "text": "[PERSON_1] at 010-1234-5678, see [PERSON_9] and [PHONE_1]",
+          "keep": [
+            "[PERSON_1]"
+          ],
+          "want": "[PERSON_1] at [PHONE_1], see ［PERSON_9] and ［PHONE_1]"
+        }
+      ]
+    },
+    {
+      "name": "placeholder grammar",
+      "values": [
+        [
+          "PERSON",
+          "Kim"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]"
+      ],
+      "hide_escaped": [
+        {
+          "text": "[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_1] [AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_1] [A_123456789012] [A_1234567890123] [A_01] [a_1] [1A_1] [A_] [_1] [A_1_2] [A__3]",
+          "want": "［AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_1] [AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA_1] ［A_123456789012] [A_1234567890123] ［A_01] [a_1] [1A_1] [A_] [_1] ［A_1_2] ［A__3]"
+        }
+      ],
+      "restore": [
+        {
+          "text": "[PERSON_1] [PERSON_01] [PERSON_1_] [PERSON_１]",
+          "want": "Kim [PERSON_01] [PERSON_1_] [PERSON_１]"
+        }
+      ]
+    },
+    {
+      "name": "custom labels",
+      "values": [
+        [
+          "A😀B",
+          "x"
+        ],
+        [
+          "person name",
+          "y"
+        ],
+        [
+          "9lives",
+          "z"
+        ],
+        [
+          "é",
+          "w"
+        ],
+        [
+          "person_l2",
+          "v"
+        ]
+      ],
+      "tags": [
+        "[A_B_1]",
+        "[PERSON_NAME_1]",
+        "[LIVES_1]",
+        "[PII_1]",
+        "[PERSON_1]"
+      ],
+      "restore": [
+        {
+          "text": "[A_B_1] [PERSON_NAME_1] [LIVES_1] [PII_1] [PERSON_1]",
+          "want": "x y z w v"
+        }
+      ]
+    },
+    {
+      "name": "no-space scripts next to other letters",
+      "values": [
+        [
+          "ID_NUMBER",
+          "ZX-88213-K"
+        ],
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "PERSON",
+          "王伟"
+        ],
+        [
+          "PHONE",
+          "090-1234-5678"
+        ]
+      ],
+      "tags": [
+        "[ID_NUMBER_1]",
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PHONE_1]"
+      ],
+      "hide": [
+        {
+          "text": "注文ZX-88213-Kは発送済みです",
+          "want": "注文[ID_NUMBER_1]は発送済みです"
+        },
+        {
+          "text": "订单ZX-88213-K已发货",
+          "want": "订单[ID_NUMBER_1]已发货"
+        },
+        {
+          "text": "Kim Minsuさんに連絡",
+          "want": "[PERSON_1]さんに連絡"
+        },
+        {
+          "text": "CEO王伟来了",
+          "want": "CEO[PERSON_2]来了"
+        },
+        {
+          "text": "090-1234-5678に電話",
+          "want": "[PHONE_1]に電話"
+        },
+        {
+          "text": "คุณKim Minsuครับ",
+          "want": "คุณ[PERSON_1]ครับ"
+        },
+        {
+          "text": "xKim Minsuy and ZX-88213-KX",
+          "want": "xKim Minsuy and ZX-88213-KX"
+        }
+      ]
+    },
+    {
+      "name": "a dot between two digits, and the sign of an exponent, join them",
+      "values": [
+        [
+          "ID_NUMBER",
+          "4524"
+        ],
+        [
+          "DATE_OF_BIRTH",
+          "15.03.1985"
+        ],
+        [
+          "USERNAME",
+          "kim.01"
+        ]
+      ],
+      "tags": [
+        "[ID_NUMBER_1]",
+        "[DATE_OF_BIRTH_1]",
+        "[USERNAME_1]"
+      ],
+      "hide": [
+        {
+          "text": "id 4524. Not 4524.7, 1.4524 or v1.4524.3; (4524), 4524, and 4524.x",
+          "want": "id [ID_NUMBER_1]. Not 4524.7, 1.4524 or v1.4524.3; ([ID_NUMBER_1]), [ID_NUMBER_1], and [ID_NUMBER_1].x"
+        },
+        {
+          "text": "born 15.03.1985. Not 15.03.1985.2 or 0.15.03.1985",
+          "want": "born [DATE_OF_BIRTH_1]. Not 15.03.1985.2 or 0.15.03.1985"
+        },
+        {
+          "text": "user kim.01, kim.01.2 and x.kim.01",
+          "want": "user [USERNAME_1], kim.01.2 and x.[USERNAME_1]"
+        },
+        {
+          "text": "1e+4524; 1E-4524; ４.4524; 4524.７; size-4524, e-4524, 2+4524 and id 4524.",
+          "want": "1e+4524; 1E-4524; ４.4524; 4524.７; size-[ID_NUMBER_1], e-[ID_NUMBER_1], 2+[ID_NUMBER_1] and id [ID_NUMBER_1]."
+        }
+      ]
+    },
+    {
+      "name": "a value that starts with a sign is not found as an exponent",
+      "values": [
+        [
+          "ID_NUMBER",
+          "-4524"
+        ],
+        [
+          "ID_NUMBER",
+          "+8210"
+        ]
+      ],
+      "tags": [
+        "[ID_NUMBER_1]",
+        "[ID_NUMBER_2]"
+      ],
+      "hide": [
+        {
+          "text": "weight 1e-4524, 2E-4524 and delta -4524; size-4524",
+          "want": "weight 1e-4524, 2E-4524 and delta [ID_NUMBER_1]; size[ID_NUMBER_1]"
+        },
+        {
+          "text": "1e+8210 and call +8210",
+          "want": "1e+8210 and call [ID_NUMBER_2]"
+        }
+      ]
+    },
+    {
+      "name": "an exponent joins only a value that is a number as JSON writes one",
+      "values": [
+        [
+          "ADDRESS",
+          "12 Main St"
+        ],
+        [
+          "PHONE",
+          "415 555 0123"
+        ],
+        [
+          "ADDRESS",
+          "04524"
+        ],
+        [
+          "USERNAME",
+          "12kim"
+        ],
+        [
+          "PHONE",
+          "+82 10 1234 5678"
+        ],
+        [
+          "ID_NUMBER",
+          "4524"
+        ]
+      ],
+      "tags": [
+        "[ADDRESS_1]",
+        "[PHONE_1]",
+        "[ADDRESS_2]",
+        "[USERNAME_1]",
+        "[PHONE_2]",
+        "[ID_NUMBER_1]"
+      ],
+      "hide": [
+        {
+          "text": "Unit 4E+12 Main St, ext 2e+415 555 0123, zip 4E+04524, user 1e-12kim",
+          "want": "Unit 4E+[ADDRESS_1], ext 2e+[PHONE_1], zip 4E+[ADDRESS_2], user 1e-[USERNAME_1]"
+        },
+        {
+          "text": "call 1e+82 10 1234 5678 today",
+          "want": "call 1e[PHONE_2] today"
+        },
+        {
+          "text": "Unit 4E+4524, 1e-4524, 2e+4524 and 4524",
+          "want": "Unit 4E+4524, 1e-4524, 2e+4524 and [ID_NUMBER_1]"
+        }
+      ]
+    },
+    {
+      "name": "letter case: e-mail, user name, URL host and values of two or more words in any ASCII case; any value in capitals",
+      "values": [
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "EMAIL",
+          "kim@example.com"
+        ],
+        [
+          "USERNAME",
+          "kim_01"
+        ],
+        [
+          "URL",
+          "https://example.org/Kim"
+        ],
+        [
+          "PERSON",
+          "Will"
+        ],
+        [
+          "PERSON",
+          "José"
+        ],
+        [
+          "PERSON",
+          "Al"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[EMAIL_1]",
+        "[USERNAME_1]",
+        "[URL_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]"
+      ],
+      "hide": [
+        {
+          "text": "KIM MINSU, kim minsu and kIM mINSU; not KIM MINSUK",
+          "want": "[PERSON_1], [PERSON_1] and [PERSON_1]; not KIM MINSUK"
+        },
+        {
+          "text": "Kim@Example.COM, KIM_01 and Kim_01",
+          "want": "[EMAIL_1], [USERNAME_1] and [USERNAME_1]"
+        },
+        {
+          "text": "HTTPS://EXAMPLE.ORG/Kim, https://Example.org/Kim, HTTPS://EXAMPLE.ORG/KIM, https://example.org/kim",
+          "want": "[URL_1], [URL_1], [URL_1], https://example.org/kim"
+        },
+        {
+          "text": "WILL said: will Will WiLL",
+          "want": "[PERSON_2] said: will [PERSON_2] WiLL"
+        },
+        {
+          "text": "JOSÉ, josé and José",
+          "want": "[PERSON_3], josé and [PERSON_3]"
+        },
+        {
+          "text": "AL and Al and al",
+          "want": "AL and Al and al"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "AL",
+            "b": "al",
+            "c": "Al",
+            "d": "KIM MINSU",
+            "e": "kim minsu"
+          },
+          "want": {
+            "a": "[PERSON_4]",
+            "b": "al",
+            "c": "[PERSON_4]",
+            "d": "[PERSON_1]",
+            "e": "[PERSON_1]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Hangul written as conjoining jamo (NFD) is read as syllables",
+      "values": [
+        [
+          "PERSON",
+          "김민수"
+        ],
+        [
+          "PERSON",
+          "이서연"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]"
+      ],
+      "hide": [
+        {
+          "text": "김민수님께",
+          "want": "[PERSON_1]님께"
+        },
+        {
+          "text": "이서연 씨와 이서연이",
+          "want": "[PERSON_2] 씨와 [PERSON_2]이"
+        },
+        {
+          "text": "이김민수",
+          "want": "이김민수"
+        },
+        {
+          "text": "김민순에게",
+          "want": "김민순에게"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "김민수",
+            "b": "이서연",
+            "c": "김민"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "[PERSON_2]",
+            "c": "김민"
+          }
+        }
+      ]
+    },
+    {
+      "name": "full-width ASCII and U+3000 are read as ASCII",
+      "values": [
+        [
+          "EMAIL",
+          "kim@example.com"
+        ],
+        [
+          "PHONE",
+          "010-1234-5678"
+        ],
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "ID_NUMBER",
+          "ＡＢ１２３"
+        ]
+      ],
+      "tags": [
+        "[EMAIL_1]",
+        "[PHONE_1]",
+        "[PERSON_1]",
+        "[ID_NUMBER_1]"
+      ],
+      "hide": [
+        {
+          "text": "ｋｉｍ＠ｅｘａｍｐｌｅ．ｃｏｍに送信",
+          "want": "[EMAIL_1]に送信"
+        },
+        {
+          "text": "電話は０１０－１２３４－５６７８です",
+          "want": "電話は[PHONE_1]です"
+        },
+        {
+          "text": "Ｋｉｍ　Ｍｉｎｓｕさん",
+          "want": "[PERSON_1]さん"
+        },
+        {
+          "text": "AB123 and ＡＢ１２３",
+          "want": "[ID_NUMBER_1] and [ID_NUMBER_1]"
+        },
+        {
+          "text": "ＫＩＭ＠ＥＸＡＭＰＬＥ．ＣＯＭ",
+          "want": "[EMAIL_1]"
+        },
+        {
+          "text": "xＡＢ１２３ stays",
+          "want": "xＡＢ１２３ stays"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "ｋｉｍ＠ｅｘａｍｐｌｅ．ｃｏｍ",
+            "b": "AB123",
+            "c": "ab123",
+            "d": "Ｋｉｍ　Ｍｉｎｓｕ"
+          },
+          "want": {
+            "a": "[EMAIL_1]",
+            "b": "[ID_NUMBER_1]",
+            "c": "ab123",
+            "d": "[PERSON_1]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "two Hangul syllables are found at word edges, particles after them allowed",
+      "values": [
+        [
+          "PERSON",
+          "이준"
+        ],
+        [
+          "PERSON",
+          "ㅋㅋ"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]"
+      ],
+      "hide": [
+        {
+          "text": "이준님께 보냈고 이준이 답했다. 김이준, 이준",
+          "want": "[PERSON_1]님께 보냈고 [PERSON_1]이 답했다. 김이준, [PERSON_1]"
+        },
+        {
+          "text": "이준abc와 이준42",
+          "want": "[PERSON_1]abc와 [PERSON_1]42"
+        },
+        {
+          "text": "이준씨",
+          "want": "[PERSON_1]씨"
+        },
+        {
+          "text": "ㅋㅋ 웃겨",
+          "want": "ㅋㅋ 웃겨"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "이준",
+            "b": "이준 씨"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "[PERSON_1] 씨"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Han Extension J, Tai Tham, Balinese, Javanese and kana from U+1B000 are scripts without spaces",
+      "values": [
+        [
+          "PERSON",
+          "𲎰𲎱"
+        ],
+        [
+          "PERSON",
+          "ᨠᨾᨮ"
+        ],
+        [
+          "PERSON",
+          "ᬓᬩᬜ"
+        ],
+        [
+          "PERSON",
+          "ꦏꦩꦠ"
+        ],
+        [
+          "PERSON",
+          "𛀂𛀃"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]",
+        "[PERSON_5]"
+      ],
+      "hide": [
+        {
+          "text": "𲎰𲎱さん",
+          "want": "[PERSON_1]さん"
+        },
+        {
+          "text": "ᩁᨠᨾᨮᨿ",
+          "want": "ᩁ[PERSON_2]ᨿ"
+        },
+        {
+          "text": "ᬲᬓᬩᬜᬯ",
+          "want": "ᬲ[PERSON_3]ᬯ"
+        },
+        {
+          "text": "ꦤꦏꦩꦠꦭ",
+          "want": "ꦤ[PERSON_4]ꦭ"
+        },
+        {
+          "text": "𛀂𛀃に",
+          "want": "[PERSON_5]に"
+        }
+      ]
+    },
+    {
+      "name": "no-space scripts: a mark after the value belongs to it (a Thai, Lao, Khmer or Myanmar vowel sign or tone mark)",
+      "values": [
+        [
+          "PERSON",
+          "สม"
+        ],
+        [
+          "PERSON",
+          "សុខ"
+        ],
+        [
+          "PERSON",
+          "မောင်"
+        ],
+        [
+          "PERSON",
+          "ສົມ"
+        ],
+        [
+          "PERSON",
+          "渡辺"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]",
+        "[PERSON_5]"
+      ],
+      "hide": [
+        {
+          "text": "กรุณาสมัครสมาชิก",
+          "want": "กรุณาสมัคร[PERSON_1]าชิก"
+        },
+        {
+          "text": "ซื้อสมุด",
+          "want": "ซื้อสมุด"
+        },
+        {
+          "text": "คุณสม ok",
+          "want": "คุณ[PERSON_1] ok"
+        },
+        {
+          "text": "លោកសុខាមក",
+          "want": "លោកសុខាមក"
+        },
+        {
+          "text": "លោក សុខ ok",
+          "want": "លោក [PERSON_2] ok"
+        },
+        {
+          "text": "မောင်း",
+          "want": "မောင်း"
+        },
+        {
+          "text": "ok မောင် ok",
+          "want": "ok [PERSON_3] ok"
+        },
+        {
+          "text": "ສົມັດ",
+          "want": "ສົມັດ"
+        },
+        {
+          "text": "ok ສົມ",
+          "want": "ok [PERSON_4]"
+        },
+        {
+          "text": "渡辺󠄀さん（東京）",
+          "want": "[PERSON_5]さん（東京）"
+        }
+      ]
+    },
+    {
+      "name": "letter case: the capitals of Turkish and Azerbaijani (İ), Greek (no tonos) and German (ẞ)",
+      "values": [
+        [
+          "PERSON",
+          "Emine Şahin"
+        ],
+        [
+          "PERSON",
+          "Fatih"
+        ],
+        [
+          "PERSON",
+          "Ελένη Παπαδοπούλου"
+        ],
+        [
+          "ADDRESS",
+          "Müllerstraße 5, 10115 Berlin"
+        ],
+        [
+          "PERSON",
+          "Νίκος"
+        ],
+        [
+          "PERSON",
+          "Weiß"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[ADDRESS_1]",
+        "[PERSON_4]",
+        "[PERSON_5]"
+      ],
+      "hide": [
+        {
+          "text": "Müşteri: EMİNE ŞAHİN",
+          "want": "Müşteri: [PERSON_1]"
+        },
+        {
+          "text": "FATİH, FATIH and FATİHA",
+          "want": "[PERSON_2], [PERSON_2] and FATİHA"
+        },
+        {
+          "text": "ΕΛΕΝΗ ΠΑΠΑΔΟΠΟΥΛΟΥ, ΕΛΈΝΗ ΠΑΠΑΔΟΠΟΎΛΟΥ",
+          "want": "[PERSON_3], [PERSON_3]"
+        },
+        {
+          "text": "An: MÜLLERSTRAẞE 5, 10115 BERLIN",
+          "want": "An: [ADDRESS_1]"
+        },
+        {
+          "text": "ΝΙΚΟΣ and ΝΊΚΟΣ",
+          "want": "[PERSON_4] and [PERSON_4]"
+        },
+        {
+          "text": "WEIẞ and weiß",
+          "want": "[PERSON_5] and weiß"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "EMİNE ŞAHİN",
+            "b": "fatih",
+            "c": "FATİH"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "fatih",
+            "c": "[PERSON_2]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "a full-width exponent joins its number as the ASCII one does",
+      "values": [
+        [
+          "ID_NUMBER",
+          "4524"
+        ],
+        [
+          "PHONE",
+          "4155550123"
+        ]
+      ],
+      "tags": [
+        "[ID_NUMBER_1]",
+        "[PHONE_1]"
+      ],
+      "hide": [
+        {
+          "text": "x=１ｅ＋４５２４ y",
+          "want": "x=１ｅ＋４５２４ y"
+        },
+        {
+          "text": "x=1e＋4524 y",
+          "want": "x=1e＋4524 y"
+        },
+        {
+          "text": "x=1Ｅ+4524 y",
+          "want": "x=1Ｅ+4524 y"
+        },
+        {
+          "text": "ext=２ｅ＋4155550123",
+          "want": "ext=２ｅ＋4155550123"
+        },
+        {
+          "text": "x=４５２４．７ y",
+          "want": "x=４５２４．７ y"
+        },
+        {
+          "text": "x=４５２４ y",
+          "want": "x=[ID_NUMBER_1] y"
+        }
+      ]
+    },
+    {
+      "name": "a hit that ends before a joining character (a variation selector, a combining mark, a Hangul final) covers the value",
+      "values": [
+        [
+          "PERSON",
+          "渡辺"
+        ],
+        [
+          "PERSON",
+          "김민수"
+        ],
+        [
+          "PHONE",
+          "415 555 0123"
+        ],
+        [
+          "USERNAME",
+          "kim_01"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PHONE_1]",
+        "[USERNAME_1]"
+      ],
+      "hide": [
+        {
+          "text": "渡辺󠄀さん（東京）",
+          "want": "[PERSON_1]さん（東京）"
+        },
+        {
+          "text": "김민수́, Kim！",
+          "want": "[PERSON_2], Kim！"
+        },
+        {
+          "text": "tel 415 555 0123ᆫ （ｘ）",
+          "want": "tel [PHONE_1] （ｘ）"
+        },
+        {
+          "text": "id kim_01ᆫ　x",
+          "want": "id [USERNAME_1]　x"
+        }
+      ]
+    },
+    {
+      "name": "a model's span: what its boundary took from around the value, a date of birth's time, and short values",
+      "values": [
+        [
+          "DATE_OF_BIRTH",
+          "1990-01-02"
+        ]
+      ],
+      "tags": [
+        "[DATE_OF_BIRTH_1]"
+      ],
+      "redact": [
+        {
+          "text": "I'm Kim Minsu. Please write to Kim Minsu at the office.",
+          "found": [
+            [
+              "Kim Minsu.",
+              "PERSON"
+            ]
+          ],
+          "want": "I'm [PERSON_1]. Please write to [PERSON_1] at the office."
+        },
+        {
+          "text": "Kim Minsu, and later: Kim Minsu!",
+          "found": [
+            [
+              "Kim Minsu,",
+              "PERSON"
+            ]
+          ],
+          "want": "[PERSON_1], and later: [PERSON_1]!"
+        },
+        {
+          "text": "Call (Kim Minsu) or <kim@example.com> now",
+          "found": [
+            [
+              "(Kim Minsu)",
+              "PERSON"
+            ],
+            [
+              "<kim@example.com>",
+              "EMAIL"
+            ]
+          ],
+          "want": "Call ([PERSON_1]) or <[EMAIL_1]> now"
+        },
+        {
+          "text": "Ask \"Kim Minsu\" or 'Lee Jisoo' today",
+          "found": [
+            [
+              "\"Kim Minsu\"",
+              "PERSON"
+            ],
+            [
+              "'Lee Jisoo'",
+              "PERSON"
+            ]
+          ],
+          "want": "Ask \"[PERSON_1]\" or '[PERSON_2]' today"
+        },
+        {
+          "text": "Tiffany & Co. ships to 12 Main St, Seoul (home)",
+          "found": [
+            [
+              "Tiffany & Co.",
+              "ORG"
+            ],
+            [
+              "12 Main St, Seoul (",
+              "ADDRESS"
+            ]
+          ],
+          "want": "[ORG_1] ships to [ADDRESS_1] (home)"
+        },
+        {
+          "text": "Contact 連絡先「田中太郎」。田中太郎",
+          "found": [
+            [
+              "田中太郎」。",
+              "PERSON"
+            ]
+          ],
+          "want": "Contact 連絡先「[PERSON_3]」。[PERSON_3]"
+        },
+        {
+          "text": "{b'maria.lopez@example.com': 'x', 'name': b'José García'}",
+          "found": [
+            [
+              "b'maria.lopez@example.com",
+              "EMAIL"
+            ],
+            [
+              "b'José García'",
+              "PERSON"
+            ]
+          ],
+          "want": "{b'[EMAIL_2]': 'x', 'name': b'[PERSON_4]'}"
+        },
+        {
+          "text": "pw: hunter2!. and key 'abc(' end",
+          "found": [
+            [
+              "hunter2!.",
+              "SECRET"
+            ],
+            [
+              "'abc('",
+              "SECRET"
+            ]
+          ],
+          "want": "pw: [SECRET_1] and key [SECRET_2] end"
+        },
+        {
+          "text": "{\"dob\": \"1990-01-02T00:00:00Z\", \"ref\": \"2024-01-02T12-AB\"}",
+          "found": [
+            [
+              "1990-01-02T00",
+              "DATE_OF_BIRTH"
+            ],
+            [
+              "2024-01-02T12-AB",
+              "ID_NUMBER"
+            ]
+          ],
+          "want": "{\"dob\": \"[DATE_OF_BIRTH_1]T00:00:00Z\", \"ref\": \"[ID_NUMBER_1]\"}"
+        },
+        {
+          "text": "born 1985-03-04T00:00:00 in Seoul",
+          "found": [
+            [
+              "1985-03-04T00:00:00",
+              "DATE_OF_BIRTH"
+            ]
+          ],
+          "want": "born [DATE_OF_BIRTH_2]T00:00:00 in Seoul"
+        },
+        {
+          "text": "page 0 of 7, then 0 again",
+          "found": [
+            [
+              "0",
+              "DATE_OF_BIRTH"
+            ]
+          ],
+          "want": "page [DATE_OF_BIRTH_3] of 7, then 0 again"
+        },
+        {
+          "text": "Bought at Acme & Co. yesterday, Acme & Co. again",
+          "found": [
+            [
+              "Acme & Co.",
+              "ORG"
+            ],
+            [
+              ", Acme & Co.",
+              "ORG"
+            ]
+          ],
+          "want": "Bought at [ORG_2] yesterday, [ORG_2] again"
+        }
+      ],
+      "entries": [
+        "1990-01-02",
+        "Kim Minsu",
+        "kim@example.com",
+        "Lee Jisoo",
+        "Tiffany & Co.",
+        "12 Main St, Seoul",
+        "田中太郎",
+        "maria.lopez@example.com",
+        "José García",
+        "hunter2!.",
+        "'abc('",
+        "2024-01-02T12-AB",
+        "1985-03-04",
+        "0",
+        "Acme & Co."
+      ],
+      "hide": [
+        {
+          "text": "page 0, Kim Minsu",
+          "want": "page 0, [PERSON_1]"
+        },
+        {
+          "text": "Bought at Acme & Co. yesterday, Acme & Co. again",
+          "want": "Bought at [ORG_2] yesterday, [ORG_2] again"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "count": "0",
+            "dob": "1990-01-02",
+            "who": "Kim Minsu"
+          },
+          "want": {
+            "count": "0",
+            "dob": "[DATE_OF_BIRTH_1]",
+            "who": "[PERSON_1]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "capitals are the full Unicode uppercase: a sharp s as SS (or the capital sharp s), ligatures and other letters that become two",
+      "values": [
+        [
+          "PERSON",
+          "Anna Weiß"
+        ],
+        [
+          "ADDRESS",
+          "Hauptstraße 5, 10115 Berlin"
+        ],
+        [
+          "ADDRESS",
+          "Straße"
+        ],
+        [
+          "PERSON",
+          "ﬁnn"
+        ],
+        [
+          "PERSON",
+          "ǰan"
+        ],
+        [
+          "PERSON",
+          "ŉaa"
+        ],
+        [
+          "PERSON",
+          "ᾳᾳᾳ"
+        ],
+        [
+          "straße",
+          "Weiss Co"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[ADDRESS_1]",
+        "[ADDRESS_2]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[PERSON_4]",
+        "[PERSON_5]",
+        "[STRASSE_1]"
+      ],
+      "hide": [
+        {
+          "text": "SHIP TO: ANNA WEISS, HAUPTSTRASSE 5, 10115 BERLIN",
+          "want": "SHIP TO: [PERSON_1], [ADDRESS_1]"
+        },
+        {
+          "text": "ANNA WEIẞ and HAUPTSTRAẞE 5, 10115 BERLIN",
+          "want": "[PERSON_1] and [ADDRESS_1]"
+        },
+        {
+          "text": "STRAßE, STRASSE, STRAẞE and Straße",
+          "want": "STRAßE, [ADDRESS_2], [ADDRESS_2] and [ADDRESS_2]"
+        },
+        {
+          "text": "Mr FINN, Mr J̌AN, Mr ʼNAA and Mr ΑΙΑΙΑΙ.",
+          "want": "Mr [PERSON_2], Mr [PERSON_3], Mr [PERSON_4] and Mr [PERSON_5]."
+        },
+        {
+          "text": "Weiss Co",
+          "want": "[STRASSE_1]"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "ANNA WEISS",
+            "b": "STRAßE",
+            "c": "FINN",
+            "d": "STRAẞE",
+            "e": "STRASSE"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "STRAßE",
+            "c": "[PERSON_2]",
+            "d": "[ADDRESS_2]",
+            "e": "[ADDRESS_2]"
+          }
+        }
+      ],
+      "redact": [
+        {
+          "text": "SHIP TO: ANNA WEISS, HAUPTSTRASSE 5, 10115 BERLIN",
+          "found": [],
+          "want": "SHIP TO: [PERSON_1], [ADDRESS_1]",
+          "spans": [
+            [
+              "ANNA WEISS",
+              "PERSON",
+              "vault"
+            ],
+            [
+              "HAUPTSTRASSE 5, 10115 BERLIN",
+              "ADDRESS",
+              "vault"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a Greek value in capitals as Greek writes them: without accents and breathings, the dialytika kept",
+      "values": [
+        [
+          "PERSON",
+          "Νίκος Παπαδόπουλος"
+        ],
+        [
+          "PERSON",
+          "Παΐσιος"
+        ],
+        [
+          "PERSON",
+          "Ὅμηρος"
+        ],
+        [
+          "ADDRESS",
+          "Οδός Ερμού 25, Αθήνα"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]",
+        "[ADDRESS_1]"
+      ],
+      "hide": [
+        {
+          "text": "As Greek writes capitals: ΝΙΚΟΣ ΠΑΠΑΔΟΠΟΥΛΟΣ.",
+          "want": "As Greek writes capitals: [PERSON_1]."
+        },
+        {
+          "text": "The Unicode uppercase: ΝΊΚΟΣ ΠΑΠΑΔΌΠΟΥΛΟΣ.",
+          "want": "The Unicode uppercase: [PERSON_1]."
+        },
+        {
+          "text": "ΠΑΪΣΙΟΣ, ΟΜΗΡΟΣ, ΟΔΟΣ ΕΡΜΟΥ 25, ΑΘΗΝΑ",
+          "want": "[PERSON_2], [PERSON_3], [ADDRESS_1]"
+        },
+        {
+          "text": "Not in capitals and without accents: Νικος Παπαδοπουλος",
+          "want": "Not in capitals and without accents: Νικος Παπαδοπουλος"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "ΝΙΚΟΣ ΠΑΠΑΔΟΠΟΥΛΟΣ",
+            "b": "Νικος Παπαδοπουλος"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "Νικος Παπαδοπουλος"
+          }
+        }
+      ]
+    },
+    {
+      "name": "two Hangul syllables: Hangul right after them is an edge only as particles, the honorifics nim and ssi, or the copula",
+      "values": [
+        [
+          "PERSON",
+          "지원"
+        ],
+        [
+          "PERSON",
+          "정수"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]"
+      ],
+      "hide": [
+        {
+          "text": "정부 지원금을 지원했습니다.",
+          "want": "정부 지원금을 지원했습니다."
+        },
+        {
+          "text": "정수기를 샀다",
+          "want": "정수기를 샀다"
+        },
+        {
+          "text": "지원자와 지원서",
+          "want": "지원자와 지원서"
+        },
+        {
+          "text": "지원님께서 오셨고 지원이는 웃었다. 지원아!",
+          "want": "[PERSON_1]님께서 오셨고 [PERSON_1]이는 웃었다. [PERSON_1]아!"
+        },
+        {
+          "text": "정수에게, 정수랑, 정수였다, 정수입니다",
+          "want": "[PERSON_2]에게, [PERSON_2]랑, [PERSON_2]였다, [PERSON_2]입니다"
+        },
+        {
+          "text": "지원ㅋㅋ 지원42 지원abc",
+          "want": "[PERSON_1]ㅋㅋ [PERSON_1]42 [PERSON_1]abc"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "지원금",
+            "b": "지원"
+          },
+          "want": {
+            "a": "지원금",
+            "b": "[PERSON_1]"
+          }
+        }
+      ]
+    },
+    {
+      "name": "custom labels in spans: a known value keeps its family, and values that merge keep the family of the first",
+      "values": [
+        [
+          "CUSTOMER",
+          "AB-1234"
+        ],
+        [
+          "CUSTOMER",
+          "1234-CD"
+        ],
+        [
+          "PERSON",
+          "Kim Minsu"
+        ],
+        [
+          "ID_NUMBER",
+          "QX-5555"
+        ],
+        [
+          "CUSTOMER",
+          "5555-RT"
+        ]
+      ],
+      "tags": [
+        "[CUSTOMER_1]",
+        "[CUSTOMER_2]",
+        "[PERSON_1]",
+        "[ID_NUMBER_1]",
+        "[CUSTOMER_3]"
+      ],
+      "redact": [
+        {
+          "text": "id AB-1234 and AB-1234-CD for Kim Minsu",
+          "found": [],
+          "want": "id [CUSTOMER_1] and [CUSTOMER_4] for [PERSON_1]",
+          "spans": [
+            [
+              "AB-1234",
+              "CUSTOMER",
+              "vault"
+            ],
+            [
+              "AB-1234-CD",
+              "CUSTOMER",
+              "vault"
+            ],
+            [
+              "Kim Minsu",
+              "PERSON",
+              "vault"
+            ]
+          ]
+        },
+        {
+          "text": "Order AB-1234-CD for Lee Jiwon shipped.",
+          "found": [
+            [
+              "Lee Jiwon",
+              "PERSON"
+            ]
+          ],
+          "want": "Order [CUSTOMER_4] for [PERSON_2] shipped.",
+          "spans": [
+            [
+              "AB-1234-CD",
+              "CUSTOMER",
+              "vault"
+            ],
+            [
+              "Lee Jiwon",
+              "PERSON",
+              "model"
+            ]
+          ]
+        },
+        {
+          "text": "ref QX-5555-RT and 5555-RT-x",
+          "found": [],
+          "want": "ref [ID_NUMBER_2] and [CUSTOMER_3]-x",
+          "spans": [
+            [
+              "QX-5555-RT",
+              "ID_NUMBER",
+              "vault"
+            ],
+            [
+              "5555-RT",
+              "CUSTOMER",
+              "vault"
+            ]
+          ]
+        },
+        {
+          "text": "ref AB-1234 x",
+          "found": [
+            [
+              "ref AB",
+              "ORG"
+            ]
+          ],
+          "want": "[ORG_1] x",
+          "spans": [
+            [
+              "ref AB-1234",
+              "ORG",
+              "vault"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "a known value takes in the marks, variation selectors and joiners after it: a hit never ends inside a grapheme cluster",
+      "values": [
+        [
+          "PERSON",
+          "渡辺"
+        ],
+        [
+          "PERSON",
+          "김민수"
+        ],
+        [
+          "PERSON",
+          "Kim Minsu"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[PERSON_3]"
+      ],
+      "hide": [
+        {
+          "text": "渡辺󠄀さん",
+          "want": "[PERSON_1]さん"
+        },
+        {
+          "text": "渡辺\u200dさん 渡辺️",
+          "want": "[PERSON_1]さん [PERSON_1]"
+        },
+        {
+          "text": "김민수〮 김민수́님",
+          "want": "[PERSON_2] [PERSON_2]님"
+        },
+        {
+          "text": "Kim Minsú and Kim Minsu",
+          "want": "Kim Minsú and [PERSON_3]"
+        },
+        {
+          "text": "김민순님께",
+          "want": "김민순님께"
+        }
+      ],
+      "hide_value": [
+        {
+          "value": {
+            "a": "渡辺󠄀",
+            "b": "김민수́",
+            "c": "Kim Minsú"
+          },
+          "want": {
+            "a": "[PERSON_1]",
+            "b": "[PERSON_2]",
+            "c": "Kim Minsú"
+          }
+        }
+      ],
+      "redact": [
+        {
+          "text": "渡辺󠄀さん, 김민수〮",
+          "found": [],
+          "want": "[PERSON_1]さん, [PERSON_2]",
+          "spans": [
+            [
+              "渡辺󠄀",
+              "PERSON",
+              "vault"
+            ],
+            [
+              "김민수〮",
+              "PERSON",
+              "vault"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"Kim Minsu.\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Please look up Kim Minsu. Then call Kim Minsu.",
+          "found": [
+            [
+              "Kim Minsu.",
+              "PERSON"
+            ]
+          ],
+          "want": "Please look up [PERSON_1]. Then call [PERSON_1]."
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"서울특별시 강남구 테헤란로 123 (\" (ADDRESS)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Contact 서울특별시 강남구 테헤란로 123 (also",
+          "found": [
+            [
+              "서울특별시 강남구 테헤란로 123 (",
+              "ADDRESS"
+            ]
+          ],
+          "want": "Contact [ADDRESS_1] (also"
+        }
+      ],
+      "entries": [
+        "서울특별시 강남구 테헤란로 123"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"https://example.com/kim.\" (URL)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Visit https://example.com/kim.",
+          "found": [
+            [
+              "https://example.com/kim.",
+              "URL"
+            ]
+          ],
+          "want": "Visit [URL_1]."
+        }
+      ],
+      "entries": [
+        "https://example.com/kim"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"kim@example.com,\" (EMAIL)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Mail kim@example.com, then",
+          "found": [
+            [
+              "kim@example.com,",
+              "EMAIL"
+            ]
+          ],
+          "want": "Mail [EMAIL_1], then"
+        }
+      ],
+      "entries": [
+        "kim@example.com"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \" Kim Minsu \" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Note:  Kim Minsu  wrote",
+          "found": [
+            [
+              " Kim Minsu ",
+              "PERSON"
+            ]
+          ],
+          "want": "Note:  [PERSON_1]  wrote"
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"홍길동、\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "담당자 홍길동、 다음",
+          "found": [
+            [
+              "홍길동、",
+              "PERSON"
+            ]
+          ],
+          "want": "담당자 [PERSON_1]、 다음"
+        }
+      ],
+      "entries": [
+        "홍길동"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"(Kim Minsu\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Note: (Kim Minsu wrote",
+          "found": [
+            [
+              "(Kim Minsu",
+              "PERSON"
+            ]
+          ],
+          "want": "Note: ([PERSON_1] wrote"
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"(02) 1234-5678)\" (PHONE)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Call (02) 1234-5678) now",
+          "found": [
+            [
+              "(02) 1234-5678)",
+              "PHONE"
+            ]
+          ],
+          "want": "Call [PHONE_1]) now"
+        }
+      ],
+      "entries": [
+        "(02) 1234-5678"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"\\\"Kim Minsu\\\"\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "He said \"Kim Minsu\" twice",
+          "found": [
+            [
+              "\"Kim Minsu\"",
+              "PERSON"
+            ]
+          ],
+          "want": "He said \"[PERSON_1]\" twice"
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"(Kim Minsu)\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Ask (Kim Minsu) now",
+          "found": [
+            [
+              "(Kim Minsu)",
+              "PERSON"
+            ]
+          ],
+          "want": "Ask ([PERSON_1]) now"
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"“Kim Minsu”.\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Ask “Kim Minsu”.",
+          "found": [
+            [
+              "“Kim Minsu”.",
+              "PERSON"
+            ]
+          ],
+          "want": "Ask “[PERSON_1]”."
+        }
+      ],
+      "entries": [
+        "Kim Minsu"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"「홍길동」\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "x 「홍길동」 y",
+          "found": [
+            [
+              "「홍길동」",
+              "PERSON"
+            ]
+          ],
+          "want": "x 「[PERSON_1]」 y"
+        }
+      ],
+      "entries": [
+        "홍길동"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"서울 (강남구)\" (ADDRESS)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "near 서울 (강남구) station",
+          "found": [
+            [
+              "서울 (강남구)",
+              "ADDRESS"
+            ]
+          ],
+          "want": "near [ADDRESS_1] station"
+        }
+      ],
+      "entries": [
+        "서울 (강남구)"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"(see) Kim (x)\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "(see) Kim (x)",
+          "found": [
+            [
+              "(see) Kim (x)",
+              "PERSON"
+            ]
+          ],
+          "want": "[PERSON_1]"
+        }
+      ],
+      "entries": [
+        "(see) Kim (x)"
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"K.\" (PERSON)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Ask Lee K. now",
+          "found": [
+            [
+              "K.",
+              "PERSON"
+            ]
+          ],
+          "want": "Ask Lee [PERSON_1] now"
+        }
+      ],
+      "entries": [
+        "K."
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"Tiffany & Co.\" (ORG)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "Tiffany & Co. sent it",
+          "found": [
+            [
+              "Tiffany & Co.",
+              "ORG"
+            ]
+          ],
+          "want": "[ORG_1] sent it"
+        }
+      ],
+      "entries": [
+        "Tiffany & Co."
+      ]
+    },
+    {
+      "name": "what the model marks is learned without what its edges hold that is not part of the value: \"hunter2!\" (SECRET)",
+      "values": [],
+      "tags": [],
+      "redact": [
+        {
+          "text": "pw hunter2! ok",
+          "found": [
+            [
+              "hunter2!",
+              "SECRET"
+            ]
+          ],
+          "want": "pw [SECRET_1] ok"
+        }
+      ],
+      "entries": [
+        "hunter2!"
+      ]
+    },
+    {
+      "name": "a value longer than 32 characters that repeats itself is found at every place where it starts (the places that overlap merge), in every spelling, after long partial matches too",
+      "values": [
+        [
+          "PERSON",
+          "ha ha ha ha ha ha ha ha ha ha ha ha"
+        ],
+        [
+          "PERSON",
+          "Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee Minsu-Lee"
+        ],
+        [
+          "URL",
+          "https://x.io/https://x.io/https://x.io/https://x.io/"
+        ],
+        [
+          "PERSON",
+          "Wei\u00df wei\u00df Wei\u00df wei\u00df Wei\u00df wei\u00df Wei\u00df"
+        ],
+        [
+          "PERSON",
+          ". . . . . . . . . . . . . . . . Kim"
+        ]
+      ],
+      "tags": [
+        "[PERSON_1]",
+        "[PERSON_2]",
+        "[URL_1]",
+        "[PERSON_3]",
+        "[PERSON_4]"
+      ],
+      "redact": [
+        {
+          "text": " . . . . . . . . . . . . . . . . . . . .Kim Minsu, , , ",
+          "found": [
+            [
+              " . . . . . . . . . . . . . . . . . . . .Kim Minsu, , , ",
+              "PERSON"
+            ]
+          ],
+          "want": " [PERSON_5], , , "
+        }
+      ],
+      "hide": [
+        {
+          "text": "ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha ha end",
+          "want": "[PERSON_6] end"
+        },
+        {
+          "text": "Said: HA hA Ha ha HA hA Ha ha HA hA Ha ha HA hA Ha ha end",
+          "want": "Said: [PERSON_7] end"
+        },
+        {
+          "text": "xha ha ha ha ha ha ha ha ha ha ha ha ha and ha ha ha ha.",
+          "want": "xha [PERSON_1] and ha ha ha ha."
+        },
+        {
+          "text": "Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee Minsu-Lee and Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee",
+          "want": "[PERSON_8] and Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee"
+        },
+        {
+          "text": "see HTTPS://X.IO/https://x.io/https://x.io/https://x.io/https://x.io/https://x.io/ now",
+          "want": "see [URL_2] now"
+        },
+        {
+          "text": "not https://x.io/HTTPS://X.IO/https://x.io/https://x.io/https://x.io/ here",
+          "want": "not https://x.io/[URL_1] here"
+        },
+        {
+          "text": "WEISS WEISS WEISS WEISS WEISS WEISS WEISS WEISS WEISS and WEI\u1e9e WEI\u1e9e WEI\u1e9e WEI\u1e9e WEI\u1e9e WEI\u1e9e WEI\u1e9e WEI\u1e9e end",
+          "want": "[PERSON_9] and [PERSON_10] end"
+        },
+        {
+          "text": ". . . . . . . . . . . . . . . . . . . . Kim, and . . Kim",
+          "want": ". . . . [PERSON_4], and . . Kim"
+        }
+      ],
+      "entries": [
+        "ha ha ha ha ha ha ha ha ha ha ha ha",
+        "Minsu-Lee Minsu-Lee Jisoo-Kim Minsu-Lee Minsu-Lee",
+        "https://x.io/https://x.io/https://x.io/https://x.io/",
+        "Wei\u00df wei\u00df Wei\u00df wei\u00df Wei\u00df wei\u00df Wei\u00df",
+        ". . . . . . . . . . . . . . . . Kim",
+        ". . . . . . . . . . . . . . . . . . . .Kim Minsu"
+      ]
+    }
+  ]
+}

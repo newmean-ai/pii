@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "newmean-pii"
 dynamic = ["version"]
-description = "On-device multilingual PII detection and masking with small models (newmean-pii-nano/small/medium/large)"
+description = "Mask PII before it reaches your LLM: on-device multilingual PII detection and redaction with small models (newmean-pii-nano/small/medium/large)"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "newmean.ai" }]
 requires-python = ">=3.9"
 dependencies = []
-keywords = ["pii", "privacy", "redaction", "anonymization", "ner", "multilingual", "on-device", "langchain", "litellm", "presidio"]
+keywords = ["pii", "privacy", "redaction", "anonymization", "ner", "multilingual", "on-device", "langchain", "litellm", "presidio", "llm", "pii-detection", "pii-redaction", "data-masking", "llm-security", "guardrails"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-langchain = ["langchain>=1.0"]
+langchain = ["langchain>=1.4.0"]
 litellm = ["litellm"]
 presidio = ["presidio-analyzer"]
 

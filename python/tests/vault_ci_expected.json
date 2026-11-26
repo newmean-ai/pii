@@ -1,0 +1,178 @@
+{
+ "about": "Written by gen_vault_ci_expected.py (data: from the three data files; runs: from a complete local run of each environment of .github/workflows/vault.yml, the same versions). The vault workflow fails a job whose run has fewer passed, a case id missing, or a skip outside the allowed list (see gen_vault_ci_expected.py).",
+ "data": {
+  "vault_corpus.json": {
+   "cases": 10915,
+   "ids_sha256": "2e2aba57827596113cac42bca831c80b77576a0866ddd1eeba8ee7a27a59198c"
+  },
+  "vault_fuzz.json": {
+   "cases": 2400,
+   "ids_sha256": "6d74d289272db19f07c49a1024778274870340c92e092d3dd6d7cfd5b30155a6"
+  },
+  "vault_boundary_cases.json": {
+   "cases": 48,
+   "ids_sha256": "cd79a25e8aef3a897c4aa886b3abd5558bb9faa82c18b226d62618eb6289f663"
+  }
+ },
+ "runs": {
+  "npm-lockfile": {
+   "test/vault-corpus.test.ts": {
+    "passed": 224324,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-fuzz.test.ts": {
+    "passed": 5,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-boundary.test.ts": {
+    "passed": 4137,
+    "skipped": 1,
+    "xfailed": 0
+   }
+  },
+  "npm-langchain-floor": {
+   "test/vault-corpus.test.ts": {
+    "passed": 224324,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-fuzz.test.ts": {
+    "passed": 5,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-boundary.test.ts": {
+    "passed": 4137,
+    "skipped": 1,
+    "xfailed": 0
+   }
+  },
+  "npm-langchain-current": {
+   "test/vault-corpus.test.ts": {
+    "passed": 224324,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-fuzz.test.ts": {
+    "passed": 5,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/vault-boundary.test.ts": {
+    "passed": 4137,
+    "skipped": 1,
+    "xfailed": 0
+   }
+  },
+  "python-floor": {
+   "tests/test_vault_corpus.py": {
+    "passed": 117498,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_fuzz.py": {
+    "passed": 3,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_boundary.py": {
+    "passed": 1324,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_model_fields.py": {
+    "passed": 69,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_langfuse.py": {
+    "passed": 70,
+    "skipped": 57,
+    "xfailed": 0
+   }
+  },
+  "python-current": {
+   "tests/test_vault_corpus.py": {
+    "passed": 117498,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_fuzz.py": {
+    "passed": 3,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_boundary.py": {
+    "passed": 1324,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_vault_model_fields.py": {
+    "passed": 69,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_langfuse.py": {
+    "passed": 70,
+    "skipped": 57,
+    "xfailed": 0
+   }
+  },
+  "npm-timing": {
+   "test/vault-growth.test.ts": {
+    "passed": 412,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/langchain-growth.test.ts": {
+    "passed": 7,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/review-docs-growth.test.ts": {
+    "passed": 6,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "test/ai-sdk.test.ts": {
+    "passed": 12,
+    "skipped": 119,
+    "xfailed": 0
+   },
+   "test/langchain.test.ts": {
+    "passed": 1,
+    "skipped": 81,
+    "xfailed": 0
+   },
+   "test/regex.test.ts": {
+    "passed": 1,
+    "skipped": 22,
+    "xfailed": 0
+   },
+   "test/vault.test.ts": {
+    "passed": 2,
+    "skipped": 80,
+    "xfailed": 0
+   }
+  },
+  "python-timing": {
+   "tests/test_vault_growth.py": {
+    "passed": 405,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_review_docs_growth.py": {
+    "passed": 6,
+    "skipped": 0,
+    "xfailed": 0
+   },
+   "tests/test_langfuse.py": {
+    "passed": 19,
+    "skipped": 0,
+    "xfailed": 0
+   }
+  }
+ }
+}

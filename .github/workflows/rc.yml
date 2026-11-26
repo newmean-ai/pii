@@ -1,0 +1,71 @@
+# Release candidate: a push of branch rc/<version> in this repository runs every check job of the five package
+# workflows (Python wheels, rust, android, flutter, swift) and of the vault workflow (the npm package and the vault test
+# tools of npm and Python) on the exact commit that will become main, with no path filter, then an evidence job that
+# prints the commit, its tree and the six results. Main is moved only to the head commit of a
+# push run of this workflow in which every job succeeded. Only the maintainer pushes rc/* branches; nothing here
+# publishes anything, and the publish workflows never run on an rc/* ref.
+name: rc
+
+on:
+  push:
+    branches: ["rc/**"]
+  # usable only once this file is on main; the first candidate starts by its push
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new candidate pushed to the same branch cancels the run of the one it replaces. The event is part of the group, so a
+# dispatch never cancels a push run (only a push run counts as release evidence). The called workflows use groups of
+# their own (their name plus this run's id), so caller and callee never share one.
+concurrency:
+  group: rc-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/python-wheels.yml
+  rust:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/rust.yml
+  android:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/android.yml
+  flutter:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/flutter.yml
+  swift:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/swift.yml
+  vault:
+    if: github.repository == 'newmean-ai/pii'
+    uses: ./.github/workflows/vault.yml
+
+  evidence:
+    needs: [python, rust, android, flutter, swift, vault]
+    if: always() && github.repository == 'newmean-ai/pii'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: The commit, its tree and the six results (fails unless all six succeeded)
+        env:
+          PYTHON_WHEELS: ${{ needs.python.result }}
+          RUST: ${{ needs.rust.result }}
+          ANDROID: ${{ needs.android.result }}
+          FLUTTER: ${{ needs.flutter.result }}
+          SWIFT: ${{ needs.swift.result }}
+          VAULT: ${{ needs.vault.result }}
+        run: |
+          echo "repository $GITHUB_REPOSITORY, event $GITHUB_EVENT_NAME, ref $GITHUB_REF"
+          echo "run $GITHUB_RUN_ID, attempt $GITHUB_RUN_ATTEMPT"
+          echo "commit $GITHUB_SHA"
+          [ "$(git rev-parse HEAD)" = "$GITHUB_SHA" ] || { echo "checked out $(git rev-parse HEAD), not $GITHUB_SHA"; exit 1; }
+          echo "tree $(git rev-parse 'HEAD^{tree}')"
+          failed=0
+          for r in "python $PYTHON_WHEELS" "rust $RUST" "android $ANDROID" "flutter $FLUTTER" "swift $SWIFT" "vault $VAULT"; do
+            echo "$r"
+            [ "${r#* }" = success ] || failed=1
+          done
+          exit "$failed"

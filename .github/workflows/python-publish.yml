@@ -26,6 +26,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     environment:
       name: ${{ github.event_name == 'push' && 'pypi' || inputs.index }}
       url: ${{ (github.event_name == 'push' || inputs.index == 'pypi') && 'https://pypi.org/p/newmean-pii' || 'https://test.pypi.org/p/newmean-pii' }}

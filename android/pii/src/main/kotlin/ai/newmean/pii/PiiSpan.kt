@@ -12,14 +12,18 @@ public enum class PiiSource(public val id: String) {
     TABLE("table"),
 
     /** An entry of the redactor's `block` list ([PiiBlockEntry]). Since 1.4.0. */
-    BLOCK("block");
+    BLOCK("block"),
+
+    /** A value a [PiiVault] already holds, found again by [PiiRedactor.redact] with a vault. Since 1.7.2. */
+    VAULT("vault");
 
     override fun toString(): String = id
 }
 
 /**
  * A region to mask: `[start, end)` in UTF-16 units of the input, as used by [String.substring]. [label] is one of
- * [PiiLabels.ALL].
+ * [PiiLabels.ALL], or for a span of source [PiiSource.VAULT] the family of a custom label a [PiiVault] holds
+ * ("CUSTOMER").
  */
 public data class PiiSpan(
     val start: Int,

@@ -5,8 +5,8 @@ final class PiiSpan {
   /// "PERSON", "EMAIL", ... (see [piiLabels]).
   final String label;
 
-  /// "model", "regex", "model+regex" when both found it, or "table" when `NewmeanPii.detectTable` propagated it down a
-  /// column.
+  /// "model", "regex", "model+regex" when both found it, "table" when `NewmeanPii.detectTable` propagated it down a
+  /// column, "block" for a block-list entry, or "vault" for a value a `PiiVault` already holds (since 1.7.2).
   final String source;
 
   const PiiSpan(this.start, this.end, this.label, this.source);

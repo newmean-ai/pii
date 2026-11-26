@@ -252,8 +252,11 @@ void main() {
       modelFile('large', 'q4').url.toString(),
       'https://huggingface.co/newmean-ai/pii-large/resolve/v1.1.0/onnx/model_q4.onnx',
     );
-    // arm64: fused multiply-add kernel (1.5.0); elsewhere the plain one
+    // arm64: fused multiply-add kernel (1.5.0); x86-64 with GCC or Clang: chosen once per process, "avx2" where the CPU
+    // has AVX2, else "sse" (the same logits bit for bit), the fused "avx2+fma" only on request (NEWMEAN_PII_KERNEL);
+    // "scalar" in an MSVC build
     final arm64 = RegExp(r'arm64|aarch64').hasMatch(Platform.version);
-    expect(nativeBuildInfo, arm64 ? 'neon+fma' : isNot(contains('fma')));
+    final optIn = Platform.environment['NEWMEAN_PII_KERNEL'] != null;
+    expect(nativeBuildInfo, arm64 ? 'neon+fma' : isIn(['avx2', 'sse', 'scalar', 'vector', if (optIn) 'avx2+fma']));
   });
 }
